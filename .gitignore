@@ -1,0 +1,16 @@
+node_modules/
+dist/
+bin/
+obj/
+.env
+.env.local
+*.user
+*.suo
+*.log
+.vs/
+coverage/
+playwright-report/
+test-results/
+backend/data/
+tmp/
+!**/.env.example
