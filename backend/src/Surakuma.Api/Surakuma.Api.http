@@ -1,0 +1,20 @@
+@baseUrl = https://localhost:7043
+
+### API liveness
+GET {{baseUrl}}/api/v1/health
+Accept: application/json
+
+### SQL Server readiness
+GET {{baseUrl}}/api/v1/ready
+Accept: application/json
+
+### Public shelters: no citizen locations or allocations
+GET {{baseUrl}}/api/v1/shelters
+Accept: application/json
+
+### Current verified public alerts
+GET {{baseUrl}}/api/v1/alerts
+Accept: application/json
+
+### Protected operations and authentication are documented in Swagger and docs/api/contracts.md.
+### Use the generated local demo password; never save credentials in this file.
