@@ -1,0 +1,48 @@
+{
+  "name": "surakuma",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc -b && vite build",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "demo:record": "node demo/record.ts",
+    "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"*.{ts,json,html}\" \"e2e/**/*.ts\""
+  },
+  "dependencies": {
+    "@hookform/resolvers": "^5.2.2",
+    "@tanstack/react-query": "^5.90.0",
+    "axios": "^1.12.0",
+    "i18next": "^25.5.0",
+    "leaflet": "^1.9.4",
+    "lucide-react": "^0.468.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-hook-form": "^7.62.0",
+    "react-i18next": "^16.0.0",
+    "react-leaflet": "^5.0.0",
+    "react-router-dom": "^7.9.0",
+    "recharts": "^3.2.0",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
+    "@playwright/test": "^1.55.0",
+    "@tailwindcss/vite": "^4.1.0",
+    "@testing-library/jest-dom": "^6.8.0",
+    "@testing-library/react": "^16.3.0",
+    "@types/leaflet": "^1.9.20",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "jsdom": "^27.0.0",
+    "prettier": "^3.9.10",
+    "tailwindcss": "^4.1.0",
+    "typescript": "~5.9.2",
+    "vite": "^7.1.0",
+    "vitest": "^3.2.0"
+  }
+}
