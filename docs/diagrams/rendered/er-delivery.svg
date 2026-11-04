@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="980" viewBox="0 0 1000 980">
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#334155"/></marker></defs>
+<rect width="100%" height="100%" fill="white"/>
+<rect x="20" y="20" width="300" height="205" rx="12" fill="#eaf3ff" stroke="#a4b7ce" stroke-width="1.5"/>
+<text x="34" y="51" font-family="Arial, sans-serif" font-size="22" text-anchor="start" font-weight="700" fill="#111827">Resource</text>
+<line x1="34" y1="64" x2="306" y2="64" stroke="#b5c6d7"/>
+<text x="34" y="94" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">PK Id Guid</text>
+<text x="34" y="122" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">FK OrganisationId</text>
+<text x="34" y="150" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">Category, Stock, Reserved</text>
+<text x="34" y="178" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">Version rowversion</text>
+<rect x="350" y="20" width="300" height="205" rx="12" fill="#fff0eb" stroke="#a4b7ce" stroke-width="1.5"/>
+<text x="364" y="51" font-family="Arial, sans-serif" font-size="22" text-anchor="start" font-weight="700" fill="#111827">AssistanceRequest</text>
+<line x1="364" y1="64" x2="636" y2="64" stroke="#b5c6d7"/>
+<text x="364" y="94" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">PK Id Guid</text>
+<text x="364" y="122" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">Quantity, DeliveredQuantity</text>
+<text x="364" y="150" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">HouseholdSize, Status</text>
+<text x="364" y="178" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">Version rowversion</text>
+<rect x="680" y="20" width="300" height="205" rx="12" fill="#e7f7f0" stroke="#a4b7ce" stroke-width="1.5"/>
+<text x="694" y="51" font-family="Arial, sans-serif" font-size="22" text-anchor="start" font-weight="700" fill="#111827">Shelter</text>
+<line x1="694" y1="64" x2="966" y2="64" stroke="#b5c6d7"/>
+<text x="694" y="94" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">PK Id Guid</text>
+<text x="694" y="122" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">FK OrganisationId</text>
+<text x="694" y="150" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">Capacity, Reserved</text>
+<text x="694" y="178" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">Occupancy, Accessible</text>
+<text x="694" y="206" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">Open</text>
+<rect x="20" y="330" width="300" height="205" rx="12" fill="#f1edff" stroke="#a4b7ce" stroke-width="1.5"/>
+<text x="34" y="361" font-family="Arial, sans-serif" font-size="22" text-anchor="start" font-weight="700" fill="#111827">ResourceAllocation</text>
+<line x1="34" y1="374" x2="306" y2="374" stroke="#b5c6d7"/>
+<text x="34" y="404" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">PK Id Guid</text>
+<text x="34" y="432" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">FK ResourceId, RequestId</text>
+<text x="34" y="460" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">Quantity, Status</text>
+<text x="34" y="488" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">ApprovedBy</text>
+<rect x="350" y="330" width="300" height="205" rx="12" fill="#fff6df" stroke="#a4b7ce" stroke-width="1.5"/>
+<text x="364" y="361" font-family="Arial, sans-serif" font-size="22" text-anchor="start" font-weight="700" fill="#111827">VolunteerTask</text>
+<line x1="364" y1="374" x2="636" y2="374" stroke="#b5c6d7"/>
+<text x="364" y="404" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">PK Id Guid</text>
+<text x="364" y="432" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">FK RequestId, VolunteerId</text>
+<text x="364" y="460" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">RequiredSkill, DueAt, Status</text>
+<text x="364" y="488" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">Note</text>
+<rect x="680" y="330" width="300" height="205" rx="12" fill="#eaf3ff" stroke="#a4b7ce" stroke-width="1.5"/>
+<text x="694" y="361" font-family="Arial, sans-serif" font-size="22" text-anchor="start" font-weight="700" fill="#111827">ShelterAllocation</text>
+<line x1="694" y1="374" x2="966" y2="374" stroke="#b5c6d7"/>
+<text x="694" y="404" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">PK Id Guid</text>
+<text x="694" y="432" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">FK ShelterId, RequestId</text>
+<text x="694" y="460" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">People, Status</text>
+<text x="694" y="488" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">ApprovedBy</text>
+<rect x="20" y="640" width="300" height="205" rx="12" fill="#fff0eb" stroke="#a4b7ce" stroke-width="1.5"/>
+<text x="34" y="671" font-family="Arial, sans-serif" font-size="22" text-anchor="start" font-weight="700" fill="#111827">StockMovement</text>
+<line x1="34" y1="684" x2="306" y2="684" stroke="#b5c6d7"/>
+<text x="34" y="714" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">PK Id Guid</text>
+<text x="34" y="742" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">FK ResourceId</text>
+<text x="34" y="770" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">Quantity, Kind, ActorId</text>
+<text x="34" y="798" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">Note</text>
+<rect x="350" y="640" width="300" height="205" rx="12" fill="#e7f7f0" stroke="#a4b7ce" stroke-width="1.5"/>
+<text x="364" y="671" font-family="Arial, sans-serif" font-size="22" text-anchor="start" font-weight="700" fill="#111827">VolunteerProfile</text>
+<line x1="364" y1="684" x2="636" y2="684" stroke="#b5c6d7"/>
+<text x="364" y="714" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">PK Id Guid</text>
+<text x="364" y="742" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">FK UserId unique</text>
+<text x="364" y="770" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">OrganisationId, Skills</text>
+<text x="364" y="798" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">Availability, Verified</text>
+<text x="364" y="826" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">Available</text>
+<rect x="680" y="640" width="300" height="205" rx="12" fill="#f1edff" stroke="#a4b7ce" stroke-width="1.5"/>
+<text x="694" y="671" font-family="Arial, sans-serif" font-size="22" text-anchor="start" font-weight="700" fill="#111827">NotificationDelivery</text>
+<line x1="694" y1="684" x2="966" y2="684" stroke="#b5c6d7"/>
+<text x="694" y="714" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">PK Id Guid</text>
+<text x="694" y="742" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">EventId, RecipientId</text>
+<text x="694" y="770" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">State, Provider, Reference</text>
+<text x="694" y="798" font-family="Arial, sans-serif" font-size="20" text-anchor="start" font-weight="400" fill="#111827">Unique event + recipient</text>
+<polyline points="170,225 170,330" fill="none" stroke="#334155" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="239" y="277.5" font-family="Arial, sans-serif" font-size="19" text-anchor="middle" font-weight="400" fill="#111827">1 to many</text>
+<polyline points="500,225 500,330" fill="none" stroke="#334155" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="569" y="277.5" font-family="Arial, sans-serif" font-size="19" text-anchor="middle" font-weight="400" fill="#111827">1 to many</text>
+<polyline points="830,225 830,330" fill="none" stroke="#334155" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="899" y="277.5" font-family="Arial, sans-serif" font-size="19" text-anchor="middle" font-weight="400" fill="#111827">1 to many</text>
+<text x="500" y="950" font-family="Arial, sans-serif" font-size="19" text-anchor="middle" font-weight="400" fill="#111827">StockMovement belongs to Resource, not ResourceAllocation. Outbox and delivery event IDs</text>
+<text x="500" y="973" font-family="Arial, sans-serif" font-size="19" text-anchor="middle" font-weight="400" fill="#111827">correlate in application code; they are not all foreign keys.</text>
+</svg>
