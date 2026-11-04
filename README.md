@@ -2,6 +2,8 @@
 
 A local, full-stack humanitarian aid coordination coursework prototype. React/TypeScript → ASP.NET Core 10 → SQL Server. All initial records are synthetic demonstration data. This is not a monitored emergency service.
 
+For the complete setup, VS Code commands, demo accounts, role workflows, API, troubleshooting, maintenance and proposed enhancements, see [the complete project guide](docs/complete-guide.md). Installation-specific demo passwords are kept separately in the ignored `backend/data/LOCAL-DEMO-LOGINS.md` when generated locally.
+
 ## Run on Windows
 
 Prerequisites: .NET 10 SDK, Node.js 24+, a running SQL Server Express/Developer instance, and Windows-authenticated database creation permission. The default instance is `.\SQLEXPRESS`. No Docker or paid account is required.
