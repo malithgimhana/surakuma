@@ -470,7 +470,6 @@ export function InformationPage({ kind }: { kind: 'contact' | 'privacy' | 'guida
                 : 'guidanceText',
           )}
         </p>
-        <p className="muted">{t('notEmergency')}</p>
         <NextLink to="/app/requests/new">{t('requestHelp')}</NextLink>
       </Card>
     </div>

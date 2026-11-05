@@ -97,7 +97,6 @@ export function PublicLayout() {
         </div>
         <div className="container footer-bottom">
           <span>© {new Date().getFullYear()} සුරැකුම · Surakuma</span>
-          <span>{t('notEmergency')}</span>
         </div>
       </footer>
     </>
