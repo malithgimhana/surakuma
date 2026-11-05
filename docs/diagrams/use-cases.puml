@@ -1,0 +1,61 @@
+@startuml
+left to right direction
+actor Public
+actor Citizen
+actor "Case Manager" as CaseManager
+actor "Emergency Coordinator" as Coordinator
+actor "Logistics Manager" as Logistics
+actor "Shelter Administrator" as ShelterAdmin
+actor "Volunteer Coordinator" as VolunteerCoordinator
+actor Volunteer
+actor "System Administrator" as Administrator
+rectangle Surakuma {
+  usecase "Browse alerts, shelters and guidance" as Browse
+  usecase "Register / log in" as Login
+  usecase "Submit and track request" as Submit
+  usecase "Upload private evidence" as Evidence
+  usecase "Provide delivery feedback" as Feedback
+  usecase "Verify and approve case" as Verify
+  usecase "Generate and review AI recommendation" as AI
+  usecase "Approve / modify / reject / defer AI" as Decision
+  usecase "Review potential duplicates" as Duplicates
+  usecase "Escalate a case" as Escalate
+  usecase "Explicitly share cases" as Share
+  usecase "Manage crises, areas and translated alerts" as Crisis
+  usecase "Reserve, dispatch and deliver aid" as Allocate
+  usecase "Resolve shortages / replenish stock" as Shortage
+  usecase "Reserve household / check in / depart" as Shelter
+  usecase "Verify volunteers and assign tasks" as Assign
+  usecase "Accept task and report completion" as Task
+  usecase "Verify task completion" as Complete
+  usecase "Manage users, memberships, organisations" as Admin
+  usecase "Inspect audit and delivery records" as Audit
+  usecase "View scoped operational metrics" as Metrics
+}
+Public --> Browse
+Citizen --> Browse
+Citizen --> Login
+Citizen --> Submit
+Citizen --> Evidence
+Citizen --> Feedback
+CaseManager --> Verify
+CaseManager --> AI
+CaseManager --> Decision
+CaseManager --> Duplicates
+CaseManager --> Escalate
+Coordinator --> Crisis
+Coordinator --> Share
+Coordinator --> Escalate
+Coordinator --> Verify
+Coordinator --> AI
+Coordinator --> Metrics
+Logistics --> Allocate
+Logistics --> Shortage
+ShelterAdmin --> Shelter
+VolunteerCoordinator --> Assign
+VolunteerCoordinator --> Complete
+Volunteer --> Task
+Administrator --> Admin
+Administrator --> Audit
+AI ..> Decision : requires human review
+@enduml
