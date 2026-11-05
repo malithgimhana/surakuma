@@ -1,0 +1,10 @@
+{
+  "runtimeTimestamp": "2026-10-22T05:20:58.150Z",
+  "method": "GET",
+  "path": "/api/v1/shelters",
+  "swaggerExecutionStatus": 200,
+  "directApiStatus": 200,
+  "returnedFacilities": 4,
+  "screenshot": "docs/screenshots/swagger-public-shelters.png",
+  "note": "Public synthetic facility response. No login body, token, API key or private request data was recorded."
+}
