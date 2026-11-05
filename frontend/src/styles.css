@@ -382,19 +382,6 @@ dl {
   color: #56768b;
   margin-bottom: 15px;
 }
-.demo-bar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  background: #eef5fd;
-  color: #536780;
-  min-height: 27px;
-  font-size: 0.65rem;
-  letter-spacing: 0.035em;
-  padding: 4px 18px;
-  text-align: center;
-}
 .public-header {
   position: relative;
   background: #fff;
@@ -2139,10 +2126,6 @@ dl {
   }
   .language select {
     font-size: 0.75rem;
-  }
-  .demo-bar {
-    font-size: 0.57rem;
-    min-height: 29px;
   }
   .hero {
     grid-template-columns: 1fr;

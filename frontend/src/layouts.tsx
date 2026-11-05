@@ -48,10 +48,6 @@ export function PublicLayout() {
       <a href="#main" className="skip-link">
         {t('next')}
       </a>
-      <div className="demo-bar">
-        <ShieldCheck size={13} />
-        {t('demo')}
-      </div>
       <header className="public-header">
         <div className="container header-inner">
           <Brand />
