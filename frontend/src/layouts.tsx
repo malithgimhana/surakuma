@@ -210,7 +210,6 @@ export function AppLayout({
             </div>
           </div>
         </header>
-        <div className="workspace-demo">{t('demo')}</div>
         <main id="main" className="workspace-content">
           <Outlet />
         </main>
