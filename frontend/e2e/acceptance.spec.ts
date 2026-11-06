@@ -46,7 +46,7 @@ test('citizen submits, staff review AI, logistics deliver partial aid and close 
   await page.getByRole('button', { name: 'Continue' }).click();
   await page.getByLabel('Location', { exact: true }).fill('Demo collection point in Kelaniya');
   await page.getByRole('button', { name: 'Continue' }).click();
-  await page.getByLabel('This request uses synthetic demonstration information only.').check();
+  await page.getByLabel('This request contains fictional information only.').check();
   await page.getByRole('button', { name: 'Submit request' }).click();
   await expect(
     page.getByRole('status').filter({ hasText: 'Your request has been received' }),

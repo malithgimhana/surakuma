@@ -687,7 +687,7 @@ export function AdminPage() {
         <Card>
           <h2>Notification delivery</h2>
           <p className="muted">
-            Captured means stored for development demonstration; it does not mean an email was sent.
+            Captured means stored locally; it does not mean an email was sent.
           </p>
           {deliveries.error ? (
             <ErrorState error={deliveries.error} />

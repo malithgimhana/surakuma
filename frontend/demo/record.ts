@@ -210,7 +210,7 @@ try {
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
   await page.getByLabel('Location', { exact: true }).fill(base.locationText);
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
-  await page.getByLabel('This request uses synthetic demonstration information only.').check();
+  await page.getByLabel('This request contains fictional information only.').check();
   await caption('Review and explicitly confirm synthetic demonstration data before submission.');
   await page.getByRole('button', { name: 'Submit request', exact: true }).click();
   await expect(

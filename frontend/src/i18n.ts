@@ -110,19 +110,6 @@ const entries: string[][] = [
     'ஒரே இடத்தில் புதுப்பிப்புகளைப் பெற்று கோரிக்கையைக் கண்காணியுங்கள்.',
   ],
   [
-    'demo',
-    'Coursework prototype · synthetic demonstration data',
-    'පාඨමාලා ආදර්ශ පද්ධතිය · කෘත්‍රිම ආදර්ශ දත්ත',
-    'பாடநெறி முன்மாதிரி · செயற்கை மாதிரித் தரவு',
-  ],
-  ['demoShort', 'DEMONSTRATION', 'ආදර්ශ පද්ධතිය', 'முன்மாதிரி'],
-  [
-    'notEmergency',
-    'This prototype is not monitored as a live emergency service.',
-    'මෙම ආදර්ශ පද්ධතිය සජීවී හදිසි සේවාවක් ලෙස අධීක්ෂණය නොකෙරේ.',
-    'இந்த முன்மாதிரி நேரடி அவசர சேவையாகக் கண்காணிக்கப்படுவதில்லை.',
-  ],
-  [
     'footerTag',
     'Connecting people. Coordinating care.',
     'මිනිසුන් එක් කරමින් රැකවරණය සම්බන්ධීකරණය කරමු.',
@@ -297,9 +284,9 @@ const entries: string[][] = [
   ],
   [
     'synthetic',
-    'This request uses synthetic demonstration information only.',
-    'මෙම ඉල්ලීමේ ඇත්තේ කෘත්‍රිම ආදර්ශ තොරතුරු පමණි.',
-    'இந்தக் கோரிக்கையில் செயற்கை மாதிரித் தகவல் மட்டுமே உள்ளது.',
+    'This request contains fictional information only.',
+    'මෙම ඉල්ලීමේ ඇත්තේ කල්පිත තොරතුරු පමණි.',
+    'இந்தக் கோரிக்கையில் கற்பனைத் தகவல் மட்டுமே உள்ளது.',
   ],
   [
     'draftSaved',
@@ -404,15 +391,15 @@ const entries: string[][] = [
   ],
   [
     'contactDescription',
-    'For this coursework demonstration, contact your project team or lecturer. Real emergency contact numbers have not been configured.',
-    'මෙම පාඨමාලා ආදර්ශය සඳහා ව්‍යාපෘති කණ්ඩායම හෝ කථිකාචාර්යවරයා අමතන්න. සත්‍ය හදිසි දුරකථන අංක සකසා නොමැත.',
-    'இந்தப் பாடநெறி முன்மாதிரிக்குத் திட்டக் குழு அல்லது விரிவுரையாளரைத் தொடர்புகொள்ளுங்கள். உண்மையான அவசரத் தொடர்பு எண்கள் அமைக்கப்படவில்லை.',
+    'Emergency contact numbers have not been configured. For urgent help, contact your local emergency services directly.',
+    'හදිසි දුරකථන අංක සකසා නොමැත. හදිසි උපකාර සඳහා ඔබේ ප්‍රදේශයේ හදිසි සේවා සෘජුව අමතන්න.',
+    'அவசர தொடர்பு எண்கள் அமைக்கப்படவில்லை. அவசர உதவிக்கு உங்கள் உள்ளூர் அவசர சேவைகளை நேரடியாகத் தொடர்புகொள்ளுங்கள்.',
   ],
   [
     'privacyText',
-    'Your requests, evidence, and precise locations are visible only to you and authorised staff. This demonstration should contain synthetic information only.',
-    'ඔබේ ඉල්ලීම්, සාක්ෂි සහ නිශ්චිත ස්ථාන ඔබට සහ බලයලත් නිලධාරීන්ට පමණක් පෙනේ. මෙම ආදර්ශයට කෘත්‍රිම තොරතුරු පමණක් ඇතුළත් කරන්න.',
-    'உங்கள் கோரிக்கைகள், ஆதாரங்கள் மற்றும் துல்லியமான இடங்களை நீங்களும் அங்கீகரிக்கப்பட்ட பணியாளர்களும் மட்டுமே காணலாம். இந்த முன்மாதிரியில் செயற்கைத் தகவலை மட்டுமே பயன்படுத்துங்கள்.',
+    'Your requests, evidence, and precise locations are visible only to you and authorised staff. Enter fictional information only.',
+    'ඔබේ ඉල්ලීම්, සාක්ෂි සහ නිශ්චිත ස්ථාන ඔබට සහ බලයලත් නිලධාරීන්ට පමණක් පෙනේ. කල්පිත තොරතුරු පමණක් ඇතුළත් කරන්න.',
+    'உங்கள் கோரிக்கைகள், ஆதாரங்கள் மற்றும் துல்லியமான இடங்களை நீங்களும் அங்கீகரிக்கப்பட்ட பணியாளர்களும் மட்டுமே காணலாம். கற்பனைத் தகவலை மட்டும் உள்ளிடுங்கள்.',
   ],
   [
     'guidanceText',

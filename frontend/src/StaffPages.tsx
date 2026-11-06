@@ -191,7 +191,7 @@ export function StaffOverview() {
             </div>
           </dl>
           <small className="muted">
-            Inventory totals combine demonstration units; use the resource ledger for item-level
+            Inventory totals combine different units; use the resource ledger for item-level
             decisions.
           </small>
         </Card>

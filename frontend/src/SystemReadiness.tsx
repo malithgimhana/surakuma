@@ -42,7 +42,6 @@ export function SystemReadiness() {
         status.data && (
           <>
             <p>
-              {status.data.demonstrationMode ? 'Local demonstration mode' : 'Application mode'} ·
               Checked {formatDate(status.data.checkedAt)}
             </p>
             <div className="resource-grid">

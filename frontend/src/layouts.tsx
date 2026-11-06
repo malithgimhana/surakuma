@@ -174,7 +174,6 @@ export function AppLayout({
           <div className="care-note">
             <HeartHandshake />
             <strong>{t('careTag')}</strong>
-            <small>{t('demoShort')}</small>
           </div>
           <button
             className="logout"
