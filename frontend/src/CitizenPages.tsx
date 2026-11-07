@@ -281,7 +281,7 @@ const requestSchema = z.object({
   description: z.string().min(10).max(4000),
   locationText: z.string().min(3).max(500),
   householdSize: z.number().min(1).max(50),
-  quantity: z.number().positive().max(100000),
+  quantity: z.number().int().positive().max(100000),
   accessibilityNeeds: z.string().max(500),
   crisisId: z.string().min(1),
   organisationId: z.string().min(1),
@@ -532,9 +532,9 @@ export function NewRequest() {
                 <Field label={t('quantity')}>
                   <input
                     type="number"
-                    min={0.01}
+                    min={1}
                     max={100000}
-                    step="0.01"
+                    step="1"
                     {...register('quantity', { valueAsNumber: true })}
                   />
                 </Field>
@@ -784,6 +784,14 @@ export function RequestTracking() {
             <div className="progress-bar">
               <span style={{ width: `${(100 * r.deliveredQuantity) / r.quantity}%` }} />
             </div>
+            {data.allocations.filter((a) => a.status !== 'Cancelled').length > 0 && (
+              <section aria-label={t('deliverySteps')}>
+                <h3>{t('deliverySteps')}</h3>
+                {data.allocations.filter((a) => a.status !== 'Cancelled').map((a) => (
+                  <p key={a.id}>{a.quantity} · {t('delivery.' + a.status)}</p>
+                ))}
+              </section>
+            )}
             {data.attachments.length > 0 && (
               <>
                 <h3>{t('attachments')}</h3>
