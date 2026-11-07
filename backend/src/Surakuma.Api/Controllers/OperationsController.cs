@@ -13,9 +13,10 @@ namespace Surakuma.Api.Controllers;
 [ApiController, Route("api/v1"), Authorize]
 public sealed class OperationsController(Operations ops, AccessService access, CrisisDbContext db, UserManager<AppUser> users, IMappingProvider maps, IMemoryCache cache) : ControllerBase
 {
-    [AllowAnonymous, HttpGet("public/lookups")] public Task<object> Lookups(CancellationToken ct) => ops.PublicData(ct);
+    [AllowAnonymous, HttpGet("public/lookups")] public Task<PublicLookups> Lookups(CancellationToken ct) => ops.PublicData(ct);
     [AllowAnonymous, HttpGet("alerts")] public Task<List<PublicAlert>> Alerts(CancellationToken ct) => ops.Alerts(ct);
-    [AllowAnonymous, HttpGet("shelters")] public Task<List<Shelter>> Shelters(CancellationToken ct) => ops.PublicShelters(ct);
+    [AllowAnonymous, HttpGet("shelters")] public Task<List<PublicShelter>> Shelters(CancellationToken ct) => ops.PublicShelters(ct);
+    [HttpGet("staff/shelters")] public Task<List<Shelter>> StaffShelters(CancellationToken ct) => ops.StaffShelters(ct);
     [HttpGet("reports/metrics")] public Task<object> Metrics(CancellationToken ct) => ops.Metrics(ct);
     [HttpGet("resources")] public Task<List<Resource>> Resources(CancellationToken ct) => ops.Resources(ct);
     [HttpPost("resources")] public Task<Resource> Resource(ResourceInput input, CancellationToken ct) => ops.AddResource(input, ct);
@@ -26,6 +27,8 @@ public sealed class OperationsController(Operations ops, AccessService access, C
         return NoContent();
     }
     [HttpGet("resources/{id:guid}/movements")] public Task<List<StockMovement>> Movements(Guid id, CancellationToken ct) => ops.StockHistory(id, ct);
+    [HttpGet("requests/{id:guid}/allocation-recommendations")] public Task<AllocationRecommendations> AllocationRecommendations(Guid id, CancellationToken ct) => ops.AllocationRecommendations(id, ct);
+    [HttpPost("requests/{id:guid}/allocation-recommendations/ignore")] public async Task<IActionResult> IgnoreAllocationRecommendation(Guid id, IgnoreAllocationRecommendationInput input, CancellationToken ct) { await ops.IgnoreAllocationRecommendation(id, input.RecommendedResourceId, ct); return NoContent(); }
     [HttpPost("allocations")] public Task<ResourceAllocation> Allocate(AllocateInput input, CancellationToken ct) => ops.Allocate(input, ct);
     [HttpPost("allocations/{id:guid}/{operation}")] public Task<ResourceAllocation> Allocation(Guid id, string operation, CancellationToken ct) => ops.UpdateAllocation(id, operation, ct);
     [HttpPost("shelters")] public Task<Shelter> AddShelter(ShelterInput input, CancellationToken ct) => ops.SaveShelter(null, input, ct);
@@ -142,6 +145,16 @@ public sealed class OperationsController(Operations ops, AccessService access, C
             return BadRequest();
         var result = await cache.GetOrCreateAsync("geo:" + query.Trim().ToLowerInvariant(), async entry => { entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(12); return await maps.GeocodeAsync(query, ct); });
         return result is null ? StatusCode(503, new ProblemDetails { Title = "Location search unavailable. Enter a location or select a map point.", Status = 503 }) : Ok(result);
+    }
+    [EnableRateLimiting("maps"), HttpPost("maps/reverse-geocode")]
+    public async Task<IActionResult> ReverseGeocode(ReverseGeocodeInput input, CancellationToken ct)
+    {
+        if (input.Latitude is not double lat || input.Longitude is not double lng ||
+            !double.IsFinite(lat) || !double.IsFinite(lng) || lat is < -90 or > 90 || lng is < -180 or > 180)
+            return BadRequest();
+        Response.Headers.CacheControl = "no-store";
+        var result = await maps.ReverseGeocodeAsync(lat, lng, ct);
+        return result is null ? StatusCode(503, new ProblemDetails { Title = "Reverse geocoding unavailable. Enter a location manually.", Status = 503 }) : Ok(result);
     }
     [EnableRateLimiting("maps"), HttpGet("maps/route")]
     public async Task<IActionResult> Route(double startLat, double startLng, double endLat, double endLng, CancellationToken ct)
