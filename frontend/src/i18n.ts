@@ -16,6 +16,8 @@ const entries: string[][] = [
   ['logout', 'Log out', 'ඉවත් වන්න', 'வெளியேறுங்கள்'],
   ['register', 'Create an account', 'ගිණුමක් සාදන්න', 'கணக்கை உருவாக்குங்கள்'],
   ['language', 'Language', 'භාෂාව', 'மொழி'],
+  ['darkMode', 'Switch to dark mode', 'අඳුරු ප්‍රකාරයට මාරු වන්න', 'இருண்ட பயன்முறைக்கு மாறவும்'],
+  ['lightMode', 'Switch to light mode', 'ආලෝක ප්‍රකාරයට මාරු වන්න', 'ஒளி பயன்முறைக்கு மாறவும்'],
   ['requestHelp', 'Request help', 'සහාය ඉල්ලන්න', 'உதவி கோருங்கள்'],
   [
     'heroKicker',
@@ -430,6 +432,11 @@ const entries: string[][] = [
   ['status.Reserved', 'Reserved', 'වෙන්කර ඇත', 'முன்பதிவு செய்யப்பட்டது'],
   ['status.CheckedIn', 'Checked in', 'පැමිණ ඇත', 'வருகை பதிவு செய்யப்பட்டது'],
   ['status.Departed', 'Departed', 'පිටවී ඇත', 'வெளியேறினார்'],
+  ['deliverySteps', 'Delivery progress', 'බෙදාහැරීමේ ප්‍රගතිය', 'விநியோக முன்னேற்றம்'],
+  ['delivery.Reserved', 'Aid reserved; awaiting dispatch', 'සහාය වෙන් කර ඇත; පිටත් කිරීමට බලා සිටී', 'உதவி ஒதுக்கப்பட்டுள்ளது; அனுப்புவதற்காக காத்திருக்கிறது'],
+  ['delivery.Dispatched', 'Aid dispatched; awaiting delivery', 'සහාය පිටත් කර ඇත; ලබාදීමට බලා සිටී', 'உதவி அனுப்பப்பட்டுள்ளது; வழங்குவதற்காக காத்திருக்கிறது'],
+  ['delivery.Delivered', 'Aid delivered', 'සහාය ලබා දී ඇත', 'உதவி வழங்கப்பட்டது'],
+  ['status.Escalated', 'Escalated', 'වැඩිදුර අවධානයට යොමු කර ඇත', 'மேலதிக கவனத்திற்கு அனுப்பப்பட்டது'],
   ['status.Dispatched', 'Dispatched', 'පිටත්කර ඇත', 'அனுப்பப்பட்டது'],
   ['status.Delivered', 'Delivered', 'ලබාදී ඇත', 'வழங்கப்பட்டது'],
 ];
