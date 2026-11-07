@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { MapContainer, TileLayer, CircleMarker, Popup, useMapEvents } from 'react-leaflet';
 import { useTranslation } from 'react-i18next';
-import type { Shelter } from './types';
+import type { PublicShelter } from './types';
 import 'leaflet/dist/leaflet.css';
 function Picker({ onPick }: { onPick: (lat: number, lng: number) => void }) {
   useMapEvents({ click: (e) => onPick(e.latlng.lat, e.latlng.lng) });
@@ -12,7 +12,7 @@ export function MapView({
   point,
   onPick,
 }: {
-  shelters?: Shelter[];
+  shelters?: PublicShelter[];
   point?: [number, number];
   onPick?: (lat: number, lng: number) => void;
 }) {
