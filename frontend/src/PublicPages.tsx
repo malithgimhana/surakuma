@@ -38,7 +38,7 @@ import {
 } from './components';
 import { CommunityArt } from './CommunityArt';
 import { MapView } from './MapView';
-import type { Alert, Shelter } from './types';
+import type { Alert, PublicShelter } from './types';
 function useAlerts() {
   return useQuery({ queryKey: ['alerts'], queryFn: () => get<Alert[]>('/alerts') });
 }
@@ -279,7 +279,7 @@ function ShelterArt({ index = 0 }: { index?: number }) {
 }
 export function SheltersPage() {
   const { t } = useTranslation();
-  const query = useQuery({ queryKey: ['shelters'], queryFn: () => get<Shelter[]>('/shelters') });
+  const query = useQuery({ queryKey: ['shelters'], queryFn: () => get<PublicShelter[]>('/shelters') });
   const [search, setSearch] = useState(''),
     [view, setView] = useState('list');
   const shelters =
@@ -353,7 +353,7 @@ export function ShelterDetails() {
   const { id } = useParams(),
     { t, i18n } = useTranslation(),
     { user } = useAuth();
-  const query = useQuery({ queryKey: ['shelters'], queryFn: () => get<Shelter[]>('/shelters') });
+  const query = useQuery({ queryKey: ['shelters'], queryFn: () => get<PublicShelter[]>('/shelters') });
   const [route, setRoute] = useState(''),
     [busy, setBusy] = useState(false);
   if (query.isPending) return <Loading />;
