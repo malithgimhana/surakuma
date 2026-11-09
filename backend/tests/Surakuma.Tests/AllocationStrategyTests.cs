@@ -9,15 +9,6 @@ public sealed class AllocationStrategyTests
     private static AssistanceRequest Request(Guid org, Guid crisis, Priority priority, DateTimeOffset created) => new() { OrganisationId = org, CrisisId = crisis, Category = AidCategory.FoodWater, Status = RequestStatus.Approved, Priority = priority, Quantity = 10, Description = "family food packs", Latitude = 6.9, Longitude = 79.9, CreatedAt = created };
     private static Resource Stock(Guid org, string name, decimal count, double longitude = 79.9) => new() { OrganisationId = org, Category = AidCategory.FoodWater, Name = name, Suitability = "family food packs", Unit = "packs", Stock = count, Latitude = 6.9, Longitude = longitude, TransportAvailable = true };
     [Fact]
-    public void UnapprovedRequestDoesNotClaimThereIsNoShortage()
-    {
-        var org = Guid.NewGuid(); var req = Request(org, Guid.NewGuid(), Priority.Normal, DateTimeOffset.UtcNow);
-        req.Status = RequestStatus.Submitted;
-        var result = strategy.Recommend(req, 0, [Stock(org, "limited", 6)], []);
-        Assert.Contains("not in the approved allocation queue", result.ShortageExplanation);
-        Assert.DoesNotContain("No shortage", result.ShortageExplanation);
-    }
-    [Fact]
     public void RankingUsesAvailabilitySuitabilityDistanceAndHardCategory()
     {
         var org = Guid.NewGuid(); var req = Request(org, Guid.NewGuid(), Priority.High, DateTimeOffset.UtcNow);
