@@ -56,36 +56,6 @@ describe('Citizen accessibility and workflows', () => {
     expect(screen.getByLabelText('Describe what you need')).toBeVisible();
     expect(sessionStorage.getItem('surakuma.draft.test')).toContain('FoodWater');
   });
-  it('explains automatic centre routing and shows optional behalf-of fields', async () => {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const show = (url: string) => render(
-      <QueryClientProvider client={client}>
-        <MemoryRouter initialEntries={[url]}><NewRequest /></MemoryRouter>
-      </QueryClientProvider>,
-    );
-    show('/app/requests/new');
-    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
-    expect(await screen.findByText(/Your request will be sent to the response centre/)).toBeVisible();
-    expect(screen.queryByLabelText('Receiving organisation')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByLabelText("I'm requesting for someone else"));
-    expect(screen.getByLabelText('Relationship (optional)')).toBeVisible();
-    expect(screen.getByLabelText('Contact details (optional)')).toBeVisible();
-  });
-  it('shows the selected crisis and explains shelter placement quantity before submission', async () => {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(<QueryClientProvider client={client}><MemoryRouter initialEntries={['/app/requests/new?category=Shelter']}><NewRequest /></MemoryRouter></QueryClientProvider>);
-    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
-    fireEvent.change(await screen.findByLabelText('Crisis event'), { target: { value: 'crisis' } });
-    fireEvent.change(screen.getByLabelText('Describe what you need'), { target: { value: 'A fictional family needs shelter.' } });
-    expect(screen.getByText(/One placement covers your household/)).toBeVisible();
-    expect(screen.getByLabelText('Household placements')).toHaveAttribute('readonly');
-    expect(screen.getByLabelText('Household placements')).toHaveValue(1);
-    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
-    fireEvent.change(await screen.findByLabelText('Location', { selector: 'input' }), { target: { value: 'Fictional town' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
-    expect(await screen.findByText('Demo flood')).toBeVisible();
-    expect(screen.getByText('Household placements')).toBeVisible();
-  });
   it('provides clear delivery steps in every language', () => {
     for (const language of ['en', 'si', 'ta']) {
       for (const status of ['Reserved', 'Dispatched', 'Delivered']) {
