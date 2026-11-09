@@ -37,6 +37,7 @@ export interface Crisis extends Entity {
   type: string;
   district: string;
   active: boolean;
+  primaryOrganisationId: string | null;
   latitude: number;
   longitude: number;
 }
@@ -44,14 +45,18 @@ export interface Organisation extends Entity {
   name: string;
 }
 export interface Lookups {
-  crises: Crisis[];
-  organisations: Organisation[];
+  crises: { id: string; name: string }[];
+  organisations: { id: string; name: string }[];
 }
 export interface AidRequest extends Entity {
   reference: string;
   citizenId: string;
   crisisId: string;
-  organisationId: string;
+  organisationId: string | null;
+  assignedCaseManagerId: string | null;
+  requestedForSomeoneElse: boolean;
+  requesterRelationship: string;
+  requesterContact: string;
   category: Category;
   priority: Priority;
   description: string;
@@ -73,7 +78,7 @@ export interface Page<T> {
   pageSize: number;
 }
 export interface History extends Entity {
-  status: Status;
+  status: Status | 'Escalated';
   note: string;
   actorId: string;
 }
@@ -147,8 +152,9 @@ export interface Resource extends Entity {
   suitability: string;
   transportAvailable: boolean;
 }
-export interface Shelter extends Entity {
-  organisationId: string;
+export interface PublicShelter {
+  id: string;
+  updatedAt: string;
   name: string;
   address: string;
   latitude: number;
@@ -160,6 +166,10 @@ export interface Shelter extends Entity {
   accessible: boolean;
   open: boolean;
   facilities: string;
+}
+export interface Shelter extends PublicShelter {
+  organisationId: string;
+  createdAt: string;
 }
 export interface Alert extends Entity {
   crisisId: string;
@@ -203,6 +213,7 @@ export interface VolunteerTask extends Entity {
 export interface VolunteerData {
   profiles: Volunteer[];
   tasks: VolunteerTask[];
+  names: Record<string, string>;
 }
 export interface Metrics {
   openCases: number;
@@ -216,6 +227,10 @@ export interface Metrics {
   resourceReserved: number;
   resourceStock: number;
   aiOverrideFrequency: number;
+  aiApprovedCount: number;
+  aiModifiedCount: number;
+  aiRejectedCount: number;
+  aiDeferredCount: number;
   byStatus: { status: string; count: number }[];
   shortages: {
     id: string;
@@ -224,4 +239,9 @@ export interface Metrics {
     outstanding: number;
     category: Category;
   }[];
+}
+
+export interface AllocationRecommendations {
+  outstanding: number; shortage: boolean; queuePosition: number; competingRequests: number; shortageExplanation: string;
+  candidates: { resourceId: string; name: string; unit: string; available: number; suggestedQuantity: number; score: number; distanceKm: number | null; transportAvailable: boolean; shortForRequest: boolean; reason: string }[];
 }

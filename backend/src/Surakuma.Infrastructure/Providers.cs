@@ -5,6 +5,8 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Surakuma.Application;
 using Surakuma.Domain;
+using Polly.CircuitBreaker;
+using Polly.Timeout;
 
 namespace Surakuma.Infrastructure;
 
@@ -41,7 +43,7 @@ public sealed class AiProvider(HttpClient http, IConfiguration config, ILogger<A
                 string explanation = result.RootElement.GetProperty("explanation").GetString() ?? "No rationale supplied.";
                 return new(category, priority, explanation[..Math.Min(2000, explanation.Length)], "Gemini", model, false);
             }
-            catch (Exception ex) when (ex is HttpRequestException or JsonException or KeyNotFoundException or InvalidOperationException or TaskCanceledException or IndexOutOfRangeException)
+            catch (Exception ex) when (ex is HttpRequestException or JsonException or KeyNotFoundException or InvalidOperationException or TaskCanceledException or IndexOutOfRangeException or BrokenCircuitException or TimeoutRejectedException)
             {
                 if (ct.IsCancellationRequested)
                     throw;
@@ -59,7 +61,7 @@ public sealed class AiProvider(HttpClient http, IConfiguration config, ILogger<A
 public sealed class EmailProvider(HttpClient http, IConfiguration config) : IEmailProvider
 {
     public string Name => config["Email:Provider"] == "Brevo" ? "Brevo" : "Development capture";
-    public async Task<DeliveryResult> SendAsync(string email, string message, Guid eventId, CancellationToken ct)
+    public async Task<DeliveryResult> SendAsync(string email, string message, Guid eventId, CancellationToken ct, string language = "en")
     {
         if (Name != "Brevo")
             return new("Captured", eventId.ToString());
@@ -71,6 +73,7 @@ public sealed class EmailProvider(HttpClient http, IConfiguration config) : IEma
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.brevo.com/v3/smtp/email");
             request.Headers.Add("api-key", key);
+            var content = CitizenEmailContent.Create(message, language);
             request.Content = JsonContent.Create(new
             {
                 sender = new
@@ -79,8 +82,9 @@ public sealed class EmailProvider(HttpClient http, IConfiguration config) : IEma
                     email = sender
                 },
                 to = new[] { new { email } },
-                subject = "Surakuma request update",
-                textContent = message,
+                subject = content.Subject,
+                textContent = content.Text,
+                htmlContent = content.Html,
                 headers = new Dictionary<string, string> { ["X-Surakuma-Event"] = eventId.ToString() }
             });
             using var response = await http.SendAsync(request, ct);
@@ -93,8 +97,13 @@ public sealed class EmailProvider(HttpClient http, IConfiguration config) : IEma
             using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
             return new("Sent", json.RootElement.TryGetProperty("messageId", out var id) ? id.GetString() : null);
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        catch (BrokenCircuitException)
         {
+            return new("Retry", Error: "Email circuit is open; no send was attempted.");
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException or TimeoutRejectedException)
+        {
+            if (ct.IsCancellationRequested) throw;
             return new("Review", Error: "Send outcome unknown; verify with provider before retrying.");
         }
     }
@@ -102,7 +111,7 @@ public sealed class EmailProvider(HttpClient http, IConfiguration config) : IEma
 public sealed class CaptureEmailProvider : IEmailProvider
 {
     public string Name => "Development capture";
-    public Task<DeliveryResult> SendAsync(string email, string message, Guid eventId, CancellationToken ct) => Task.FromResult(new DeliveryResult("Captured", eventId.ToString()));
+    public Task<DeliveryResult> SendAsync(string email, string message, Guid eventId, CancellationToken ct, string language = "en") => Task.FromResult(new DeliveryResult("Captured", eventId.ToString()));
 }
 public static class EmailProviderFactory
 {
@@ -129,8 +138,13 @@ public sealed class MappingProvider(HttpClient http, IConfiguration config) : IM
                 return null;
             return JsonSerializer.Deserialize<JsonElement>(await response.Content.ReadAsStringAsync(ct));
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException) { return null; }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException or BrokenCircuitException or TimeoutRejectedException)
+        {
+            if (ct.IsCancellationRequested) throw;
+            return null;
+        }
     }
     public Task<object?> GeocodeAsync(string query, CancellationToken ct) => Get("https://api.openrouteservice.org/geocode/search?boundary.country=LKA&size=5&text=" + Uri.EscapeDataString(query), ct);
+    public Task<object?> ReverseGeocodeAsync(double latitude, double longitude, CancellationToken ct) => Get(FormattableString.Invariant($"https://api.openrouteservice.org/geocode/reverse?point.lat={latitude}&point.lon={longitude}&size=5"), ct);
     public Task<object?> RouteAsync(double startLat, double startLng, double endLat, double endLng, CancellationToken ct) => Get(FormattableString.Invariant($"https://api.openrouteservice.org/v2/directions/driving-car?start={startLng},{startLat}&end={endLng},{endLat}"), ct);
 }

@@ -28,4 +28,14 @@ test('mobile citizen form supports three languages and accessible fields', async
     result.violations.map((v) => ({ id: v.id, targets: v.nodes.map((n) => n.target) })),
   ).toEqual([]);
   await page.screenshot({ path: '../docs/screenshots/citizen-form-375.png', fullPage: true });
+  await page.getByLabel('Crisis event').selectOption({ index: 1 });
+  await page.getByLabel('Describe what you need').fill('Synthetic request to check draft photo handling.');
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(page.getByText(/Photos are not saved in the draft/)).toBeVisible();
+  await page.getByLabel('Supporting photo (optional)').setInputFiles({ name: 'draft.png', mimeType: 'image/png', buffer: Buffer.from('89504e470d0a1a0a', 'hex') });
+  await page.reload();
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(page.getByLabel('Supporting photo (optional)')).toHaveValue('');
+  await expect(page.getByText(/Photos are not saved in the draft/)).toBeVisible();
 });

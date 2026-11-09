@@ -17,7 +17,7 @@ import {
   Loading,
   PageHeader,
 } from './components';
-import type { Alert, Crisis, Lookups, User, VolunteerData } from './types';
+import type { AidRequest, Alert, Crisis, Lookups, Page, User, VolunteerData } from './types';
 function useWrite() {
   const client = useQueryClient();
   return useMutation({
@@ -50,7 +50,12 @@ export function VolunteerPage({ self = false }: { self?: boolean }) {
       queryFn: () => get<VolunteerData>('/volunteers'),
     }),
     write = useWrite();
-  const [add, setAdd] = useState(false);
+  const [add, setAdd] = useState(false), [caseSearch, setCaseSearch] = useState('');
+  const cases = useQuery({
+    queryKey: ['volunteer-cases', caseSearch],
+    queryFn: () => get<Page<AidRequest>>(`/requests?search=${encodeURIComponent(caseSearch)}&page=1`),
+    enabled: !self,
+  });
   const lookups = useQuery({
     queryKey: ['lookups'],
     queryFn: () => get<Lookups>('/public/lookups'),
@@ -147,8 +152,7 @@ export function VolunteerPage({ self = false }: { self?: boolean }) {
                     {query.data?.profiles.map((v) => (
                       <tr key={v.id}>
                         <td>
-                          <strong>{v.id.slice(0, 8)}</strong>
-                          <small>User: {v.userId}</small>
+                          <strong>{query.data?.names?.[v.userId] || v.id.slice(0, 8)}</strong>
                         </td>
                         <td>{v.skills}</td>
                         <td>
@@ -179,12 +183,19 @@ export function VolunteerPage({ self = false }: { self?: boolean }) {
                   });
                 }}
               >
-                <Field label="Case ID">
-                  <input
-                    name="requestId"
-                    required
-                    placeholder="Copy the case ID from the case URL"
-                  />
+                <Field label="Search cases" hint="Search by reference or request details, then select a case below.">
+                  <input value={caseSearch} onChange={(e) => setCaseSearch(e.target.value)} />
+                </Field>
+                {cases.isPending && <Loading />}
+                {cases.error && <ErrorState error={cases.error} />}
+                {cases.data && cases.data.total > cases.data.items.length && <p>Showing the first {cases.data.items.length} matches. Search by reference to narrow the list.</p>}
+                <Field label="Case">
+                  <select name="requestId" required defaultValue="">
+                    <option value="">Select a case</option>
+                    {cases.data?.items.filter((r) => !['Closed', 'Rejected', 'Cancelled'].includes(r.status)).map((r) => (
+                      <option key={r.id} value={r.id}>{r.reference} · {r.locationText}</option>
+                    ))}
+                  </select>
                 </Field>
                 <Field label="Verified volunteer">
                   <select name="volunteerId" required>
@@ -192,7 +203,7 @@ export function VolunteerPage({ self = false }: { self?: boolean }) {
                       .filter((v) => v.verified && v.available)
                       .map((v) => (
                         <option key={v.id} value={v.id}>
-                          {v.id.slice(0, 8)} · {v.skills}
+                          {query.data?.names?.[v.userId] || v.id.slice(0, 8)} · {v.skills}
                         </option>
                       ))}
                   </select>
@@ -265,6 +276,7 @@ export function VolunteerPage({ self = false }: { self?: boolean }) {
 export function CrisesPage() {
   const query = useQuery({ queryKey: ['crises'], queryFn: () => get<Crisis[]>('/crises') }),
     alerts = useQuery({ queryKey: ['alerts'], queryFn: () => get<Alert[]>('/alerts') }),
+    lookups = useQuery({ queryKey: ['lookups'], queryFn: () => get<Lookups>('/public/lookups') }),
     write = useWrite();
   const [create, setCreate] = useState(false),
     [areaCrisis, setAreaCrisis] = useState('');
@@ -364,6 +376,19 @@ export function CrisesPage() {
               <p>
                 {c.type} · {c.district}
               </p>
+              <form className="stack" onSubmit={(e) => {
+                e.preventDefault();
+                const centre = String(new FormData(e.currentTarget).get('centre') || '');
+                write.mutate({ path: `/crises/${c.id}/centre`, method: 'put', data: { organisationId: centre || null } });
+              }}>
+                <Field label="Primary response centre">
+                  <select name="centre" defaultValue={c.primaryOrganisationId || ''} key={c.primaryOrganisationId || 'none'}>
+                    <option value="">No centre configured</option>
+                    {lookups.data?.organisations.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                  </select>
+                </Field>
+                <Button variant="secondary" busy={write.isPending}>Save response centre</Button>
+              </form>
               <div className="button-row">
                 <Button
                   variant="secondary"
@@ -503,12 +528,58 @@ interface AdminUser {
   email: string;
   memberships: { id: string; role: string; organisationId: string }[];
 }
+function AdminTriageRequest({ request, organisations }: { request: AidRequest; organisations: Lookups['organisations'] }) {
+  const write = useWrite();
+  const managers = useQuery({
+    queryKey: ['case-managers', request.id],
+    queryFn: () => get<{ id: string; name: string; availableForAssignment: boolean }[]>(`/requests/${request.id}/case-managers`),
+    enabled: !!request.organisationId,
+  });
+  return (
+    <div className="audit-entry">
+      <details>
+        <summary>{request.reference} · {request.category} · {request.organisationId ? 'Awaiting case manager' : 'Awaiting centre'}</summary>
+        <p>{request.description}</p>
+        <p>Location: {request.locationText}</p>
+        {request.requestedForSomeoneElse && <p>Requester: {request.requesterRelationship || 'Relationship not provided'} · {request.requesterContact || 'Contact not provided'}</p>}
+      </details>
+      <Message mutation={write} />
+      {!request.organisationId ? (
+        <form className="inline" onSubmit={(event) => {
+          event.preventDefault();
+          const organisationId = String(new FormData(event.currentTarget).get('organisationId') || '');
+          if (organisationId) write.mutate({ path: `/requests/${request.id}/reassign`, data: { organisationId } });
+        }}>
+          <label>Response centre <select name="organisationId" required defaultValue="">
+            <option value="">Select a centre</option>
+            {organisations.map((organisation) => <option key={organisation.id} value={organisation.id}>{organisation.name}</option>)}
+          </select></label>
+          <Button busy={write.isPending}>Assign centre</Button>
+        </form>
+      ) : (
+        <form className="inline" onSubmit={(event) => {
+          event.preventDefault();
+          const userId = String(new FormData(event.currentTarget).get('userId') || '');
+          if (userId) write.mutate({ path: `/requests/${request.id}/case-manager`, data: { userId } });
+        }}>
+          {managers.error && <ErrorState error={managers.error} />}
+          <label>Case manager <select name="userId" required defaultValue="">
+            <option value="">Select a case manager</option>
+            {managers.data?.map((manager) => <option key={manager.id} value={manager.id}>{manager.name}{manager.availableForAssignment ? '' : ' (unavailable)'}</option>)}
+          </select></label>
+          <Button busy={write.isPending}>Assign case manager</Button>
+        </form>
+      )}
+    </div>
+  );
+}
 export function AdminPage() {
   const users = useQuery({
       queryKey: ['admin-users'],
       queryFn: () => get<AdminUser[]>('/admin/users'),
     }),
     lookups = useQuery({ queryKey: ['lookups'], queryFn: () => get<Lookups>('/public/lookups') }),
+    triage = useQuery({ queryKey: ['triage'], queryFn: () => get<AidRequest[]>('/requests/triage') }),
     audit = useQuery({
       queryKey: ['audit'],
       queryFn: () =>
@@ -532,6 +603,11 @@ export function AdminPage() {
       />
       <SystemReadiness />
       <Message mutation={write} />
+      <Card>
+        <h2>Unassigned requests</h2>
+        {triage.isPending ? <Loading /> : triage.error ? <ErrorState error={triage.error} /> :
+          triage.data?.length ? triage.data.map((request) => <AdminTriageRequest key={request.id} request={request} organisations={lookups.data?.organisations || []} />) : <p>No requests are waiting for assignment.</p>}
+      </Card>
       <div className="two-column">
         <Card>
           <h2>Create staff account or grant role</h2>

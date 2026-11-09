@@ -20,8 +20,8 @@ public static class SeedData
         var partner = new Organisation { Name = "Southern Relief Network (demo)" };
         db.AddRange(org, partner);
         await db.SaveChangesAsync();
-        var crisis = new Crisis { Name = "Kelani River flood response", Type = "Flood", District = "Colombo", Latitude = 6.93, Longitude = 79.89 };
-        var landslide = new Crisis { Name = "Hill country landslide response", Type = "Landslide", District = "Ratnapura", Latitude = 6.68, Longitude = 80.40 };
+        var crisis = new Crisis { Name = "Kelani River flood response", Type = "Flood", District = "Colombo", Latitude = 6.93, Longitude = 79.89, PrimaryOrganisationId = org.Id };
+        var landslide = new Crisis { Name = "Hill country landslide response", Type = "Landslide", District = "Ratnapura", Latitude = 6.68, Longitude = 80.40, PrimaryOrganisationId = org.Id };
         db.AddRange(crisis, landslide);
         var accounts = new (string Email, string Name, string Role)[] { ("citizen", "Amara Silva", Roles.Citizen), ("coordinator", "Nimali Perera", Roles.Coordinator), ("case", "Dilan Fernando", Roles.CaseManager), ("logistics", "Kasun Jayasuriya", Roles.Logistics), ("shelter", "Malini De Silva", Roles.ShelterAdmin), ("volunteers", "Ravi Kumar", Roles.VolunteerCoordinator), ("volunteer", "Asha Raman", Roles.Volunteer), ("admin", "System Administrator", Roles.Administrator) };
         var registered = new Dictionary<string, AppUser>();
@@ -36,7 +36,7 @@ public static class SeedData
             if (account.Role == Roles.Citizen)
                 db.Add(new Household { UserId = user.Id, Size = 4 });
             else
-                db.Add(new Membership { UserId = user.Id, OrganisationId = org.Id, Role = account.Role });
+                db.Add(new Membership { UserId = user.Id, OrganisationId = org.Id, Role = account.Role, AvailableForAssignment = account.Role == Roles.CaseManager });
         }
         db.Add(new CrisisAssignment { CrisisId = crisis.Id, UserId = registered["coordinator"].Id });
         db.Add(new CrisisAssignment { CrisisId = landslide.Id, UserId = registered["coordinator"].Id });

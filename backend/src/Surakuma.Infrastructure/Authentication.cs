@@ -101,7 +101,7 @@ public sealed class AuthenticationService(UserManager<AppUser> users, CrisisDbCo
     private async Task<AuthSession> CreateSession(AppUser user, CancellationToken ct)
     {
         var roles = await users.GetRolesAsync(user);
-        var claims = new List<Claim> { new(ClaimTypes.NameIdentifier, user.Id), new(ClaimTypes.Name, user.DisplayName), new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()) };
+        var claims = new List<Claim> { new(ClaimTypes.NameIdentifier, user.Id), new(ClaimTypes.Name, user.DisplayName), new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()), new("security_stamp", await users.GetSecurityStampAsync(user) ?? "") };
         claims.AddRange(roles.Select(r => new Claim(ClaimTypes.Role, r)));
         var credentials = new SigningCredentials(new SymmetricSecurityKey(Encoding.UTF8.GetBytes(config["Jwt:Key"]!)), SecurityAlgorithms.HmacSha256);
         var jwt = new JwtSecurityToken(config["Jwt:Issuer"], config["Jwt:Audience"], claims, expires: DateTime.UtcNow.AddMinutes(15), signingCredentials: credentials);

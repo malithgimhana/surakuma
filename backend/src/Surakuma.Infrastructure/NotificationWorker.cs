@@ -69,7 +69,7 @@ public sealed class NotificationWorker(IServiceScopeFactory scopeFactory, ILogge
             await tx.CommitAsync(ct);
         }
         var user = await db.Users.FindAsync([message.UserId], ct);
-        var result = user?.Email is null ? new DeliveryResult("Failed", Error: "Recipient email unavailable.") : await provider.SendAsync(user.Email, user.Language == "si" ? message.SinhalaMessage : user.Language == "ta" ? message.TamilMessage : message.Message, message.Id, ct);
+        var result = user?.Email is null ? new DeliveryResult("Failed", Error: "Recipient email unavailable.") : await provider.SendAsync(user.Email, user.Language == "si" ? message.SinhalaMessage : user.Language == "ta" ? message.TamilMessage : message.Message, message.Id, ct, user.Language);
         message.State = result.State == "Retry" && message.Attempts >= 4 ? "Failed" : result.State;
         message.LastError = result.Error;
         message.NextAttemptAt = DateTimeOffset.UtcNow.AddSeconds(Math.Pow(2, message.Attempts) * 10);

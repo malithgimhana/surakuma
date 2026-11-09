@@ -14,6 +14,20 @@ namespace Surakuma.Tests;
 public sealed partial class IntegrationTests
 {
     [Fact]
+    public async Task EscalationHasDistinctHistoryWithoutChangingStatus()
+    {
+        using var coordinator = await fixture.Login("coordinator");
+        using var scope = fixture.Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
+        var request = await db.Set<AssistanceRequest>().FirstAsync(x => x.SubmissionKey == "seed-food");
+        string originalStatus = request.Status.ToString();
+        var response = await coordinator.PostAsJsonAsync($"/api/v1/requests/{request.Id}/escalate", new { action = "Escalate", note = "Needs coordinator attention" });
+        response.EnsureSuccessStatusCode();
+        var detail = await coordinator.GetFromJsonAsync<JsonElement>($"/api/v1/requests/{request.Id}");
+        Assert.Equal(originalStatus, detail.GetProperty("request").GetProperty("status").GetString());
+        Assert.Contains(detail.GetProperty("history").EnumerateArray(), h => h.GetProperty("status").GetString() == "Escalated");
+    }
+    [Fact]
     public async Task InvalidCoordinatesAreRejectedBeforeCreatingPublicShelter()
     {
         using var client = await fixture.Login("shelter");
@@ -36,7 +50,7 @@ public sealed partial class IntegrationTests
         Assert.False(await db.Set<Shelter>().AnyAsync(x => x.Name == "Invalid coordinate test"));
     }
     [Fact]
-    public async Task OrganisationSharingRequiresExplicitCoordinatorAction()
+    public async Task OrganisationAccessRequiresAssignmentByCoordinator()
     {
         string account = "partner" + Guid.NewGuid().ToString("N")[..8];
         Guid requestId, partnerId;
@@ -44,7 +58,9 @@ public sealed partial class IntegrationTests
         {
             var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
             var users = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
-            var request = await db.Set<AssistanceRequest>().FirstAsync();
+            var seed = await db.Set<AssistanceRequest>().FirstAsync(x => x.SubmissionKey == "seed-food");
+            var request = new AssistanceRequest { CitizenId = seed.CitizenId, CrisisId = seed.CrisisId, OrganisationId = seed.OrganisationId, Category = AidCategory.FoodWater, Description = "Synthetic organisation access test", LocationText = "Synthetic location", SubmissionKey = Guid.NewGuid().ToString() };
+            db.Add(request);
             requestId = request.Id;
             partnerId = await db.Set<Organisation>().Where(o => o.Id != request.OrganisationId).Select(o => o.Id).FirstAsync();
             var user = new AppUser { UserName = account + "@surakuma.test", Email = account + "@surakuma.test", DisplayName = "Synthetic partner officer" };
@@ -56,10 +72,12 @@ public sealed partial class IntegrationTests
         using var partner = await fixture.Login(account);
         Assert.Equal(HttpStatusCode.NotFound, (await partner.GetAsync($"/api/v1/requests/{requestId}")).StatusCode);
         using var coordinator = await fixture.Login("coordinator");
-        (await coordinator.PostAsJsonAsync($"/api/v1/requests/{requestId}/shares", new
+        Assert.Equal(HttpStatusCode.BadRequest, (await coordinator.PostAsJsonAsync($"/api/v1/requests/{requestId}/shares", new
         {
             organisationId = partnerId
-        })).EnsureSuccessStatusCode();
+        })).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await partner.GetAsync($"/api/v1/requests/{requestId}")).StatusCode);
+        (await coordinator.PostAsJsonAsync($"/api/v1/requests/{requestId}/reassign", new { organisationId = partnerId })).EnsureSuccessStatusCode();
         Assert.Equal(HttpStatusCode.OK, (await partner.GetAsync($"/api/v1/requests/{requestId}")).StatusCode);
     }
     [Fact]
@@ -70,7 +88,7 @@ public sealed partial class IntegrationTests
         {
             var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
             var seed = await db.Set<AssistanceRequest>().FirstAsync();
-            var shelter = new Shelter { OrganisationId = seed.OrganisationId, Name = "Concurrency test shelter", Capacity = 5, Accessible = true };
+            var shelter = new Shelter { OrganisationId = seed.OrganisationId!.Value, Name = "Concurrency test shelter", Capacity = 5, Accessible = true };
             db.Add(shelter);
             shelterId = shelter.Id;
             var first = new AssistanceRequest { CitizenId = seed.CitizenId, CrisisId = seed.CrisisId, OrganisationId = seed.OrganisationId, Category = AidCategory.Shelter, HouseholdSize = 4, Quantity = 1, Status = RequestStatus.Approved, SubmissionKey = Guid.NewGuid().ToString() };
@@ -110,6 +128,83 @@ public sealed partial class IntegrationTests
         (await a.PostAsync($"/api/v1/shelter-allocations/{placementId}/Depart", null)).EnsureSuccessStatusCode();
     }
     [Fact]
+    public async Task AllocationRecommendationsRequireStaffAndAuditHumanChoices()
+    {
+        Guid requestId;
+        using (var scope = fixture.Factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
+            var seed = await db.Set<AssistanceRequest>().FirstAsync();
+            var request = new AssistanceRequest { CitizenId = seed.CitizenId, CrisisId = seed.CrisisId, OrganisationId = seed.OrganisationId, Category = AidCategory.FoodWater, Quantity = 10, Status = RequestStatus.Approved, SubmissionKey = Guid.NewGuid().ToString() };
+            db.Add(request); db.Add(new Resource { OrganisationId = seed.OrganisationId!.Value, Name = "Recommendation stock", Category = AidCategory.FoodWater, Unit = "packs", Stock = 10 });
+            await db.SaveChangesAsync(); requestId = request.Id;
+        }
+        using var citizen = await fixture.Login("citizen");
+        Assert.Equal(HttpStatusCode.Forbidden, (await citizen.GetAsync($"/api/v1/requests/{requestId}/allocation-recommendations")).StatusCode);
+        using var logistics = await fixture.Login("logistics");
+        var suggestions = await logistics.GetFromJsonAsync<JsonElement>($"/api/v1/requests/{requestId}/allocation-recommendations");
+        var candidate = suggestions.GetProperty("candidates").EnumerateArray().First(x => x.GetProperty("transportAvailable").GetBoolean());
+        Guid resourceId = candidate.GetProperty("resourceId").GetGuid();
+        var stale = await logistics.PostAsJsonAsync("/api/v1/allocations", new { requestId, resourceId, quantity = 1, recommendedResourceId = Guid.NewGuid() });
+        Assert.Equal(HttpStatusCode.BadRequest, stale.StatusCode);
+        (await logistics.PostAsJsonAsync($"/api/v1/requests/{requestId}/allocation-recommendations/ignore", new { recommendedResourceId = resourceId })).EnsureSuccessStatusCode();
+        (await logistics.PostAsJsonAsync("/api/v1/allocations", new { requestId, resourceId, quantity = 1, recommendedResourceId = resourceId })).EnsureSuccessStatusCode();
+        using var check = fixture.Factory.Services.CreateScope();
+        var audits = await check.ServiceProvider.GetRequiredService<CrisisDbContext>().Set<AuditEvent>().Where(x => x.EntityId == requestId).Select(x => x.Action).ToListAsync();
+        Assert.Contains("AllocationRecommendationIgnored", audits); Assert.Contains("AllocationRecommendationAccepted", audits);
+    }
+    [Fact]
+    public async Task MetricsCountApprovalModificationRejectionAndDeferral()
+    {
+        using var coordinator = await fixture.Login("coordinator");
+        var before = await coordinator.GetFromJsonAsync<JsonElement>("/api/v1/reports/metrics");
+        using (var scope = fixture.Factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
+            var request = await db.Set<AssistanceRequest>().FirstAsync(x => x.SubmissionKey == "seed-food");
+            var recommendation = new Recommendation { RequestId = request.Id };
+            db.Add(recommendation);
+            foreach (var action in new[] { "Approve", "Modify", "Reject", "Defer" })
+                db.Add(new HumanDecision { RequestId = request.Id, RecommendationId = recommendation.Id, Action = action });
+            await db.SaveChangesAsync();
+        }
+        var after = await coordinator.GetFromJsonAsync<JsonElement>("/api/v1/reports/metrics");
+        foreach (var field in new[] { "aiApprovedCount", "aiModifiedCount", "aiRejectedCount", "aiDeferredCount" })
+            Assert.Equal(before.GetProperty(field).GetInt32() + 1, after.GetProperty(field).GetInt32());
+        int modified = after.GetProperty("aiModifiedCount").GetInt32(), rejected = after.GetProperty("aiRejectedCount").GetInt32();
+        int total = modified + rejected + after.GetProperty("aiApprovedCount").GetInt32() + after.GetProperty("aiDeferredCount").GetInt32();
+        Assert.Equal((double)(modified + rejected) / total, after.GetProperty("aiOverrideFrequency").GetDouble(), 8);
+    }
+    [Fact]
+    public async Task QuantityRulesAreEnforcedAcrossRequestAndResourceEndpoints()
+    {
+        Guid requestId, orgId, crisisId;
+        using (var scope = fixture.Factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
+            var seed = await db.Set<AssistanceRequest>().FirstAsync();
+            orgId = seed.OrganisationId!.Value; crisisId = seed.CrisisId;
+            var request = new AssistanceRequest { CitizenId = seed.CitizenId, CrisisId = crisisId, OrganisationId = orgId, Category = AidCategory.FoodWater, Quantity = 10, Status = RequestStatus.Approved, SubmissionKey = Guid.NewGuid().ToString() };
+            db.Add(request); await db.SaveChangesAsync(); requestId = request.Id;
+        }
+        using var citizen = await fixture.Login("citizen");
+        var submission = new { crisisId, organisationId = orgId, category = "FoodWater", priority = "High", description = "Synthetic request for food supplies", locationText = "Test location", householdSize = 2, accessibilityNeeds = "", quantity = 2.5m, submissionKey = Guid.NewGuid().ToString(), synthetic = true };
+        Assert.Equal(HttpStatusCode.BadRequest, (await citizen.PostAsJsonAsync("/api/v1/requests", submission)).StatusCode);
+        using var logistics = await fixture.Login("logistics");
+        object ResourceInput(string unit, decimal stock) => new { organisationId = orgId, name = "Quantity test " + unit, category = "FoodWater", unit, stock, locationText = "Depot", latitude = 6.9, longitude = 79.9, suitability = "", transportAvailable = true };
+        Assert.Equal(HttpStatusCode.BadRequest, (await logistics.PostAsJsonAsync("/api/v1/resources", ResourceInput("kits", 2.5m))).StatusCode);
+        var kitResponse = await logistics.PostAsJsonAsync("/api/v1/resources", ResourceInput("kits", 5));
+        kitResponse.EnsureSuccessStatusCode();
+        Guid kits = (await kitResponse.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+        var kgResponse = await logistics.PostAsJsonAsync("/api/v1/resources", ResourceInput("kg", 5.5m));
+        kgResponse.EnsureSuccessStatusCode();
+        Guid kg = (await kgResponse.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+        Assert.Equal(HttpStatusCode.BadRequest, (await logistics.PostAsJsonAsync($"/api/v1/resources/{kits}/replenish", new { quantity = 1.5m, note = "test" })).StatusCode);
+        (await logistics.PostAsJsonAsync($"/api/v1/resources/{kg}/replenish", new { quantity = 1.5m, note = "test" })).EnsureSuccessStatusCode();
+        Assert.Equal(HttpStatusCode.BadRequest, (await logistics.PostAsJsonAsync("/api/v1/allocations", new { requestId, resourceId = kits, quantity = 1.5m })).StatusCode);
+        (await logistics.PostAsJsonAsync("/api/v1/allocations", new { requestId, resourceId = kg, quantity = 1.5m })).EnsureSuccessStatusCode();
+    }
+    [Fact]
     public async Task PartialDeliveryRemainderAndClosureWorkEndToEnd()
     {
         Guid requestId, resourceId;
@@ -119,7 +214,7 @@ public sealed partial class IntegrationTests
             var seed = await db.Set<AssistanceRequest>().FirstAsync();
             string citizenId = await db.Users.Where(x => x.UserName == "citizen@surakuma.test").Select(x => x.Id).SingleAsync();
             var request = new AssistanceRequest { CitizenId = citizenId, CrisisId = seed.CrisisId, OrganisationId = seed.OrganisationId, Category = AidCategory.FoodWater, Quantity = 10, Status = RequestStatus.Approved, SubmissionKey = Guid.NewGuid().ToString() };
-            var resource = new Resource { OrganisationId = seed.OrganisationId, Name = "Delivery test packs", Category = AidCategory.FoodWater, Stock = 6 };
+            var resource = new Resource { OrganisationId = seed.OrganisationId!.Value, Name = "Delivery test packs", Category = AidCategory.FoodWater, Stock = 6 };
             db.AddRange(request, resource);
             await db.SaveChangesAsync();
             requestId = request.Id;

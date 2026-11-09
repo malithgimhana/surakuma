@@ -166,6 +166,13 @@ namespace Surakuma.Infrastructure.Migrations
                         .HasMaxLength(4000)
                         .HasColumnType("nvarchar(4000)");
 
+                    b.Property<string>("AssignmentStatus")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<string>("AssignedCaseManagerId").HasMaxLength(450).HasColumnType("nvarchar(450)");
+
                     b.Property<string>("Category")
                         .IsRequired()
                         .HasMaxLength(50)
@@ -208,7 +215,7 @@ namespace Surakuma.Infrastructure.Migrations
                     b.Property<double?>("Longitude")
                         .HasColumnType("float");
 
-                    b.Property<Guid>("OrganisationId")
+                    b.Property<Guid?>("OrganisationId")
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<string>("Priority")
@@ -224,6 +231,12 @@ namespace Surakuma.Infrastructure.Migrations
                         .IsRequired()
                         .HasMaxLength(30)
                         .HasColumnType("nvarchar(30)");
+
+                    b.Property<bool>("RequestedForSomeoneElse").HasColumnType("bit");
+
+                    b.Property<string>("RequesterContact").IsRequired().HasMaxLength(4000).HasColumnType("nvarchar(4000)");
+
+                    b.Property<string>("RequesterRelationship").IsRequired().HasMaxLength(4000).HasColumnType("nvarchar(4000)");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -248,6 +261,8 @@ namespace Surakuma.Infrastructure.Migrations
                         .HasColumnType("rowversion");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("AssignedCaseManagerId");
 
                     b.HasIndex("OrganisationId");
 
@@ -419,6 +434,8 @@ namespace Surakuma.Infrastructure.Migrations
                         .HasMaxLength(4000)
                         .HasColumnType("nvarchar(4000)");
 
+                    b.Property<Guid?>("PrimaryOrganisationId").HasColumnType("uniqueidentifier");
+
                     b.Property<string>("Type")
                         .IsRequired()
                         .HasMaxLength(4000)
@@ -434,6 +451,8 @@ namespace Surakuma.Infrastructure.Migrations
                         .HasColumnType("rowversion");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("PrimaryOrganisationId");
 
                     b.ToTable("Crisis");
                 });
@@ -621,6 +640,8 @@ namespace Surakuma.Infrastructure.Migrations
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("datetimeoffset");
+
+                    b.Property<bool>("AvailableForAssignment").HasColumnType("bit");
 
                     b.Property<Guid>("OrganisationId")
                         .HasColumnType("uniqueidentifier");
@@ -1684,6 +1705,7 @@ namespace Surakuma.Infrastructure.Migrations
 
             modelBuilder.Entity("Surakuma.Domain.AssistanceRequest", b =>
                 {
+                    b.HasOne("Surakuma.Infrastructure.AppUser", null).WithMany().HasForeignKey("AssignedCaseManagerId").OnDelete(DeleteBehavior.Restrict);
                     b.HasOne("Surakuma.Infrastructure.AppUser", null)
                         .WithMany()
                         .HasForeignKey("CitizenId")
@@ -1699,8 +1721,7 @@ namespace Surakuma.Infrastructure.Migrations
                     b.HasOne("Surakuma.Domain.Organisation", null)
                         .WithMany()
                         .HasForeignKey("OrganisationId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("Surakuma.Domain.Attachment", b =>
@@ -1740,6 +1761,11 @@ namespace Surakuma.Infrastructure.Migrations
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("Surakuma.Domain.Crisis", b =>
+                {
+                    b.HasOne("Surakuma.Domain.Organisation", null).WithMany().HasForeignKey("PrimaryOrganisationId").OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("Surakuma.Domain.Feedback", b =>

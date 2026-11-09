@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, NavLink, Outlet } from 'react-router-dom';
+import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   ArrowUpRight,
@@ -12,15 +12,44 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
+  Moon,
   Settings,
   ShieldCheck,
   Siren,
+  Sun,
   Tent,
   Users,
   X,
 } from 'lucide-react';
 import { Brand, Button } from './components';
 import { landing, useAuth } from './auth';
+function ThemeToggle() {
+  const { t } = useTranslation();
+  const [dark, setDark] = useState(() => document.documentElement.dataset.theme === 'dark');
+  function toggle() {
+    const next = !dark;
+    setDark(next);
+    if (next) document.documentElement.dataset.theme = 'dark';
+    else delete document.documentElement.dataset.theme;
+    try {
+      localStorage.setItem('surakuma.theme', next ? 'dark' : 'light');
+    } catch {
+      // The selection still works for this page when storage is unavailable.
+    }
+  }
+  const label = t(dark ? 'lightMode' : 'darkMode');
+  return (
+    <button
+      type="button"
+      className="theme-toggle"
+      onClick={toggle}
+      aria-label={label}
+      title={label}
+    >
+      {dark ? <Sun size={19} aria-hidden="true" /> : <Moon size={19} aria-hidden="true" />}
+    </button>
+  );
+}
 function Language() {
   const { i18n, t } = useTranslation();
   return (
@@ -46,7 +75,7 @@ export function PublicLayout() {
   return (
     <>
       <a href="#main" className="skip-link">
-        {t('next')}
+        {t('skipMain')}
       </a>
       <header className="public-header">
         <div className="container header-inner">
@@ -62,8 +91,12 @@ export function PublicLayout() {
             <NavLink to="/alerts">{t('alerts')}</NavLink>
             <NavLink to="/shelters">{t('shelters')}</NavLink>
             <NavLink to="/contact">{t('contact')}</NavLink>
+            <Link className="mobile-workspace-link" to={user ? landing(user) : '/login'}>
+              {user ? t('workspace') : t('login')}
+            </Link>
           </nav>
           <div className="header-actions">
+            <ThemeToggle />
             <Language />
             <Link className="button secondary compact" to={user ? landing(user) : '/login'}>
               {user ? t('workspace') : t('login')}
@@ -71,7 +104,7 @@ export function PublicLayout() {
             </Link>
             <button
               className="mobile-menu"
-              aria-label={t('menu')}
+              aria-label={t(open ? 'closeMenu' : 'menu')}
               aria-expanded={open}
               onClick={() => setOpen(!open)}
             >
@@ -103,12 +136,12 @@ export function PublicLayout() {
   );
 }
 const staffNav = [
-  ['/staff', 'Overview', LayoutDashboard],
-  ['/staff/cases', 'Cases & AI review', ClipboardList],
-  ['/staff/resources', 'Resources & logistics', Boxes],
-  ['/staff/shelters', 'Shelter management', Tent],
-  ['/staff/volunteers', 'Volunteer coordination', Users],
-  ['/staff/crises', 'Crises & public alerts', Siren],
+  ['/staff', 'staffOverview', LayoutDashboard],
+  ['/staff/cases', 'staffCases', ClipboardList],
+  ['/staff/resources', 'staffResources', Boxes],
+  ['/staff/shelters', 'staffShelters', Tent],
+  ['/staff/volunteers', 'staffVolunteers', Users],
+  ['/staff/crises', 'staffCrises', Siren],
 ] as const;
 export function AppLayout({
   mode = 'citizen',
@@ -117,6 +150,11 @@ export function AppLayout({
 }) {
   const { user, logout } = useAuth(),
     { t } = useTranslation();
+  const location = useLocation();
+  const home = user ? landing(user) : '/app';
+  const effectiveMode = mode === 'citizen' && ['/app/notifications', '/app/profile'].includes(location.pathname)
+    ? home === '/staff' ? 'staff' : home === '/admin' ? 'admin' : home === '/volunteer' ? 'volunteer' : 'citizen'
+    : mode;
   const [open, setOpen] = useState(false),
     [logoutError, setLogoutError] = useState(false);
   const citizenNav = [
@@ -128,7 +166,7 @@ export function AppLayout({
     ['/app/profile', t('profile'), Settings],
   ] as const;
   const nav =
-    mode === 'staff'
+    effectiveMode === 'staff'
       ? staffNav.filter(
           ([path]) =>
             path === '/staff' ||
@@ -140,10 +178,10 @@ export function AppLayout({
             (path.includes('volunteers') &&
               user?.roles.some((r) => ['VolunteerCoordinator', 'Coordinator'].includes(r))) ||
             (path.includes('crises') && user?.roles.includes('Coordinator')),
-        )
-      : mode === 'admin'
+        ).map(([path, label, icon]) => [path, t(label), icon] as const)
+      : effectiveMode === 'admin'
         ? ([['/admin', 'Administration', ShieldCheck]] as const)
-        : mode === 'volunteer'
+        : effectiveMode === 'volunteer'
           ? ([
               ['/volunteer', 'My assignments', Users],
               ['/app/profile', t('profile'), Settings],
@@ -151,14 +189,15 @@ export function AppLayout({
           : citizenNav;
   return (
     <div className="workspace">
+      <a href="#main" className="skip-link">{t('skipMain')}</a>
       <aside className={`sidebar ${open ? 'open' : ''}`}>
         <Brand />
         <div className="sidebar-caption">
-          {mode === 'citizen'
+          {effectiveMode === 'citizen'
             ? t('communityTag')
-            : mode === 'staff'
+            : effectiveMode === 'staff'
               ? 'OPERATIONS WORKSPACE'
-              : mode === 'admin'
+              : effectiveMode === 'admin'
                 ? 'SYSTEM ADMINISTRATION'
                 : 'VOLUNTEER WORKSPACE'}
         </div>
@@ -187,13 +226,14 @@ export function AppLayout({
       </aside>
       <div className="workspace-main">
         <header className="workspace-top">
-          <button className="mobile-menu" aria-label={t('menu')} onClick={() => setOpen(!open)}>
-            <Menu />
+          <button className="mobile-menu" aria-label={t(open ? 'closeMenu' : 'menu')} aria-expanded={open} onClick={() => setOpen(!open)}>
+            {open ? <X /> : <Menu />}
           </button>
           <Link to="/" className="back-public">
             ← {t('home')}
           </Link>
           <div className="header-actions">
+            <ThemeToggle />
             <Language />
             <Link
               to="/app/notifications"
@@ -214,7 +254,7 @@ export function AppLayout({
         </main>
       </div>
       {open && (
-        <button className="sidebar-scrim" aria-label="Close menu" onClick={() => setOpen(false)} />
+        <button className="sidebar-scrim" aria-label={t('closeMenu')} onClick={() => setOpen(false)} />
       )}
     </div>
   );

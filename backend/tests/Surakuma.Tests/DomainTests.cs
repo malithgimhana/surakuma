@@ -5,6 +5,17 @@ namespace Surakuma.Tests;
 
 public sealed class DomainTests
 {
+    [Theory]
+    [InlineData("packs", false)]
+    [InlineData("kits", false)]
+    [InlineData("kg", true)]
+    [InlineData(" Litres ", true)]
+    public void FractionalQuantitiesAreAllowedOnlyForMeasuredUnits(string unit, bool measured)
+    {
+        QuantityUnits.ValidateWhole(2, unit);
+        if (measured) QuantityUnits.ValidateWhole(2.5m, unit);
+        else Assert.Throws<RuleException>(() => QuantityUnits.ValidateWhole(2.5m, unit));
+    }
     [Fact]
     public void ReservationDispatchAndDeliveryHaveDifferentAccounting()
     {
@@ -49,6 +60,13 @@ public sealed class DomainTests
         request.Deliver(1);
         request.Transition(RequestStatus.Closed);
         Assert.Equal(RequestStatus.Closed, request.Status);
+    }
+    [Fact]
+    public void AiDisagreementIncludesModifiedAndRejectedDecisions()
+    {
+        Assert.Equal(0, AiDecisionMetrics.OverrideFrequency(0, 0, 0));
+        Assert.Equal(0.5, AiDecisionMetrics.OverrideFrequency(1, 1, 4));
+        Assert.Equal(0, AiDecisionMetrics.OverrideFrequency(0, 0, 1));
     }
     [Fact]
     public void DuplicateSimilarityIsDeterministicAndDoesNotMutateRequests()

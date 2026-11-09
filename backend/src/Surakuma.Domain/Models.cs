@@ -11,6 +11,7 @@ public enum RequestStatus
 {
     Submitted, UnderReview, Verified, Approved, InProgress, PartiallyFulfilled, Fulfilled, Closed, Rejected, Cancelled
 }
+public enum AssignmentStatus { Unassigned, AutoAssigned, Claimed, Reassigned, ManuallyAssigned }
 public enum AidCategory
 {
     FoodWater, Medical, Shelter, Transportation, Accessibility, Other
@@ -51,11 +52,13 @@ public sealed class Membership : Record
         get; set;
     }
     public string Role { get; set; } = "";
+    public bool AvailableForAssignment { get; set; }
 }
 public sealed class Crisis : Record
 {
     public string Name { get; set; } = ""; public string Type { get; set; } = "Flood";
     public string District { get; set; } = ""; public bool Active { get; set; } = true;
+    public Guid? PrimaryOrganisationId { get; set; }
     public double Latitude
     {
         get; set;
@@ -103,7 +106,7 @@ public sealed class AssistanceRequest : Record
     {
         get; set;
     }
-    public Guid OrganisationId
+    public Guid? OrganisationId
     {
         get; set;
     }
@@ -127,6 +130,11 @@ public sealed class AssistanceRequest : Record
         get; set;
     }
     public RequestStatus Status { get; set; } = RequestStatus.Submitted;
+    public AssignmentStatus AssignmentStatus { get; set; } = AssignmentStatus.Claimed;
+    public string? AssignedCaseManagerId { get; set; }
+    public bool RequestedForSomeoneElse { get; set; }
+    public string RequesterRelationship { get; set; } = "";
+    public string RequesterContact { get; set; } = "";
     public bool Escalated
     {
         get; set;

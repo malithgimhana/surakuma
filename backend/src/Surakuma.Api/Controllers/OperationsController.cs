@@ -13,9 +13,10 @@ namespace Surakuma.Api.Controllers;
 [ApiController, Route("api/v1"), Authorize]
 public sealed class OperationsController(Operations ops, AccessService access, CrisisDbContext db, UserManager<AppUser> users, IMappingProvider maps, IMemoryCache cache) : ControllerBase
 {
-    [AllowAnonymous, HttpGet("public/lookups")] public Task<object> Lookups(CancellationToken ct) => ops.PublicData(ct);
+    [AllowAnonymous, HttpGet("public/lookups")] public Task<PublicLookups> Lookups(CancellationToken ct) => ops.PublicData(ct);
     [AllowAnonymous, HttpGet("alerts")] public Task<List<PublicAlert>> Alerts(CancellationToken ct) => ops.Alerts(ct);
-    [AllowAnonymous, HttpGet("shelters")] public Task<List<Shelter>> Shelters(CancellationToken ct) => ops.PublicShelters(ct);
+    [AllowAnonymous, HttpGet("shelters")] public Task<List<PublicShelter>> Shelters(CancellationToken ct) => ops.PublicShelters(ct);
+    [HttpGet("staff/shelters")] public Task<List<Shelter>> StaffShelters(CancellationToken ct) => ops.StaffShelters(ct);
     [HttpGet("reports/metrics")] public Task<object> Metrics(CancellationToken ct) => ops.Metrics(ct);
     [HttpGet("resources")] public Task<List<Resource>> Resources(CancellationToken ct) => ops.Resources(ct);
     [HttpPost("resources")] public Task<Resource> Resource(ResourceInput input, CancellationToken ct) => ops.AddResource(input, ct);
@@ -26,13 +27,22 @@ public sealed class OperationsController(Operations ops, AccessService access, C
         return NoContent();
     }
     [HttpGet("resources/{id:guid}/movements")] public Task<List<StockMovement>> Movements(Guid id, CancellationToken ct) => ops.StockHistory(id, ct);
+    [HttpGet("requests/{id:guid}/allocation-recommendations")] public Task<AllocationRecommendations> AllocationRecommendations(Guid id, CancellationToken ct) => ops.AllocationRecommendations(id, ct);
+    [HttpPost("requests/{id:guid}/allocation-recommendations/ignore")] public async Task<IActionResult> IgnoreAllocationRecommendation(Guid id, IgnoreAllocationRecommendationInput input, CancellationToken ct) { await ops.IgnoreAllocationRecommendation(id, input.RecommendedResourceId, ct); return NoContent(); }
     [HttpPost("allocations")] public Task<ResourceAllocation> Allocate(AllocateInput input, CancellationToken ct) => ops.Allocate(input, ct);
     [HttpPost("allocations/{id:guid}/{operation}")] public Task<ResourceAllocation> Allocation(Guid id, string operation, CancellationToken ct) => ops.UpdateAllocation(id, operation, ct);
     [HttpPost("shelters")] public Task<Shelter> AddShelter(ShelterInput input, CancellationToken ct) => ops.SaveShelter(null, input, ct);
     [HttpPut("shelters/{id:guid}")] public Task<Shelter> Shelter(Guid id, ShelterInput input, CancellationToken ct) => ops.SaveShelter(id, input, ct);
     [HttpPost("shelter-allocations")] public Task<ShelterAllocation> Place(ShelterPlaceInput input, CancellationToken ct) => ops.Place(input, ct);
     [HttpPost("shelter-allocations/{id:guid}/{operation}")] public Task<ShelterAllocation> Stay(Guid id, string operation, CancellationToken ct) => ops.UpdateStay(id, operation, ct);
-    [HttpGet("volunteers")] public Task<object> Volunteers(CancellationToken ct) => ops.Volunteers(ct);
+    [HttpGet("volunteers")]
+    public async Task<object> Volunteers(CancellationToken ct)
+    {
+        var roster = await ops.Volunteers(ct);
+        var userIds = roster.Profiles.Select(x => x.UserId).Distinct().ToArray();
+        var names = await users.Users.Where(x => userIds.Contains(x.Id)).Select(x => new { x.Id, x.DisplayName }).ToDictionaryAsync(x => x.Id, x => x.DisplayName, ct);
+        return new { roster.Profiles, roster.Tasks, Names = names };
+    }
     [HttpPost("volunteers")] public Task<VolunteerProfile> Volunteer(VolunteerProfile input, CancellationToken ct) => ops.SaveVolunteer(input, ct);
     [HttpPost("volunteer-tasks")] public Task<VolunteerTask> Task(TaskInput input, CancellationToken ct) => ops.AssignTask(input, ct);
     [HttpPost("volunteer-tasks/{id:guid}")] public Task<VolunteerTask> UpdateTask(Guid id, TaskUpdateInput input, CancellationToken ct) => ops.UpdateTask(id, input, ct);
@@ -51,6 +61,30 @@ public sealed class OperationsController(Operations ops, AccessService access, C
     {
         var assignments = await db.Set<CrisisAssignment>().Where(x => x.UserId == access.UserId).Select(x => x.CrisisId).ToListAsync(ct);
         return await db.Set<Crisis>().Where(x => assignments.Contains(x.Id)).OrderByDescending(x => x.CreatedAt).ToListAsync(ct);
+    }
+    [HttpPut("crises/{id:guid}/centre")]
+    public async Task<Crisis> SetCentre(Guid id, CentreRoutingInput input, CancellationToken ct)
+    {
+        if (!await access.IsAdmin(ct) && !await access.Coordinates(id, ct)) throw new AccessDeniedException();
+        var crisis = await db.Set<Crisis>().FindAsync([id], ct) ?? throw new MissingException();
+        if (input.OrganisationId.HasValue && !await db.Set<Organisation>().AnyAsync(x => x.Id == input.OrganisationId, ct)) throw new RuleException("Centre not found.");
+        var previous = crisis.PrimaryOrganisationId;
+        crisis.PrimaryOrganisationId = input.OrganisationId;
+        ops.Audit("CrisisCentreChanged", crisis, $"From {previous?.ToString() ?? "unassigned"} to {input.OrganisationId?.ToString() ?? "unassigned"}");
+        await db.SaveChangesAsync(ct);
+        return crisis;
+    }
+    [HttpGet("case-manager/availability")]
+    public async Task<object> ManagerAvailability(CancellationToken ct) => await db.Set<Membership>().Where(x => x.UserId == access.UserId && x.Role == Roles.CaseManager).Select(x => new { x.Id, x.OrganisationId, x.AvailableForAssignment }).ToListAsync(ct);
+    [HttpPut("case-manager/availability/{membershipId:guid}")]
+    public async Task<IActionResult> SetManagerAvailability(Guid membershipId, AvailabilityInput input, CancellationToken ct)
+    {
+        var membership = await db.Set<Membership>().FindAsync([membershipId], ct) ?? throw new MissingException();
+        if (membership.Role != Roles.CaseManager || (membership.UserId != access.UserId && !await access.IsAdmin(ct) && !(await access.Memberships(ct)).Any(x => x.Role == Roles.Coordinator && x.OrganisationId == membership.OrganisationId))) throw new AccessDeniedException();
+        membership.AvailableForAssignment = input.Available;
+        ops.Audit("CaseManagerAvailabilityChanged", membership, input.Available ? "Available" : "Unavailable");
+        await db.SaveChangesAsync(ct);
+        return NoContent();
     }
     [HttpPost("crises")]
     public async Task<Crisis> AddCrisis(Crisis input, CancellationToken ct)
@@ -143,10 +177,21 @@ public sealed class OperationsController(Operations ops, AccessService access, C
         var result = await cache.GetOrCreateAsync("geo:" + query.Trim().ToLowerInvariant(), async entry => { entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(12); return await maps.GeocodeAsync(query, ct); });
         return result is null ? StatusCode(503, new ProblemDetails { Title = "Location search unavailable. Enter a location or select a map point.", Status = 503 }) : Ok(result);
     }
+    [EnableRateLimiting("maps"), HttpPost("maps/reverse-geocode")]
+    public async Task<IActionResult> ReverseGeocode(ReverseGeocodeInput input, CancellationToken ct)
+    {
+        if (input.Latitude is not double lat || input.Longitude is not double lng ||
+            !double.IsFinite(lat) || !double.IsFinite(lng) || lat is < -90 or > 90 || lng is < -180 or > 180)
+            return BadRequest();
+        Response.Headers.CacheControl = "no-store";
+        var result = await maps.ReverseGeocodeAsync(lat, lng, ct);
+        return result is null ? StatusCode(503, new ProblemDetails { Title = "Reverse geocoding unavailable. Enter a location manually.", Status = 503 }) : Ok(result);
+    }
     [EnableRateLimiting("maps"), HttpGet("maps/route")]
     public async Task<IActionResult> Route(double startLat, double startLng, double endLat, double endLng, CancellationToken ct)
     {
-        if (startLat is < -90 or > 90 || endLat is < -90 or > 90 || startLng is < -180 or > 180 || endLng is < -180 or > 180)
+        if (!double.IsFinite(startLat) || !double.IsFinite(startLng) || !double.IsFinite(endLat) || !double.IsFinite(endLng) ||
+            startLat is < -90 or > 90 || endLat is < -90 or > 90 || startLng is < -180 or > 180 || endLng is < -180 or > 180)
             return BadRequest();
         var result = await maps.RouteAsync(startLat, startLng, endLat, endLng, ct);
         return result is null ? StatusCode(503, new ProblemDetails { Title = "Routing unavailable. No route or safe-travel estimate is being assumed.", Status = 503 }) : Ok(result);
@@ -196,12 +241,25 @@ public sealed class OperationsController(Operations ops, AccessService access, C
     public async Task<IActionResult> Revoke(Guid id, CancellationToken ct)
     {
         await Admin(ct);
+        await using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, ct);
         var membership = await db.Set<Membership>().FindAsync([id], ct) ?? throw new MissingException();
         if (membership.UserId == access.UserId && membership.Role == Roles.Administrator)
             throw new RuleException("You cannot revoke your own administrator access.");
+        var user = await users.FindByIdAsync(membership.UserId) ?? throw new MissingException();
+        bool otherMembership = await db.Set<Membership>().AnyAsync(x => x.Id != id && x.UserId == membership.UserId && x.Role == membership.Role, ct);
         db.Remove(membership);
+        if (!otherMembership && await users.IsInRoleAsync(user, membership.Role))
+        {
+            var result = await users.RemoveFromRoleAsync(user, membership.Role);
+            if (!result.Succeeded) throw new RuleException("Could not remove the user's role.");
+        }
+        var stampResult = await users.UpdateSecurityStampAsync(user);
+        if (!stampResult.Succeeded) throw new RuleException("Could not invalidate the user's sessions.");
+        foreach (var session in await db.Set<RefreshSession>().Where(x => x.UserId == user.Id && !x.Revoked).ToListAsync(ct))
+            session.Revoked = true;
         ops.Audit("StaffAccessRevoked", membership);
         await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
         return NoContent();
     }
     [HttpPost("admin/organisations")]

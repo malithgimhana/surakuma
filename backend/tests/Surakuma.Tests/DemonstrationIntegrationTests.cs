@@ -116,6 +116,9 @@ public sealed partial class IntegrationTests
         Assert.Equal("PartiallyFulfilled", partial.GetProperty("request").GetProperty("status").GetString());
         Assert.Equal(6, partial.GetProperty("request").GetProperty("deliveredQuantity").GetDecimal());
         var metrics = await coordinator.GetFromJsonAsync<JsonElement>("/api/v1/reports/metrics");
+        Assert.True(metrics.GetProperty("openCases").GetInt32() > 0);
+        Assert.True(metrics.GetProperty("resourceStock").GetDecimal() >= 0);
+        Assert.True(metrics.GetProperty("aiApprovedCount").GetInt32() >= 0);
         Assert.Contains(metrics.GetProperty("shortages").EnumerateArray(), x => x.GetProperty("id").GetGuid() == foodId && x.GetProperty("outstanding").GetDecimal() == 4);
 
         // Each request has one category; the same household submits a separate shelter need.

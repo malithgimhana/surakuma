@@ -18,14 +18,33 @@ public sealed class RequestsController(Operations operations, AccessService acce
             id = r.Id
         }, r);
     }
-    [HttpGet] public Task<Page<AssistanceRequest>> List(string? status, string? search, CancellationToken ct, int page = 1) => operations.Requests(false, status, search, page, ct);
+    [HttpGet] public Task<Page<AssistanceRequest>> List(string? status, string? search, CancellationToken ct, int page = 1, bool assignedToMe = false) => operations.Requests(false, status, search, page, ct, assignedToMe);
     [HttpGet("mine")] public Task<Page<AssistanceRequest>> Mine(string? status, string? search, CancellationToken ct, int page = 1) => operations.Requests(true, status, search, page, ct);
+    [HttpGet("triage")] public Task<List<AssistanceRequest>> Triage(CancellationToken ct) => operations.Triage(ct);
+    [HttpGet("escalated")] public Task<List<AssistanceRequest>> Escalated(CancellationToken ct) => operations.EscalatedRequests(ct);
+    [HttpPost("{id:guid}/reassign")] public Task<AssistanceRequest> Reassign(Guid id, ShareInput input, CancellationToken ct) => operations.Reassign(id, input.OrganisationId, ct);
+    [HttpPost("{id:guid}/case-manager")] public Task<AssistanceRequest> AssignManager(Guid id, CaseManagerInput input, CancellationToken ct) => operations.AssignManager(id, input.UserId, ct);
+    [HttpGet("{id:guid}/case-managers")]
+    public async Task<object> CaseManagers(Guid id, CancellationToken ct)
+    {
+        var request = await db.Set<AssistanceRequest>().FindAsync([id], ct) ?? throw new MissingException();
+        if (!await access.IsAdmin(ct) && !await access.Coordinates(request.CrisisId, ct)) throw new AccessDeniedException();
+        return await (from membership in db.Set<Membership>() join user in db.Users on membership.UserId equals user.Id
+                      where membership.OrganisationId == request.OrganisationId && membership.Role == Roles.CaseManager
+                      orderby user.DisplayName select new { user.Id, Name = user.DisplayName, membership.AvailableForAssignment }).ToListAsync(ct);
+    }
     [HttpGet("{id:guid}")] public Task<object> Detail(Guid id, CancellationToken ct) => operations.Detail(id, ct);
     [HttpPatch("{id:guid}/status")] public Task<AssistanceRequest> Status(Guid id, StatusInput input, CancellationToken ct) => operations.ChangeStatus(id, input, ct);
     [HttpPost("{id:guid}/escalate")]
     public async Task<IActionResult> Escalate(Guid id, TaskUpdateInput input, CancellationToken ct)
     {
         await operations.Escalate(id, input.Note, ct);
+        return NoContent();
+    }
+    [HttpPost("{id:guid}/escalation/resolve")]
+    public async Task<IActionResult> ResolveEscalation(Guid id, ResolveEscalationInput input, CancellationToken ct)
+    {
+        await operations.ResolveEscalation(id, input.Note, ct);
         return NoContent();
     }
     [HttpPost("{id:guid}/shares")]

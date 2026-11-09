@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -37,7 +38,8 @@ if ((builder.Configuration["Jwt:Key"]?.Length ?? 0) < 32) throw new InvalidOpera
 builder.Services.AddDbContext<CrisisDbContext>(o => o.UseSqlServer(builder.Configuration.GetConnectionString("Default")));
 builder.Services.AddIdentityCore<AppUser>(o => { o.Password.RequiredLength = 10; o.User.RequireUniqueEmail = true; o.Lockout.MaxFailedAccessAttempts = 5; o.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(10); })
     .AddRoles<IdentityRole>().AddEntityFrameworkStores<CrisisDbContext>().AddDefaultTokenProviders();
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(o => o.TokenValidationParameters = new TokenValidationParameters
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(o => {
+o.TokenValidationParameters = new TokenValidationParameters
 {
     ValidateIssuer = true,
     ValidateAudience = true,
@@ -47,6 +49,19 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
     ValidAudience = builder.Configuration["Jwt:Audience"],
     IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]!)),
     ClockSkew = TimeSpan.FromSeconds(30)
+};
+o.Events = new JwtBearerEvents
+{
+    OnTokenValidated = async context =>
+    {
+        var users = context.HttpContext.RequestServices.GetRequiredService<UserManager<AppUser>>();
+        var userId = context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);
+        var stamp = context.Principal?.FindFirstValue("security_stamp");
+        var user = userId is null ? null : await users.FindByIdAsync(userId);
+        if (user is null || string.IsNullOrEmpty(stamp) || stamp != await users.GetSecurityStampAsync(user))
+            context.Fail("Session is no longer valid.");
+    }
+};
 });
 builder.Services.AddAuthorization();
 builder.Services.AddHttpContextAccessor();
@@ -56,10 +71,11 @@ builder.Services.AddScoped<AccessService>();
 builder.Services.AddScoped<Operations>();
 builder.Services.AddScoped<AuthenticationService>();
 builder.Services.AddScoped<IAllocationPolicy, ConstraintAllocationPolicy>();
-builder.Services.AddHttpClient<IAiProvider, AiProvider>(c => c.Timeout = TimeSpan.FromSeconds(20));
-builder.Services.AddHttpClient<EmailProvider>(c => c.Timeout = TimeSpan.FromSeconds(15));
+builder.Services.AddScoped<IAllocationStrategy, RankedAllocationStrategy>();
+builder.Services.AddHttpClient<IAiProvider, AiProvider>(c => c.Timeout = Timeout.InfiniteTimeSpan).AddSurakumaResilience();
+builder.Services.AddHttpClient<EmailProvider>(c => c.Timeout = Timeout.InfiniteTimeSpan).AddSurakumaResilience(email: true);
 builder.Services.AddScoped<IEmailProvider>(sp => EmailProviderFactory.Create(sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<EmailProvider>()));
-builder.Services.AddHttpClient<IMappingProvider, MappingProvider>(c => c.Timeout = TimeSpan.FromSeconds(12));
+builder.Services.AddHttpClient<IMappingProvider, MappingProvider>(c => c.Timeout = Timeout.InfiniteTimeSpan).AddSurakumaResilience();
 builder.Services.AddHostedService<NotificationWorker>();
 builder.Services.AddMemoryCache();
 builder.Services.AddControllers().AddJsonOptions(o => o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter(null, false)));

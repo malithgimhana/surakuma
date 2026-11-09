@@ -38,7 +38,7 @@ import {
 } from './components';
 import { CommunityArt } from './CommunityArt';
 import { MapView } from './MapView';
-import type { Alert, Shelter } from './types';
+import type { Alert, PublicShelter } from './types';
 function useAlerts() {
   return useQuery({ queryKey: ['alerts'], queryFn: () => get<Alert[]>('/alerts') });
 }
@@ -236,6 +236,7 @@ export function AlertsPage() {
           <button
             key={value}
             className={filter === value ? 'selected' : ''}
+            aria-pressed={filter === value}
             onClick={() => setFilter(value)}
           >
             {value === 'All' ? t('all') : t('status.' + value)}
@@ -279,7 +280,7 @@ function ShelterArt({ index = 0 }: { index?: number }) {
 }
 export function SheltersPage() {
   const { t } = useTranslation();
-  const query = useQuery({ queryKey: ['shelters'], queryFn: () => get<Shelter[]>('/shelters') });
+  const query = useQuery({ queryKey: ['shelters'], queryFn: () => get<PublicShelter[]>('/shelters') });
   const [search, setSearch] = useState(''),
     [view, setView] = useState('list');
   const shelters =
@@ -301,7 +302,7 @@ export function SheltersPage() {
         </label>
         <div className="filter-tabs">
           {['list', 'map'].map((v) => (
-            <button key={v} className={view === v ? 'selected' : ''} onClick={() => setView(v)}>
+            <button key={v} className={view === v ? 'selected' : ''} aria-pressed={view === v} onClick={() => setView(v)}>
               {t(v)}
             </button>
           ))}
@@ -312,7 +313,12 @@ export function SheltersPage() {
       ) : query.error ? (
         <ErrorState error={query.error} retry={() => void query.refetch()} />
       ) : view === 'map' ? (
-        <MapView shelters={shelters} />
+        <>
+          <MapView shelters={shelters} />
+          <ul aria-label={t('shelters')}>
+            {shelters.map((s) => <li key={s.id}><Link to={`/shelters/${s.id}`}>{s.name} · {s.available} {t('spaces')}</Link></li>)}
+          </ul>
+        </>
       ) : (
         <div className="shelter-grid">
           {shelters.map((s, index) => (
@@ -353,7 +359,7 @@ export function ShelterDetails() {
   const { id } = useParams(),
     { t, i18n } = useTranslation(),
     { user } = useAuth();
-  const query = useQuery({ queryKey: ['shelters'], queryFn: () => get<Shelter[]>('/shelters') });
+  const query = useQuery({ queryKey: ['shelters'], queryFn: () => get<PublicShelter[]>('/shelters') });
   const [route, setRoute] = useState(''),
     [busy, setBusy] = useState(false);
   if (query.isPending) return <Loading />;
@@ -461,15 +467,14 @@ export function InformationPage({ kind }: { kind: 'contact' | 'privacy' | 'guida
       <Card>
         <IconTile icon={kind === 'contact' ? LifeBuoy : ShieldCheck} tone="green" />
         <h2>{t(kind === 'contact' ? 'contact' : kind)}</h2>
-        <p>
+        {kind === 'contact' ? <div className="stack">
+          <p><strong>{t('policeEmergency')}:</strong> <a className="text-link" href="tel:119">119</a> · <a className="text-link" href="https://www.police.lk/?page_id=1334">Sri Lanka Police</a></p>
+          <p><strong>{t('ambulanceEmergency')}:</strong> <a className="text-link" href="tel:1990">1990</a> · <a className="text-link" href="https://www.1990.lk/faquestions/how-can-i-request-for-an-ambulance/">1990 Suwa Seriya</a></p>
+        </div> : <p>
           {t(
-            kind === 'contact'
-              ? 'contactDescription'
-              : kind === 'privacy'
-                ? 'privacyText'
-                : 'guidanceText',
+            kind === 'privacy' ? 'privacyText' : 'guidanceText',
           )}
-        </p>
+        </p>}
         <NextLink to="/app/requests/new">{t('requestHelp')}</NextLink>
       </Card>
     </div>

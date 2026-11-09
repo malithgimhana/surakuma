@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Data.SqlClient;
 using System.Security.Claims;
 using Surakuma.Application;
 using Surakuma.Domain;
@@ -51,6 +52,7 @@ public sealed class CrisisDbContext(DbContextOptions<CrisisDbContext> options) :
         b.Entity<Shelter>().Ignore(x => x.Available);
         b.Entity<AssistanceRequest>().Property(x => x.SubmissionKey).HasMaxLength(100);
         b.Entity<AssistanceRequest>().Property(x => x.CitizenId).HasMaxLength(450);
+        b.Entity<AssistanceRequest>().Property(x => x.AssignedCaseManagerId).HasMaxLength(450);
         b.Entity<AssistanceRequest>().Property(x => x.Reference).HasMaxLength(30);
         b.Entity<AssistanceRequest>().HasIndex(x => new { x.CitizenId, x.SubmissionKey }).IsUnique();
         b.Entity<AssistanceRequest>().HasIndex(x => x.Reference).IsUnique();
@@ -82,9 +84,11 @@ public sealed class CrisisDbContext(DbContextOptions<CrisisDbContext> options) :
         Fk<Household, AppUser>(b, nameof(Household.UserId));
         Fk<RefreshSession, AppUser>(b, nameof(RefreshSession.UserId));
         Fk<CrisisAssignment, Crisis>(b, nameof(CrisisAssignment.CrisisId));
+        Fk<Crisis, Organisation>(b, nameof(Crisis.PrimaryOrganisationId));
         Fk<CrisisAssignment, AppUser>(b, nameof(CrisisAssignment.UserId));
         Fk<OperationalArea, Crisis>(b, nameof(OperationalArea.CrisisId));
         Fk<AssistanceRequest, AppUser>(b, nameof(AssistanceRequest.CitizenId));
+        Fk<AssistanceRequest, AppUser>(b, nameof(AssistanceRequest.AssignedCaseManagerId));
         Fk<AssistanceRequest, Crisis>(b, nameof(AssistanceRequest.CrisisId));
         Fk<AssistanceRequest, Organisation>(b, nameof(AssistanceRequest.OrganisationId));
         Fk<CaseShare, AssistanceRequest>(b, nameof(CaseShare.RequestId));
@@ -135,6 +139,29 @@ public sealed class EfStore(CrisisDbContext db) : IStore
         await tx.CommitAsync(ct);
         return result;
     }
+    public async Task<T> RoutingTransactionAsync<T>(Func<Task<T>> operation, CancellationToken ct = default)
+    {
+        // Serialise routing decisions before any reads, so concurrent submissions cannot
+        // deadlock while upgrading shared locks or select from the same stale workload.
+        for (int attempt = 0; ; attempt++)
+        {
+            try
+            {
+                await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+                await db.Database.ExecuteSqlRawAsync("DECLARE @result int; EXEC @result = sp_getapplock @Resource = 'Surakuma.RequestRouting', @LockMode = 'Exclusive', @LockOwner = 'Transaction', @LockTimeout = 30000; IF @result < 0 THROW 51001, 'Could not acquire request routing lock.', 1;", ct);
+                var result = await operation();
+                await db.SaveChangesAsync(ct);
+                await tx.CommitAsync(ct);
+                return result;
+            }
+            catch (Exception ex) when (attempt < 3 && IsDeadlock(ex))
+            {
+                db.ChangeTracker.Clear();
+                await Task.Delay(TimeSpan.FromMilliseconds(50 * (attempt + 1) + Random.Shared.Next(50)), ct);
+            }
+        }
+    }
+    private static bool IsDeadlock(Exception exception) => exception is SqlException { Number: 1205 } || (exception.InnerException is not null && IsDeadlock(exception.InnerException));
 }
 public sealed class CurrentActor(IHttpContextAccessor context) : ICurrentActor
 {

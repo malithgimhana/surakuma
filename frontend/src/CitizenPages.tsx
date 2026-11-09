@@ -241,6 +241,7 @@ export function MyRequests() {
               setPage(1);
             }}
             className={status === value ? 'selected' : ''}
+            aria-pressed={status === value}
           >
             {value ? t('status.' + value) : t('all')}
           </button>
@@ -281,10 +282,13 @@ const requestSchema = z.object({
   description: z.string().min(10).max(4000),
   locationText: z.string().min(3).max(500),
   householdSize: z.number().min(1).max(50),
-  quantity: z.number().positive().max(100000),
+  quantity: z.number().int().positive().max(100000),
   accessibilityNeeds: z.string().max(500),
   crisisId: z.string().min(1),
-  organisationId: z.string().min(1),
+  organisationId: z.string(),
+  requestedForSomeoneElse: z.boolean(),
+  requesterRelationship: z.string().max(200),
+  requesterContact: z.string().max(500),
   latitude: z.number().nullable(),
   longitude: z.number().nullable(),
   synthetic: z.boolean(),
@@ -301,6 +305,8 @@ export function NewRequest() {
     [error, setError] = useState(''),
     [file, setFile] = useState<File | null>(null),
     [locating, setLocating] = useState(false),
+    [reverseSearching, setReverseSearching] = useState(false),
+    [reverseResults, setReverseResults] = useState(false),
     [geoSearch, setGeoSearch] = useState(''),
     [geoResults, setGeoResults] = useState<
       { geometry: { coordinates: [number, number] }; properties: { label: string } }[]
@@ -326,6 +332,9 @@ export function NewRequest() {
     accessibilityNeeds: user?.accessibilityNeeds || '',
     crisisId: '',
     organisationId: '',
+    requestedForSomeoneElse: false,
+    requesterRelationship: '',
+    requesterContact: '',
     latitude: null,
     longitude: null,
     synthetic: false,
@@ -340,6 +349,7 @@ export function NewRequest() {
     register,
     watch,
     setValue,
+    getValues,
     trigger,
     handleSubmit,
     formState: { errors, isSubmitting },
@@ -348,6 +358,9 @@ export function NewRequest() {
     defaultValues: { ...defaults, ...stored },
   });
   const values = watch();
+  useEffect(() => {
+    if (values.category === 'Shelter' && values.quantity !== 1) setValue('quantity', 1);
+  }, [values.category, values.quantity, setValue]);
   useEffect(() => {
     if (!submittedId) {
       sessionStorage.setItem(draftKey, JSON.stringify(values));
@@ -388,13 +401,34 @@ export function NewRequest() {
   }
   async function searchLocation() {
     setError('');
+    setReverseResults(false);
     try {
       const result = await get<{ features: typeof geoResults }>(
         `/maps/geocode?query=${encodeURIComponent(geoSearch)}`,
       );
       setGeoResults(result.features);
     } catch {
-      setError(t('locationDenied'));
+      setError(t('locationSearchUnavailable'));
+    }
+  }
+  async function findAddress() {
+    if (values.latitude == null || values.longitude == null) return;
+    const latitude = values.latitude, longitude = values.longitude;
+    setError('');
+    setReverseSearching(true);
+    try {
+      const result = await api.post<{ features: typeof geoResults }>('/maps/reverse-geocode', {
+        latitude,
+        longitude,
+      });
+      if (getValues('latitude') !== latitude || getValues('longitude') !== longitude) return;
+      setReverseResults(true);
+      setGeoResults(result.data.features || []);
+      if (!result.data.features?.length) setError(t('addressNotFound'));
+    } catch {
+      setError(t('locationSearchUnavailable'));
+    } finally {
+      setReverseSearching(false);
     }
   }
   async function submit(input: RequestForm) {
@@ -402,7 +436,7 @@ export function NewRequest() {
     try {
       let id = submittedId;
       if (!id) {
-        const r = (await api.post<AidRequest>('/requests', { ...input, submissionKey })).data;
+        const r = (await api.post<AidRequest>('/requests', { ...input, organisationId: null, submissionKey })).data;
         id = r.id;
         setSubmittedId(id);
       }
@@ -455,12 +489,7 @@ export function NewRequest() {
                       <span>
                         <strong>{t('category.' + category)}</strong>
                         <small>
-                          {t(
-                            'desc.' +
-                              (category === 'Transportation' || category === 'Accessibility'
-                                ? 'Other'
-                                : category),
-                          )}
+                          {t('desc.' + category)}
                         </small>
                       </span>
                       <ArrowRight size={19} />
@@ -489,19 +518,7 @@ export function NewRequest() {
                       ))}
                     </select>
                   </Field>
-                  <Field
-                    label={t('organisation')}
-                    error={errors.organisationId ? t('checkFields') : undefined}
-                  >
-                    <select {...register('organisationId')}>
-                      <option value="">{t('selectOption')}</option>
-                      {lookup.data?.organisations.map((o) => (
-                        <option key={o.id} value={o.id}>
-                          {o.name}
-                        </option>
-                      ))}
-                    </select>
-                  </Field>
+                  <p className="muted">{t('automaticCentreRouting')}</p>
                 </div>
               )}
               <Field
@@ -529,12 +546,13 @@ export function NewRequest() {
                     {...register('householdSize', { valueAsNumber: true })}
                   />
                 </Field>
-                <Field label={t('quantity')}>
+                <Field label={t(values.category === 'Shelter' ? 'shelterQuantity' : 'quantity')} hint={values.category === 'Shelter' ? t('shelterQuantityHint') : undefined}>
                   <input
                     type="number"
-                    min={0.01}
+                    min={1}
                     max={100000}
-                    step="0.01"
+                    step="1"
+                    readOnly={values.category === 'Shelter'}
                     {...register('quantity', { valueAsNumber: true })}
                   />
                 </Field>
@@ -542,6 +560,20 @@ export function NewRequest() {
                   <input {...register('accessibilityNeeds')} />
                 </Field>
               </div>
+              <label className="checkbox-label">
+                <input type="checkbox" {...register('requestedForSomeoneElse')} />
+                <span>{t('requestForSomeoneElse')}</span>
+              </label>
+              {values.requestedForSomeoneElse && (
+                <div className="form-grid">
+                  <Field label={t('requesterRelationship')} error={errors.requesterRelationship ? t('checkFields') : undefined}>
+                    <input maxLength={200} {...register('requesterRelationship')} />
+                  </Field>
+                  <Field label={t('requesterContact')} error={errors.requesterContact ? t('checkFields') : undefined}>
+                    <input maxLength={500} {...register('requesterContact')} />
+                  </Field>
+                </div>
+              )}
             </>
           )}
           {step === 2 && (
@@ -563,6 +595,11 @@ export function NewRequest() {
                   <small>
                     {values.latitude.toFixed(4)}, {values.longitude?.toFixed(4)}
                   </small>
+                )}
+                {values.latitude != null && values.longitude != null && (
+                  <Button variant="secondary" type="button" busy={reverseSearching} onClick={() => void findAddress()}>
+                    {t('findAddress')}
+                  </Button>
                 )}
               </div>
               <div className="inline">
@@ -587,8 +624,10 @@ export function NewRequest() {
                   type="button"
                   key={index}
                   onClick={() => {
-                    setValue('longitude', r.geometry.coordinates[0]);
-                    setValue('latitude', r.geometry.coordinates[1]);
+                    if (!reverseResults) {
+                      setValue('longitude', r.geometry.coordinates[0]);
+                      setValue('latitude', r.geometry.coordinates[1]);
+                    }
                     setValue('locationText', r.properties.label);
                     setGeoResults([]);
                   }}
@@ -599,6 +638,7 @@ export function NewRequest() {
               <MapView
                 point={values.latitude !== null ? [values.latitude, values.longitude!] : undefined}
                 onPick={(lat, lng) => {
+                  setGeoResults([]);
                   setValue('latitude', lat);
                   setValue('longitude', lng);
                 }}
@@ -630,6 +670,8 @@ export function NewRequest() {
               <dl className="review-grid">
                 <dt>{t('step1')}</dt>
                 <dd>{t('category.' + values.category)}</dd>
+                <dt>{t('crisis')}</dt>
+                <dd>{lookup.data?.crises.find((crisis) => crisis.id === values.crisisId)?.name || '—'}</dd>
                 <dt>{t('description')}</dt>
                 <dd>{values.description}</dd>
                 <dt>{t('priority')}</dt>
@@ -638,8 +680,14 @@ export function NewRequest() {
                 </dd>
                 <dt>{t('householdSize')}</dt>
                 <dd>{values.householdSize}</dd>
-                <dt>{t('quantity')}</dt>
+                <dt>{t(values.category === 'Shelter' ? 'shelterQuantity' : 'quantity')}</dt>
                 <dd>{values.quantity}</dd>
+                <dt>{t('organisation')}</dt>
+                <dd>{t('automaticCentreRouting')}</dd>
+                {values.requestedForSomeoneElse && <>
+                  <dt>{t('requesterRelationship')}</dt><dd>{values.requesterRelationship || '—'}</dd>
+                  <dt>{t('requesterContact')}</dt><dd>{values.requesterContact || '—'}</dd>
+                </>}
                 <dt>{t('location')}</dt>
                 <dd>{values.locationText}</dd>
                 <dt>{t('evidence')}</dt>
@@ -776,7 +824,7 @@ export function RequestTracking() {
               </dd>
               <dt>{t('delivered')}</dt>
               <dd>
-                {r.deliveredQuantity} / {r.quantity}
+                {r.deliveredQuantity} / {r.quantity} {r.category === 'Shelter' && `· ${t('shelterQuantity')}`}
               </dd>
               <dt>{t('outstanding')}</dt>
               <dd>{r.quantity - r.deliveredQuantity}</dd>
@@ -784,6 +832,14 @@ export function RequestTracking() {
             <div className="progress-bar">
               <span style={{ width: `${(100 * r.deliveredQuantity) / r.quantity}%` }} />
             </div>
+            {data.allocations.filter((a) => a.status !== 'Cancelled').length > 0 && (
+              <section aria-label={t('deliverySteps')}>
+                <h3>{t('deliverySteps')}</h3>
+                {data.allocations.filter((a) => a.status !== 'Cancelled').map((a) => (
+                  <p key={a.id}>{a.quantity} · {t('delivery.' + a.status)}</p>
+                ))}
+              </section>
+            )}
             {data.attachments.length > 0 && (
               <>
                 <h3>{t('attachments')}</h3>

@@ -10,6 +10,7 @@ public interface IStore
     void Add<T>(T entity) where T : Record;
     Task SaveAsync(CancellationToken ct = default);
     Task<T> TransactionAsync<T>(Func<Task<T>> operation, CancellationToken ct = default);
+    Task<T> RoutingTransactionAsync<T>(Func<Task<T>> operation, CancellationToken ct = default);
 }
 public interface ICurrentActor
 {
@@ -44,8 +45,9 @@ public sealed class AccessService(IStore store, ICurrentActor actor)
         var orgIds = memberships.Where(x => x.Role is not Roles.Citizen and not Roles.Volunteer and not Roles.Administrator).Select(x => x.OrganisationId).ToArray();
         var assigned = memberships.Any(x => x.Role == Roles.Coordinator)
             ? (await store.ListAsync(store.Query<CrisisAssignment>().Where(x => x.UserId == actor.Id), ct)).Select(x => x.CrisisId).ToArray() : [];
-        var shared = store.Query<CaseShare>().Where(x => orgIds.Contains(x.OrganisationId)).Select(x => x.RequestId);
-        return store.Query<AssistanceRequest>().Where(x => x.CitizenId == actor.Id || orgIds.Contains(x.OrganisationId) || assigned.Contains(x.CrisisId) || shared.Contains(x.Id));
+        bool admin = memberships.Any(x => x.Role == Roles.Administrator);
+        return store.Query<AssistanceRequest>().Where(x => x.CitizenId == actor.Id || (x.OrganisationId.HasValue && orgIds.Contains(x.OrganisationId.Value)) || assigned.Contains(x.CrisisId) ||
+            (admin && (x.OrganisationId == null || x.AssignedCaseManagerId == null) && x.Status != RequestStatus.Closed && x.Status != RequestStatus.Fulfilled && x.Status != RequestStatus.Cancelled && x.Status != RequestStatus.Rejected));
     }
     public async Task<AssistanceRequest> Request(Guid id, string[]? roles = null, CancellationToken ct = default)
     {
@@ -54,8 +56,7 @@ public sealed class AccessService(IStore store, ICurrentActor actor)
             return r;
         var memberships = await Memberships(ct);
         var orgs = memberships.Where(x => roles.Contains(x.Role)).Select(x => x.OrganisationId).ToArray();
-        bool shared = (await store.ListAsync(store.Query<CaseShare>().Where(x => x.RequestId == id && orgs.Contains(x.OrganisationId)), ct)).Count > 0;
-        if (!orgs.Contains(r.OrganisationId) && !shared && !(roles.Contains(Roles.Coordinator) && await Coordinates(r.CrisisId, ct)))
+        if (!(r.OrganisationId.HasValue && orgs.Contains(r.OrganisationId.Value)) && !(roles.Contains(Roles.Coordinator) && await Coordinates(r.CrisisId, ct)))
             throw new AccessDeniedException();
         return r;
     }

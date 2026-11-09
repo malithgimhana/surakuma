@@ -34,9 +34,7 @@ test('citizen submits, staff review AI, logistics deliver partial aid and close 
   await page
     .getByLabel('Crisis event', { exact: true })
     .selectOption({ label: 'Kelani River flood response' });
-  await page
-    .getByLabel('Receiving organisation', { exact: true })
-    .selectOption({ label: 'Surakuma Community Response (demo)' });
+  await expect(page.getByText(/Your request will be sent to the response centre/)).toBeVisible();
   await page
     .getByLabel('Describe what you need', { exact: true })
     .fill(
