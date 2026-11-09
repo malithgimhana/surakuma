@@ -28,8 +28,6 @@ const request = {
   organisationId: 'o',
 };
 const fixtures: Record<string, unknown> = {
-  '/requests/r/allocation-recommendations': { outstanding: 6, candidates: [], shortage: false, queuePosition: 1, competingRequests: 1, shortageExplanation: '' },
-  '/requests/r/case-managers': [],
   '/public/lookups': {
     crises: [{ id: 'c', name: 'Demo crisis', active: true }],
     organisations: [{ id: 'o', name: 'Demo organisation' }],
