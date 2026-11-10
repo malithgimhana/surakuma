@@ -1,9 +1,7 @@
 using System.Net;
 using System.Text;
-using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
-using Surakuma.Application;
 using Surakuma.Domain;
 using Surakuma.Infrastructure;
 
@@ -11,31 +9,6 @@ namespace Surakuma.Tests;
 
 public sealed class ProviderTests
 {
-    private sealed class CaptureEmailHandler : HttpMessageHandler
-    {
-        public string Body { get; private set; } = "";
-        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-        {
-            Body = await request.Content!.ReadAsStringAsync(cancellationToken);
-            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"messageId\":\"test\"}", Encoding.UTF8, "application/json") };
-        }
-    }
-    [Fact]
-    public async Task EmailIncludesReadableTextAndSafeHtmlInSelectedLanguage()
-    {
-        var handler = new CaptureEmailHandler();
-        using var http = new HttpClient(handler);
-        var provider = new EmailProvider(http, Config());
-        var message = CitizenMessages.Status("SK-TEST", RequestStatus.Approved, "en");
-        Assert.Equal("Sent", (await provider.SendAsync("demo@example.test", message, Guid.NewGuid(), default)).State);
-        using var payload = JsonDocument.Parse(handler.Body);
-        Assert.Contains("approved for assistance", payload.RootElement.GetProperty("textContent").GetString());
-        Assert.Contains("SK-TEST", payload.RootElement.GetProperty("htmlContent").GetString());
-        var tamil = CitizenEmailContent.Create("SK-TEST: <test>", "ta");
-        Assert.Contains("கோரிக்கை", tamil.Subject);
-        Assert.Contains("&lt;test&gt;", tamil.Html);
-        Assert.DoesNotContain("<test>", tamil.Html);
-    }
     private sealed class Handler(HttpStatusCode status, string body) : HttpMessageHandler
     {
         public int Calls

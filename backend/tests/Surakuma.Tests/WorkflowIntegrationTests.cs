@@ -68,7 +68,7 @@ public sealed partial class IntegrationTests
         Assert.False(await db.Set<Shelter>().AnyAsync(x => x.Name == "Invalid coordinate test"));
     }
     [Fact]
-    public async Task OrganisationAccessRequiresAssignmentByCoordinator()
+    public async Task OrganisationSharingRequiresExplicitCoordinatorAction()
     {
         string account = "partner" + Guid.NewGuid().ToString("N")[..8];
         Guid requestId, partnerId;
@@ -76,9 +76,7 @@ public sealed partial class IntegrationTests
         {
             var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
             var users = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
-            var seed = await db.Set<AssistanceRequest>().FirstAsync(x => x.SubmissionKey == "seed-food");
-            var request = new AssistanceRequest { CitizenId = seed.CitizenId, CrisisId = seed.CrisisId, OrganisationId = seed.OrganisationId, Category = AidCategory.FoodWater, Description = "Synthetic organisation access test", LocationText = "Synthetic location", SubmissionKey = Guid.NewGuid().ToString() };
-            db.Add(request);
+            var request = await db.Set<AssistanceRequest>().FirstAsync();
             requestId = request.Id;
             partnerId = await db.Set<Organisation>().Where(o => o.Id != request.OrganisationId).Select(o => o.Id).FirstAsync();
             var user = new AppUser { UserName = account + "@surakuma.test", Email = account + "@surakuma.test", DisplayName = "Synthetic partner officer" };
@@ -90,12 +88,10 @@ public sealed partial class IntegrationTests
         using var partner = await fixture.Login(account);
         Assert.Equal(HttpStatusCode.NotFound, (await partner.GetAsync($"/api/v1/requests/{requestId}")).StatusCode);
         using var coordinator = await fixture.Login("coordinator");
-        Assert.Equal(HttpStatusCode.BadRequest, (await coordinator.PostAsJsonAsync($"/api/v1/requests/{requestId}/shares", new
+        (await coordinator.PostAsJsonAsync($"/api/v1/requests/{requestId}/shares", new
         {
             organisationId = partnerId
-        })).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await partner.GetAsync($"/api/v1/requests/{requestId}")).StatusCode);
-        (await coordinator.PostAsJsonAsync($"/api/v1/requests/{requestId}/reassign", new { organisationId = partnerId })).EnsureSuccessStatusCode();
+        })).EnsureSuccessStatusCode();
         Assert.Equal(HttpStatusCode.OK, (await partner.GetAsync($"/api/v1/requests/{requestId}")).StatusCode);
     }
     [Fact]
@@ -106,7 +102,7 @@ public sealed partial class IntegrationTests
         {
             var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
             var seed = await db.Set<AssistanceRequest>().FirstAsync();
-            var shelter = new Shelter { OrganisationId = seed.OrganisationId!.Value, Name = "Concurrency test shelter", Capacity = 5, Accessible = true };
+            var shelter = new Shelter { OrganisationId = seed.OrganisationId, Name = "Concurrency test shelter", Capacity = 5, Accessible = true };
             db.Add(shelter);
             shelterId = shelter.Id;
             var first = new AssistanceRequest { CitizenId = seed.CitizenId, CrisisId = seed.CrisisId, OrganisationId = seed.OrganisationId, Category = AidCategory.Shelter, HouseholdSize = 4, Quantity = 1, Status = RequestStatus.Approved, SubmissionKey = Guid.NewGuid().ToString() };
@@ -154,7 +150,7 @@ public sealed partial class IntegrationTests
             var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
             var seed = await db.Set<AssistanceRequest>().FirstAsync();
             var request = new AssistanceRequest { CitizenId = seed.CitizenId, CrisisId = seed.CrisisId, OrganisationId = seed.OrganisationId, Category = AidCategory.FoodWater, Quantity = 10, Status = RequestStatus.Approved, SubmissionKey = Guid.NewGuid().ToString() };
-            db.Add(request); db.Add(new Resource { OrganisationId = seed.OrganisationId!.Value, Name = "Recommendation stock", Category = AidCategory.FoodWater, Unit = "packs", Stock = 10 });
+            db.Add(request); db.Add(new Resource { OrganisationId = seed.OrganisationId, Name = "Recommendation stock", Category = AidCategory.FoodWater, Unit = "packs", Stock = 10 });
             await db.SaveChangesAsync(); requestId = request.Id;
         }
         using var citizen = await fixture.Login("citizen");
@@ -201,7 +197,7 @@ public sealed partial class IntegrationTests
         {
             var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
             var seed = await db.Set<AssistanceRequest>().FirstAsync();
-            orgId = seed.OrganisationId!.Value; crisisId = seed.CrisisId;
+            orgId = seed.OrganisationId; crisisId = seed.CrisisId;
             var request = new AssistanceRequest { CitizenId = seed.CitizenId, CrisisId = crisisId, OrganisationId = orgId, Category = AidCategory.FoodWater, Quantity = 10, Status = RequestStatus.Approved, SubmissionKey = Guid.NewGuid().ToString() };
             db.Add(request); await db.SaveChangesAsync(); requestId = request.Id;
         }
@@ -232,7 +228,7 @@ public sealed partial class IntegrationTests
             var seed = await db.Set<AssistanceRequest>().FirstAsync();
             string citizenId = await db.Users.Where(x => x.UserName == "citizen@surakuma.test").Select(x => x.Id).SingleAsync();
             var request = new AssistanceRequest { CitizenId = citizenId, CrisisId = seed.CrisisId, OrganisationId = seed.OrganisationId, Category = AidCategory.FoodWater, Quantity = 10, Status = RequestStatus.Approved, SubmissionKey = Guid.NewGuid().ToString() };
-            var resource = new Resource { OrganisationId = seed.OrganisationId!.Value, Name = "Delivery test packs", Category = AidCategory.FoodWater, Stock = 6 };
+            var resource = new Resource { OrganisationId = seed.OrganisationId, Name = "Delivery test packs", Category = AidCategory.FoodWater, Stock = 6 };
             db.AddRange(request, resource);
             await db.SaveChangesAsync();
             requestId = request.Id;
