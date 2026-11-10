@@ -36,6 +36,8 @@ const entries: string[][] = [
   ['closeEditor', 'Close editor', 'සංස්කාරකය වසන්න', 'திருத்தியை மூடு'],
   ['locationSearchUnavailable', 'Location search is unavailable. Enter the location in words or choose a point on the map.', 'ස්ථාන සෙවීම දැනට නොමැත. ස්ථානය වචනවලින් ඇතුළත් කරන්න හෝ සිතියමේ ලකුණු කරන්න.', 'இடத் தேடல் கிடைக்கவில்லை. இடத்தை எழுத்தில் உள்ளிடவும் அல்லது வரைபடத்தில் தேர்ந்தெடுக்கவும்.'],
   ['findAddress', 'Find an address for this point', 'මෙම ස්ථානය සඳහා ලිපිනයක් සොයන්න', 'இந்த இடத்திற்கான முகவரியைத் தேடுங்கள்'],
+  ['showPassword', 'Show password', 'මුරපදය පෙන්වන්න', 'கடவுச்சொல்லைக் காட்டு'],
+  ['hidePassword', 'Hide password', 'මුරපදය සඟවන්න', 'கடவுச்சொல்லை மறை'],
   ['addressNotFound', 'No address was found. Enter the location in words.', 'ලිපිනයක් හමු නොවීය. ස්ථානය වචනවලින් ඇතුළත් කරන්න.', 'முகவரி கிடைக்கவில்லை. இடத்தை எழுத்தில் உள்ளிடவும்.'],
   [
     'authThrottle',

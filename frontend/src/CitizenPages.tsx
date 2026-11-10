@@ -15,6 +15,8 @@ import {
   Check,
   CheckCircle2,
   ClipboardList,
+  Eye,
+  EyeOff,
   Heart,
   House,
   MapPin,
@@ -58,6 +60,8 @@ export function AuthPage({ register = false }: { register?: boolean }) {
     navigate = useNavigate(),
     location = useLocation();
   const [error, setError] = useState<'authError' | 'authThrottle' | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+  useEffect(() => setShowPassword(false), [register]);
   const {
     register: field,
     handleSubmit,
@@ -106,9 +110,14 @@ export function AuthPage({ register = false }: { register?: boolean }) {
             label={t('password')}
             hint={register ? t('passwordHint') : undefined}
             error={errors.password ? t('checkFields') : undefined}
+            endAdornment={
+              <button type="button" className="staff-password-toggle" aria-label={t(showPassword ? 'hidePassword' : 'showPassword')} aria-pressed={showPassword} onClick={() => setShowPassword((shown) => !shown)}>
+                {showPassword ? <EyeOff size={20} aria-hidden="true" /> : <Eye size={20} aria-hidden="true" />}
+              </button>
+            }
           >
             <input
-              type="password"
+              type={showPassword ? 'text' : 'password'}
               autoComplete={register ? 'new-password' : 'current-password'}
               {...field('password', { required: true, minLength: register ? 10 : 1 })}
             />

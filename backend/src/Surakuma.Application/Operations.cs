@@ -87,7 +87,7 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
         if (Enum.TryParse<RequestStatus>(status, out var state))
             q = q.Where(x => x.Status == state);
         if (!string.IsNullOrWhiteSpace(search))
-            q = q.Where(x => x.Reference.Contains(search) || x.Description.Contains(search));
+            q = q.Where(x => x.Reference.Contains(search) || x.Description.Contains(search) || x.LocationText.Contains(search));
         int total = (await store.ListAsync(q.Select(x => x.Id), ct)).Count;
         page = Math.Max(1, page);
         return new(await store.ListAsync(q.OrderByDescending(x => x.CreatedAt).Skip((page - 1) * 20).Take(20), ct), total, page, 20);

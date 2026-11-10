@@ -14,6 +14,24 @@ namespace Surakuma.Tests;
 public sealed partial class IntegrationTests
 {
     [Fact]
+    public async Task CaseSearchFindsVisibleRequestsByLocation()
+    {
+        string location = "SearchLocation" + Guid.NewGuid().ToString("N");
+        Guid requestId;
+        using (var scope = fixture.Factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
+            var seed = await db.Set<AssistanceRequest>().FirstAsync(x => x.SubmissionKey == "seed-food");
+            var request = new AssistanceRequest { CitizenId = seed.CitizenId, CrisisId = seed.CrisisId, OrganisationId = seed.OrganisationId, Category = AidCategory.FoodWater, Description = "Synthetic request", LocationText = location, SubmissionKey = Guid.NewGuid().ToString() };
+            db.Add(request);
+            await db.SaveChangesAsync();
+            requestId = request.Id;
+        }
+        using var coordinator = await fixture.Login("coordinator");
+        var results = await coordinator.GetFromJsonAsync<JsonElement>($"/api/v1/requests?search={location}");
+        Assert.Contains(results.GetProperty("items").EnumerateArray(), item => item.GetProperty("id").GetGuid() == requestId);
+    }
+    [Fact]
     public async Task EscalationHasDistinctHistoryWithoutChangingStatus()
     {
         using var coordinator = await fixture.Login("coordinator");

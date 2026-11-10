@@ -34,3 +34,16 @@ it('explains sign-in throttling separately from incorrect credentials', async ()
   );
   expect(screen.getByRole('button', { name: /^Log in$/ })).toBeEnabled();
 });
+
+it('shows and hides the login password without submitting', () => {
+  render(<MemoryRouter><AuthPage /></MemoryRouter>);
+  const password = screen.getByLabelText('Password');
+  fireEvent.change(password, { target: { value: 'SyntheticPassword!9' } });
+  expect(password).toHaveAttribute('type', 'password');
+  fireEvent.click(screen.getByRole('button', { name: 'Show password' }));
+  expect(password).toHaveAttribute('type', 'text');
+  expect(password).toHaveValue('SyntheticPassword!9');
+  fireEvent.click(screen.getByRole('button', { name: 'Hide password' }));
+  expect(password).toHaveAttribute('type', 'password');
+  expect(signIn).not.toHaveBeenCalled();
+});

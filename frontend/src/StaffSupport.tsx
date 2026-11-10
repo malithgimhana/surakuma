@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Plus, Users } from 'lucide-react';
+import { Eye, EyeOff, MapPin, Plus, Users } from 'lucide-react';
 import { api, get } from './api';
 import { useAuth } from './auth';
 import { SystemReadiness } from './SystemReadiness';
@@ -51,11 +51,20 @@ export function VolunteerPage({ self = false }: { self?: boolean }) {
     }),
     write = useWrite();
   const [add, setAdd] = useState(false), [caseSearch, setCaseSearch] = useState('');
+  const [debouncedCaseSearch, setDebouncedCaseSearch] = useState('');
+  const [selectedCase, setSelectedCase] = useState('');
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedCaseSearch(caseSearch.trim()), 300);
+    return () => window.clearTimeout(timer);
+  }, [caseSearch]);
   const cases = useQuery({
-    queryKey: ['volunteer-cases', caseSearch],
-    queryFn: () => get<Page<AidRequest>>(`/requests?search=${encodeURIComponent(caseSearch)}&page=1`),
+    queryKey: ['volunteer-cases', debouncedCaseSearch],
+    queryFn: () => get<Page<AidRequest>>(`/requests?search=${encodeURIComponent(debouncedCaseSearch)}&page=1`),
+    placeholderData: (previous) => previous,
     enabled: !self,
   });
+  const searchingCases = caseSearch.trim() !== debouncedCaseSearch || cases.isFetching;
+  const availableCases = cases.data?.items.filter((r) => !['Closed', 'Rejected', 'Cancelled'].includes(r.status)) ?? [];
   const lookups = useQuery({
     queryKey: ['lookups'],
     queryFn: () => get<Lookups>('/public/lookups'),
@@ -183,16 +192,13 @@ export function VolunteerPage({ self = false }: { self?: boolean }) {
                   });
                 }}
               >
-                <Field label="Search cases" hint="Search by reference or request details, then select a case below.">
-                  <input value={caseSearch} onChange={(e) => setCaseSearch(e.target.value)} />
+                <Field label="Search cases" hint="Search by reference, location or request details, then select a case.">
+                  <input value={caseSearch} onChange={(e) => { setCaseSearch(e.target.value); setSelectedCase(''); }} />
                 </Field>
-                {cases.isPending && <Loading />}
-                {cases.error && <ErrorState error={cases.error} />}
-                {cases.data && cases.data.total > cases.data.items.length && <p>Showing the first {cases.data.items.length} matches. Search by reference to narrow the list.</p>}
-                <Field label="Case">
-                  <select name="requestId" required defaultValue="">
+                <Field label="Case" hint={searchingCases ? 'Searching cases…' : cases.error ? 'Could not load cases. Check your connection and change the search to try again.' : availableCases.length === 0 ? 'No selectable cases in these results. Try a more specific search.' : cases.data && cases.data.total > cases.data.items.length ? 'Showing the first 20 matches. Narrow your search to find more.' : undefined}>
+                  <select name="requestId" required value={selectedCase} onChange={(e) => setSelectedCase(e.target.value)} disabled={searchingCases || !!cases.error}>
                     <option value="">Select a case</option>
-                    {cases.data?.items.filter((r) => !['Closed', 'Rejected', 'Cancelled'].includes(r.status)).map((r) => (
+                    {availableCases.map((r) => (
                       <option key={r.id} value={r.id}>{r.reference} · {r.locationText}</option>
                     ))}
                   </select>
@@ -217,7 +223,7 @@ export function VolunteerPage({ self = false }: { self?: boolean }) {
                 <Field label="Due date and time">
                   <input type="datetime-local" name="dueAt" required />
                 </Field>
-                <Button busy={write.isPending}>Assign task</Button>
+                <Button busy={write.isPending} disabled={searchingCases || !!cases.error || !selectedCase}>Assign task</Button>
               </form>
             </Card>
           )}
@@ -273,6 +279,12 @@ export function VolunteerPage({ self = false }: { self?: boolean }) {
     </>
   );
 }
+const sriLankanDistricts = [
+  'Ampara', 'Anuradhapura', 'Badulla', 'Batticaloa', 'Colombo', 'Galle', 'Gampaha',
+  'Hambantota', 'Jaffna', 'Kalutara', 'Kandy', 'Kegalle', 'Kilinochchi', 'Kurunegala',
+  'Mannar', 'Matale', 'Matara', 'Monaragala', 'Mullaitivu', 'Nuwara Eliya', 'Polonnaruwa',
+  'Puttalam', 'Ratnapura', 'Trincomalee', 'Vavuniya',
+];
 export function CrisesPage() {
   const query = useQuery({ queryKey: ['crises'], queryFn: () => get<Crisis[]>('/crises') }),
     alerts = useQuery({ queryKey: ['alerts'], queryFn: () => get<Alert[]>('/alerts') }),
@@ -280,6 +292,38 @@ export function CrisesPage() {
     write = useWrite();
   const [create, setCreate] = useState(false),
     [areaCrisis, setAreaCrisis] = useState('');
+  const [latitude, setLatitude] = useState(''), [longitude, setLongitude] = useState('');
+  const [locating, setLocating] = useState(false), [locationError, setLocationError] = useState('');
+  const locationRequest = useRef(0);
+  function locateCrisis() {
+    setLocationError('');
+    if (!navigator.geolocation) {
+      setLocationError('Location is unavailable. Enter the coordinates manually.');
+      return;
+    }
+    const request = ++locationRequest.current;
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => {
+        if (locationRequest.current !== request) return;
+        setLatitude(String(coords.latitude));
+        setLongitude(String(coords.longitude));
+        setLocating(false);
+      },
+      () => {
+        if (locationRequest.current !== request) return;
+        setLocationError('Could not get your location. Allow location access or enter the coordinates manually.');
+        setLocating(false);
+      },
+      { timeout: 10000 },
+    );
+  }
+  function editCoordinates(setValue: (value: string) => void, value: string) {
+    locationRequest.current++;
+    setLocating(false);
+    setLocationError('');
+    setValue(value);
+  }
   const areas = useQuery({
     queryKey: ['areas', areaCrisis],
     queryFn: () =>
@@ -292,7 +336,7 @@ export function CrisesPage() {
         title="Crises & public information"
         description="Manage response areas and publish verified, translated public alerts."
         action={
-          <Button onClick={() => setCreate(!create)}>
+          <Button onClick={() => { locationRequest.current++; setLocating(false); setLocationError(''); setCreate(!create); }}>
             <Plus size={18} />
             Create crisis
           </Button>
@@ -337,7 +381,10 @@ export function CrisesPage() {
               </select>
             </Field>
             <Field label="District">
-              <input name="district" required />
+              <select name="district" required defaultValue="">
+                <option value="" disabled>Select a district</option>
+                {sriLankanDistricts.map((district) => <option key={district} value={district}>{district}</option>)}
+              </select>
             </Field>
             <Field label="Latitude">
               <input
@@ -346,7 +393,9 @@ export function CrisesPage() {
                 min={-90}
                 max={90}
                 step="any"
-                defaultValue={6.93}
+                value={latitude}
+                onChange={(e) => editCoordinates(setLatitude, e.target.value)}
+                required
               />
             </Field>
             <Field label="Longitude">
@@ -356,9 +405,18 @@ export function CrisesPage() {
                 min={-180}
                 max={180}
                 step="any"
-                defaultValue={79.88}
+                value={longitude}
+                onChange={(e) => editCoordinates(setLongitude, e.target.value)}
+                required
               />
             </Field>
+            <div className="crisis-location-action">
+              <Button type="button" variant="secondary" busy={locating} onClick={locateCrisis}>
+                <MapPin size={18} aria-hidden="true" /> Use my current location
+              </Button>
+              <small className="muted">Use this only if you are at the crisis location, or enter coordinates manually.</small>
+              {locationError && <small className="field-error" role="alert">{locationError}</small>}
+            </div>
             <Button busy={write.isPending}>Create response event</Button>
           </form>
         </Card>
@@ -574,6 +632,8 @@ function AdminTriageRequest({ request, organisations }: { request: AidRequest; o
   );
 }
 export function AdminPage() {
+  const [showStaffPassword, setShowStaffPassword] = useState(false);
+  const staffPasswordId = useId();
   const users = useQuery({
       queryKey: ['admin-users'],
       queryFn: () => get<AdminUser[]>('/admin/users'),
@@ -613,27 +673,40 @@ export function AdminPage() {
           <h2>Create staff account or grant role</h2>
           <form
             className="stack"
+            onReset={() => setShowStaffPassword(false)}
             onSubmit={(e) => {
               e.preventDefault();
-              const f = values(e.currentTarget);
-              write.mutate({ path: '/admin/users', data: { ...f, crisisId: f.crisisId || null } });
+              const form = e.currentTarget;
+              const f = values(form);
+              write.mutate(
+                { path: '/admin/users', data: { ...f, crisisId: f.crisisId || null } },
+                { onSuccess: () => form.reset() },
+              );
             }}
           >
+            <fieldset disabled={write.isPending} className="staff-access-fields">
             <Field label="Full name">
               <input name="name" required maxLength={100} />
             </Field>
             <Field label="Email">
               <input name="email" type="email" required />
             </Field>
-            <Field label="Initial password (new accounts only)">
+            <div className="field">
+              <label htmlFor={staffPasswordId}>Initial password (new accounts only)</label>
+              <div className="staff-password-input">
               <input
+                id={staffPasswordId}
                 name="password"
-                type="password"
+                type={showStaffPassword ? 'text' : 'password'}
                 minLength={10}
                 required
                 autoComplete="new-password"
               />
-            </Field>
+              <button type="button" className="staff-password-toggle" aria-label={showStaffPassword ? 'Hide password' : 'Show password'} aria-pressed={showStaffPassword} onClick={() => setShowStaffPassword((shown) => !shown)}>
+                {showStaffPassword ? <EyeOff size={20} aria-hidden="true" /> : <Eye size={20} aria-hidden="true" />}
+              </button>
+              </div>
+            </div>
             <Field label="Organisation">
               <select name="organisationId" required>
                 {lookups.data?.organisations.map((o) => (
@@ -670,6 +743,8 @@ export function AdminPage() {
               </select>
             </Field>
             <Button busy={write.isPending}>Grant staff access</Button>
+            <Button type="reset" variant="secondary">Reset form</Button>
+            </fieldset>
           </form>
         </Card>
         <Card>

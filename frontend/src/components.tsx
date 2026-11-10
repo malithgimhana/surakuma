@@ -43,29 +43,28 @@ export function Field({
   children,
   error,
   hint,
+  endAdornment,
 }: {
   label: string;
   children: ReactNode;
   error?: string;
   hint?: string;
+  endAdornment?: ReactNode;
 }) {
   const id = useId();
   const described =
     [hint ? `${id}-hint` : null, error ? `${id}-error` : null].filter(Boolean).join(' ') ||
     undefined;
+  const control = isValidElement(children)
+    ? cloneElement(
+        children as ReactElement<{ id: string; 'aria-describedby'?: string; 'aria-invalid'?: boolean }>,
+        { id, 'aria-describedby': described, 'aria-invalid': error ? true : undefined },
+      )
+    : children;
   return (
     <div className="field">
       <label htmlFor={id}>{label}</label>
-      {isValidElement(children)
-        ? cloneElement(
-            children as ReactElement<{
-              id: string;
-              'aria-describedby'?: string;
-              'aria-invalid'?: boolean;
-            }>,
-            { id, 'aria-describedby': described, 'aria-invalid': error ? true : undefined },
-          )
-        : children}
+      {endAdornment ? <div className="staff-password-input">{control}{endAdornment}</div> : control}
       {hint && (
         <small className="muted" id={`${id}-hint`}>
           {hint}
