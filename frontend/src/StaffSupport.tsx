@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Eye, EyeOff, MapPin, Plus, Users } from 'lucide-react';
 import { api, get } from './api';
 import { useAuth } from './auth';
@@ -43,6 +43,12 @@ function Message({ mutation }: { mutation: ReturnType<typeof useWrite> }) {
   ) : null;
 }
 const values = (form: HTMLFormElement) => Object.fromEntries(new FormData(form).entries());
+async function getHistoryPage<T>(path: string): Promise<Page<T>> {
+  const result = await get<Page<T>>(path);
+  if (!Array.isArray(result?.items) || typeof result.total !== 'number')
+    throw new Error('The API needs to be restarted to load activity page totals.');
+  return result;
+}
 export function VolunteerPage({ self = false }: { self?: boolean }) {
   const { user } = useAuth(),
     query = useQuery({
@@ -633,6 +639,13 @@ function AdminTriageRequest({ request, organisations }: { request: AidRequest; o
 }
 export function AdminPage() {
   const [showStaffPassword, setShowStaffPassword] = useState(false);
+  const [searchParams] = useSearchParams();
+  const section = ['cases', 'users', 'organisations', 'integrations', 'activity'].includes(searchParams.get('section') || '') ? searchParams.get('section')! : 'overview';
+  const [showStaffForm, setShowStaffForm] = useState(false);
+  const [userSearch, setUserSearch] = useState('');
+  const [roleFilter, setRoleFilter] = useState('');
+  const [auditPage, setAuditPage] = useState(1);
+  const [deliveryPage, setDeliveryPage] = useState(1);
   const staffPasswordId = useId();
   const users = useQuery({
       queryKey: ['admin-users'],
@@ -641,35 +654,65 @@ export function AdminPage() {
     lookups = useQuery({ queryKey: ['lookups'], queryFn: () => get<Lookups>('/public/lookups') }),
     triage = useQuery({ queryKey: ['triage'], queryFn: () => get<AidRequest[]>('/requests/triage') }),
     audit = useQuery({
-      queryKey: ['audit'],
+      queryKey: ['audit', auditPage],
       queryFn: () =>
-        get<{ id: string; action: string; actorId: string; detail: string; createdAt: string }[]>(
-          '/admin/audit',
+        getHistoryPage<{ id: string; action: string; actorId: string; detail: string; createdAt: string }>(
+          `/admin/audit?page=${auditPage}&pageSize=10&includeTotal=true`,
         ),
     }),
     deliveries = useQuery({
-      queryKey: ['deliveries'],
+      queryKey: ['deliveries', deliveryPage],
       queryFn: () =>
-        get<{ id: string; state: string; attempts: number; lastError: string | null }[]>(
-          '/admin/deliveries',
+        getHistoryPage<{ id: string; state: string; attempts: number; lastError: string | null; createdAt: string; eventMessage: string; recipientName: string | null; caseReference: string | null; provider: string | null }>(
+          `/admin/deliveries?page=${deliveryPage}&pageSize=10&includeTotal=true`,
         ),
     }),
     write = useWrite();
+  const filteredUsers = users.data?.filter((u) => {
+    const query = userSearch.trim().toLowerCase();
+    return (!query || `${u.name} ${u.email}`.toLowerCase().includes(query)) && (!roleFilter || u.memberships.some((m) => m.role === roleFilter));
+  });
+  const titles: Record<string, [string, string]> = {
+    overview: ['System administration', 'Manage access, organisations, audit records, and notification delivery.'],
+    cases: ['Unassigned cases', 'Review requests waiting for a response centre or case manager.'],
+    users: ['Users & access', 'Manage staff accounts, roles, and access to organisations.'],
+    organisations: ['Organisations', 'View and manage partner organisations.'],
+    integrations: ['Integrations', 'Review service configuration and notification readiness.'],
+    activity: ['Activity', 'Review audit events and notification delivery.'],
+  };
   return (
-    <>
+    <div className="admin-workspace">
       <PageHeader
-        title="System administration"
-        description="Manage access, organisations, audit records, and notification delivery."
+        title={titles[section][0]}
+        description={titles[section][1]}
       />
-      <SystemReadiness />
+      {section === 'overview' && <div className="admin-overview-grid">
+        <Link className="card admin-overview-card" to="/admin?section=cases"><span>Unassigned cases</span><strong>{triage.data?.length ?? '—'}</strong><small>Review requests →</small></Link>
+        <Link className="card admin-overview-card" to="/admin?section=users"><span>Users & access</span><strong>{users.data?.length ?? '—'}</strong><small>Manage access →</small></Link>
+        <Link className="card admin-overview-card" to="/admin?section=organisations"><span>Organisations</span><strong>{lookups.data?.organisations.length ?? '—'}</strong><small>View organisations →</small></Link>
+        <Link className="card admin-overview-card" to="/admin?section=integrations"><span>Integrations</span><strong>Service status</strong><small>View readiness →</small></Link>
+      </div>}
+      {section === 'integrations' && <SystemReadiness />}
       <Message mutation={write} />
+      <div hidden={section !== 'overview' && section !== 'cases'}>
       <Card>
         <h2>Unassigned requests</h2>
         {triage.isPending ? <Loading /> : triage.error ? <ErrorState error={triage.error} /> :
           triage.data?.length ? triage.data.map((request) => <AdminTriageRequest key={request.id} request={request} organisations={lookups.data?.organisations || []} />) : <p>No requests are waiting for assignment.</p>}
       </Card>
-      <div className="two-column">
-        <Card>
+      </div>
+      <div hidden={section !== 'users'}>
+        <Card className="admin-users-card">
+          <div className="admin-users-toolbar">
+            <input aria-label="Search users" placeholder="Search users by name or email" value={userSearch} onChange={(e) => setUserSearch(e.target.value)} />
+            <select aria-label="Filter by role" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
+              <option value="">All roles</option>
+              {['Coordinator', 'CaseManager', 'Logistics', 'ShelterAdmin', 'VolunteerCoordinator', 'Volunteer', 'Partner', 'Administrator'].map((role) => <option key={role} value={role}>{role.replace(/([a-z])([A-Z])/g, '$1 $2')}</option>)}
+            </select>
+            <Button type="button" aria-expanded={showStaffForm} onClick={() => setShowStaffForm(!showStaffForm)}><Plus size={18} />{showStaffForm ? 'Close form' : 'Create staff account'}</Button>
+          </div>
+          <div className="admin-staff-form" hidden={!showStaffForm}>
+        <div>
           <h2>Create staff account or grant role</h2>
           <form
             className="stack"
@@ -746,7 +789,21 @@ export function AdminPage() {
             <Button type="reset" variant="secondary">Reset form</Button>
             </fieldset>
           </form>
+        </div>
+          </div>
+          {users.isPending ? <Loading /> : users.error ? <ErrorState error={users.error} /> : <div className="table-wrap"><table className="admin-users-table">
+            <thead><tr><th>Name</th><th>Email</th><th>Role and organisation</th><th>Access</th></tr></thead>
+            <tbody>{filteredUsers?.map((u) => <tr key={u.id}>
+              <td><div className="admin-person"><span className="admin-person-avatar" aria-hidden="true">{u.name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase()}</span><div><strong>{u.name}</strong><details className="admin-user-id"><summary>View user ID</summary><small>{u.id}</small></details></div></div></td>
+              <td>{u.email}</td>
+              <td>{u.memberships.length ? u.memberships.map((m) => <div key={m.id} className="admin-membership"><Badge value={m.role} /><small>{lookups.data?.organisations.find((o) => o.id === m.organisationId)?.name || 'Organisation unavailable'}</small></div>) : <span className="muted">No staff roles</span>}</td>
+              <td>{u.memberships.map((m) => <Button key={m.id} type="button" variant="ghost" busy={write.isPending} onClick={() => { const organisation = lookups.data?.organisations.find((o) => o.id === m.organisationId)?.name || 'this organisation'; if (window.confirm(`Revoke ${m.role} access for ${u.name} at ${organisation}?`)) write.mutate({ path: `/admin/memberships/${m.id}`, method: 'delete' }); }}>Revoke {m.role.replace(/([a-z])([A-Z])/g, '$1 $2')}</Button>)}</td>
+            </tr>)}</tbody>
+          </table>{filteredUsers?.length === 0 && <p>No users match your search.</p>}</div>}
+          <p className="muted admin-users-count">Showing {filteredUsers?.length ?? 0} of {users.data?.length ?? 0} loaded users{users.data?.length === 100 ? ' (first 100)' : ''}</p>
         </Card>
+      </div>
+      <div hidden={section !== 'organisations'}>
         <Card>
           <h2>Partner organisations</h2>
           {lookups.data?.organisations.map((o) => (
@@ -771,60 +828,13 @@ export function AdminPage() {
           </form>
         </Card>
       </div>
-      <Card>
-        <h2>Users & access</h2>
-        {users.isPending ? (
-          <Loading />
-        ) : users.error ? (
-          <ErrorState error={users.error} />
-        ) : (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Person</th>
-                  <th>Email</th>
-                  <th>Memberships</th>
-                </tr>
-              </thead>
-              <tbody>
-                {users.data?.map((u) => (
-                  <tr key={u.id}>
-                    <td>
-                      <strong>{u.name}</strong>
-                      <small>{u.id}</small>
-                    </td>
-                    <td>{u.email}</td>
-                    <td>
-                      {u.memberships.map((m) => (
-                        <div className="inline" key={m.id}>
-                          <Badge value={m.role} />
-                          <Button
-                            variant="ghost"
-                            busy={write.isPending}
-                            onClick={() =>
-                              write.mutate({ path: `/admin/memberships/${m.id}`, method: 'delete' })
-                            }
-                          >
-                            Revoke
-                          </Button>
-                        </div>
-                      ))}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
-      <div className="two-column">
+      <div className="two-column" hidden={section !== 'activity'}>
         <Card>
           <h2>Recent audit events</h2>
-          {audit.error ? (
+          {audit.isPending ? <Loading /> : audit.error ? (
             <ErrorState error={audit.error} />
           ) : (
-            audit.data?.map((a) => (
+            audit.data?.items.map((a) => (
               <div className="audit-entry" key={a.id}>
                 <strong>{a.action}</strong>
                 <p>{a.detail}</p>
@@ -834,25 +844,40 @@ export function AdminPage() {
               </div>
             ))
           )}
+          {!audit.isPending && !audit.error && <div className="admin-pagination" role="group" aria-label="Audit event pages">
+            <Button type="button" variant="secondary" disabled={auditPage === 1 || audit.isFetching} onClick={() => setAuditPage((page) => page - 1)}>Previous</Button>
+            <span aria-live="polite">Page {auditPage} of {Math.max(1, Math.ceil((audit.data?.total ?? 0) / 10))}</span>
+            <Button type="button" variant="secondary" disabled={auditPage >= Math.max(1, Math.ceil((audit.data?.total ?? 0) / 10)) || audit.isFetching} onClick={() => setAuditPage((page) => page + 1)}>Next</Button>
+          </div>}
+          {!audit.isPending && !audit.error && audit.data?.items.length === 0 && <p>No audit events on this page.</p>}
         </Card>
         <Card>
           <h2>Notification delivery</h2>
           <p className="muted">
-            Captured means stored locally; it does not mean an email was sent.
+            Captured means stored locally; Sent means the provider accepted the message, not that it reached the inbox.
           </p>
-          {deliveries.error ? (
+          {deliveries.isPending ? <Loading /> : deliveries.error ? (
             <ErrorState error={deliveries.error} />
           ) : (
-            deliveries.data?.map((d) => (
+            deliveries.data?.items.map((d) => (
               <div className="audit-entry" key={d.id}>
                 <Badge value={d.state} />
                 <span> {d.attempts} attempt(s)</span>
+                <p>{d.eventMessage || 'Message unavailable'}</p>
+                <small>{formatDate(d.createdAt)} · {d.recipientName || 'Recipient unavailable'}{d.caseReference ? ` · ${d.caseReference}` : ''}{d.provider ? ` · ${d.provider}` : ''}</small>
+                <small className="muted block">Event message in English; the delivered language may differ.</small>
                 {d.lastError && <p>{d.lastError}</p>}
               </div>
             ))
           )}
+          {!deliveries.isPending && !deliveries.error && deliveries.data?.items.length === 0 && <p>No delivery events on this page.</p>}
+          {!deliveries.isPending && !deliveries.error && <div className="admin-pagination" role="group" aria-label="Notification delivery pages">
+            <Button type="button" variant="secondary" disabled={deliveryPage === 1 || deliveries.isFetching} onClick={() => setDeliveryPage((page) => page - 1)}>Previous</Button>
+            <span aria-live="polite">Page {deliveryPage} of {Math.max(1, Math.ceil((deliveries.data?.total ?? 0) / 10))}</span>
+            <Button type="button" variant="secondary" disabled={deliveryPage >= Math.max(1, Math.ceil((deliveries.data?.total ?? 0) / 10)) || deliveries.isFetching} onClick={() => setDeliveryPage((page) => page + 1)}>Next</Button>
+          </div>}
         </Card>
       </div>
-    </>
+    </div>
   );
 }

@@ -14,6 +14,65 @@ namespace Surakuma.Tests;
 public sealed partial class IntegrationTests
 {
     [Fact]
+    public async Task AdminHistoryTotalsMatchStoredRecordsAndPreserveArrayResponses()
+    {
+        using var admin = await fixture.Login("admin");
+        using var scope = fixture.Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
+        var auditTotal = await db.Set<AuditEvent>().CountAsync();
+        var deliveryTotal = await db.Set<OutboxMessage>().CountAsync();
+        foreach (var (path, total) in new[] { ("audit", auditTotal), ("deliveries", deliveryTotal) })
+        {
+            var result = await admin.GetFromJsonAsync<JsonElement>($"/api/v1/admin/{path}?page=1&pageSize=10&includeTotal=true");
+            Assert.Equal(total, result.GetProperty("total").GetInt32());
+            Assert.Equal(1, result.GetProperty("pageNumber").GetInt32());
+            Assert.Equal(10, result.GetProperty("pageSize").GetInt32());
+            Assert.Equal(Math.Min(total, 10), result.GetProperty("items").GetArrayLength());
+            var legacy = await admin.GetFromJsonAsync<JsonElement>($"/api/v1/admin/{path}?page=1&pageSize=10");
+            Assert.Equal(JsonValueKind.Array, legacy.ValueKind);
+            Assert.Equal(result.GetProperty("items").GetArrayLength(), legacy.GetArrayLength());
+        }
+    }
+    [Fact]
+    public async Task AdminDeliveryHistoryPagesWithoutRepeatingEvents()
+    {
+        using (var scope = fixture.Factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
+            var request = await db.Set<AssistanceRequest>().FirstAsync(x => x.SubmissionKey == "seed-food");
+            for (int i = 0; i < 12; i++)
+                db.Add(new OutboxMessage { UserId = request.CitizenId, RequestId = request.Id, Message = $"Synthetic pagination event {i}", State = "Captured" });
+            await db.SaveChangesAsync();
+        }
+        using var admin = await fixture.Login("admin");
+        var first = await admin.GetFromJsonAsync<JsonElement>("/api/v1/admin/deliveries?page=1&pageSize=10");
+        var second = await admin.GetFromJsonAsync<JsonElement>("/api/v1/admin/deliveries?page=2&pageSize=10");
+        Assert.Equal(10, first.GetArrayLength());
+        Assert.True(second.GetArrayLength() > 0);
+        var firstIds = first.EnumerateArray().Select(x => x.GetProperty("id").GetGuid()).ToHashSet();
+        Assert.DoesNotContain(second.EnumerateArray(), x => firstIds.Contains(x.GetProperty("id").GetGuid()));
+    }
+    [Fact]
+    public async Task AdminDeliveryHistoryIncludesEventContext()
+    {
+        Guid eventId;
+        using (var scope = fixture.Factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
+            var request = await db.Set<AssistanceRequest>().FirstAsync(x => x.SubmissionKey == "seed-food");
+            var entry = new OutboxMessage { UserId = request.CitizenId, RequestId = request.Id, Message = "Synthetic delivery context", State = "Captured" };
+            db.Add(entry);
+            await db.SaveChangesAsync();
+            eventId = entry.Id;
+        }
+        using var admin = await fixture.Login("admin");
+        var deliveries = await admin.GetFromJsonAsync<JsonElement>("/api/v1/admin/deliveries");
+        var item = Assert.Single(deliveries.EnumerateArray(), x => x.GetProperty("id").GetGuid() == eventId);
+        Assert.Equal("Synthetic delivery context", item.GetProperty("eventMessage").GetString());
+        Assert.False(string.IsNullOrEmpty(item.GetProperty("recipientName").GetString()));
+        Assert.False(string.IsNullOrEmpty(item.GetProperty("caseReference").GetString()));
+    }
+    [Fact]
     public async Task CaseSearchFindsVisibleRequestsByLocation()
     {
         string location = "SearchLocation" + Guid.NewGuid().ToString("N");

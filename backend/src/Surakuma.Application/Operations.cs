@@ -321,8 +321,9 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
     public async Task<AllocationRecommendations> AllocationRecommendations(Guid requestId, CancellationToken ct)
     {
         var request = await access.Request(requestId, LogisticsRoles, ct);
+        var crisis = await store.FindAsync<Crisis>(request.CrisisId, ct) ?? throw new MissingException();
         var orgs = (await access.Memberships(ct)).Where(x => LogisticsRoles.Contains(x.Role)).Select(x => x.OrganisationId).Distinct().ToArray();
-        var resources = await store.ListAsync(store.Query<Resource>().Where(x => orgs.Contains(x.OrganisationId) && x.Category == request.Category), ct);
+        var resources = await store.ListAsync(store.Query<Resource>().Where(x => orgs.Contains(x.OrganisationId) && x.Category == request.Category && x.CountryCode == crisis.CountryCode), ct);
         var cases = await store.ListAsync((await access.Visible(ct)).Where(x => x.OrganisationId == request.OrganisationId && x.CrisisId == request.CrisisId && x.Category == request.Category && (x.Status == RequestStatus.Approved || x.Status == RequestStatus.InProgress || x.Status == RequestStatus.PartiallyFulfilled)), ct);
         if (!cases.Any(x => x.Id == request.Id)) cases.Add(request);
         var ids = cases.Select(x => x.Id).ToArray();
@@ -344,6 +345,9 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
         var r = await access.Request(input.RequestId, LogisticsRoles, ct);
         var resource = await store.FindAsync<Resource>(input.ResourceId, ct) ?? throw new MissingException();
         await access.RequireOrg(resource.OrganisationId, LogisticsRoles, ct);
+        var crisis = await store.FindAsync<Crisis>(r.CrisisId, ct) ?? throw new MissingException();
+        if (resource.CountryCode != crisis.CountryCode)
+            throw new RuleException("A resource must be in the same country as the crisis.");
         if (r.Status is not (RequestStatus.Approved or RequestStatus.InProgress or RequestStatus.PartiallyFulfilled))
             throw new RuleException("Verify and approve this case before allocating aid.");
         var committed = (await store.ListAsync(store.Query<ResourceAllocation>().Where(x => x.RequestId == r.Id && x.Status != AllocationStatus.Cancelled && x.Status != AllocationStatus.Delivered), ct)).Sum(x => x.Quantity);
@@ -433,6 +437,9 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
             throw new RuleException("This household already has an active placement.");
         var shelter = await store.FindAsync<Shelter>(input.ShelterId, ct) ?? throw new MissingException();
         await access.RequireOrg(shelter.OrganisationId, ShelterRoles, ct);
+        var crisis = await store.FindAsync<Crisis>(r.CrisisId, ct) ?? throw new MissingException();
+        if (shelter.CountryCode != crisis.CountryCode)
+            throw new RuleException("A shelter must be in the same country as the crisis.");
         if (r.AccessibilityNeeds.Length > 0 && !shelter.Accessible)
             throw new RuleException("This household requires an accessible shelter.");
         shelter.Reserve(r.HouseholdSize);

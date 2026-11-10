@@ -155,6 +155,54 @@ namespace Surakuma.Infrastructure.Migrations
                     b.ToTable("AspNetUserTokens", (string)null);
                 });
 
+            modelBuilder.Entity("Surakuma.Domain.AdministrativeDivision", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("CountryCode")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(2)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(2)")
+                        .HasDefaultValue("LK");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("LevelName")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<Guid?>("ParentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<byte[]>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CountryCode");
+
+                    b.HasIndex("ParentId");
+
+                    b.ToTable("AdministrativeDivision");
+                });
+
             modelBuilder.Entity("Surakuma.Domain.AssistanceRequest", b =>
                 {
                     b.Property<Guid>("Id")
@@ -166,12 +214,14 @@ namespace Surakuma.Infrastructure.Migrations
                         .HasMaxLength(4000)
                         .HasColumnType("nvarchar(4000)");
 
+                    b.Property<string>("AssignedCaseManagerId")
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
                     b.Property<string>("AssignmentStatus")
                         .IsRequired()
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");
-
-                    b.Property<string>("AssignedCaseManagerId").HasMaxLength(450).HasColumnType("nvarchar(450)");
 
                     b.Property<string>("Category")
                         .IsRequired()
@@ -232,11 +282,18 @@ namespace Surakuma.Infrastructure.Migrations
                         .HasMaxLength(30)
                         .HasColumnType("nvarchar(30)");
 
-                    b.Property<bool>("RequestedForSomeoneElse").HasColumnType("bit");
+                    b.Property<bool>("RequestedForSomeoneElse")
+                        .HasColumnType("bit");
 
-                    b.Property<string>("RequesterContact").IsRequired().HasMaxLength(4000).HasColumnType("nvarchar(4000)");
+                    b.Property<string>("RequesterContact")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
 
-                    b.Property<string>("RequesterRelationship").IsRequired().HasMaxLength(4000).HasColumnType("nvarchar(4000)");
+                    b.Property<string>("RequesterRelationship")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -406,6 +463,40 @@ namespace Surakuma.Infrastructure.Migrations
                     b.ToTable("CaseShare");
                 });
 
+            modelBuilder.Entity("Surakuma.Domain.Country", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(2)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(2)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<byte[]>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("Country");
+                });
+
             modelBuilder.Entity("Surakuma.Domain.Crisis", b =>
                 {
                     b.Property<Guid>("Id")
@@ -415,6 +506,17 @@ namespace Surakuma.Infrastructure.Migrations
                     b.Property<bool>("Active")
                         .HasColumnType("bit");
 
+                    b.Property<Guid?>("AdministrativeDivisionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("CountryCode")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(2)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(2)")
+                        .HasDefaultValue("LK");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("datetimeoffset");
 
@@ -422,6 +524,9 @@ namespace Surakuma.Infrastructure.Migrations
                         .IsRequired()
                         .HasMaxLength(4000)
                         .HasColumnType("nvarchar(4000)");
+
+                    b.Property<Guid?>("InternationalIncidentId")
+                        .HasColumnType("uniqueidentifier");
 
                     b.Property<double>("Latitude")
                         .HasColumnType("float");
@@ -434,7 +539,8 @@ namespace Surakuma.Infrastructure.Migrations
                         .HasMaxLength(4000)
                         .HasColumnType("nvarchar(4000)");
 
-                    b.Property<Guid?>("PrimaryOrganisationId").HasColumnType("uniqueidentifier");
+                    b.Property<Guid?>("PrimaryOrganisationId")
+                        .HasColumnType("uniqueidentifier");
 
                     b.Property<string>("Type")
                         .IsRequired()
@@ -451,6 +557,12 @@ namespace Surakuma.Infrastructure.Migrations
                         .HasColumnType("rowversion");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("AdministrativeDivisionId");
+
+                    b.HasIndex("CountryCode");
+
+                    b.HasIndex("InternationalIncidentId");
 
                     b.HasIndex("PrimaryOrganisationId");
 
@@ -632,7 +744,7 @@ namespace Surakuma.Infrastructure.Migrations
                     b.ToTable("HumanDecision");
                 });
 
-            modelBuilder.Entity("Surakuma.Domain.Membership", b =>
+            modelBuilder.Entity("Surakuma.Domain.InternationalIncident", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -641,7 +753,36 @@ namespace Surakuma.Infrastructure.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("datetimeoffset");
 
-                    b.Property<bool>("AvailableForAssignment").HasColumnType("bit");
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<byte[]>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("InternationalIncident");
+                });
+
+            modelBuilder.Entity("Surakuma.Domain.Membership", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("AvailableForAssignment")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
 
                     b.Property<Guid>("OrganisationId")
                         .HasColumnType("uniqueidentifier");
@@ -844,6 +985,45 @@ namespace Surakuma.Infrastructure.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("Organisation");
+                });
+
+            modelBuilder.Entity("Surakuma.Domain.OrganisationCountry", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("CountryCode")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(2)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(2)")
+                        .HasDefaultValue("LK");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid>("OrganisationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<byte[]>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CountryCode");
+
+                    b.HasIndex("OrganisationId", "CountryCode")
+                        .IsUnique();
+
+                    b.ToTable("OrganisationCountry");
                 });
 
             modelBuilder.Entity("Surakuma.Domain.OutboxMessage", b =>
@@ -1153,10 +1333,21 @@ namespace Surakuma.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<Guid?>("AdministrativeDivisionId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<string>("Category")
                         .IsRequired()
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");
+
+                    b.Property<string>("CountryCode")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(2)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(2)")
+                        .HasDefaultValue("LK");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("datetimeoffset");
@@ -1211,6 +1402,10 @@ namespace Surakuma.Infrastructure.Migrations
                         .HasColumnType("rowversion");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("AdministrativeDivisionId");
+
+                    b.HasIndex("CountryCode");
 
                     b.HasIndex("OrganisationId");
 
@@ -1281,8 +1476,19 @@ namespace Surakuma.Infrastructure.Migrations
                         .HasMaxLength(4000)
                         .HasColumnType("nvarchar(4000)");
 
+                    b.Property<Guid?>("AdministrativeDivisionId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<int>("Capacity")
                         .HasColumnType("int");
+
+                    b.Property<string>("CountryCode")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(2)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(2)")
+                        .HasDefaultValue("LK");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("datetimeoffset");
@@ -1325,6 +1531,10 @@ namespace Surakuma.Infrastructure.Migrations
                         .HasColumnType("rowversion");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("AdministrativeDivisionId");
+
+                    b.HasIndex("CountryCode");
 
                     b.HasIndex("OrganisationId");
 
@@ -1703,9 +1913,28 @@ namespace Surakuma.Infrastructure.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Surakuma.Domain.AdministrativeDivision", b =>
+                {
+                    b.HasOne("Surakuma.Domain.Country", null)
+                        .WithMany()
+                        .HasForeignKey("CountryCode")
+                        .HasPrincipalKey("Code")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Surakuma.Domain.AdministrativeDivision", null)
+                        .WithMany()
+                        .HasForeignKey("ParentId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
             modelBuilder.Entity("Surakuma.Domain.AssistanceRequest", b =>
                 {
-                    b.HasOne("Surakuma.Infrastructure.AppUser", null).WithMany().HasForeignKey("AssignedCaseManagerId").OnDelete(DeleteBehavior.Restrict);
+                    b.HasOne("Surakuma.Infrastructure.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("AssignedCaseManagerId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("Surakuma.Infrastructure.AppUser", null)
                         .WithMany()
                         .HasForeignKey("CitizenId")
@@ -1748,6 +1977,31 @@ namespace Surakuma.Infrastructure.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Surakuma.Domain.Crisis", b =>
+                {
+                    b.HasOne("Surakuma.Domain.AdministrativeDivision", null)
+                        .WithMany()
+                        .HasForeignKey("AdministrativeDivisionId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Surakuma.Domain.Country", null)
+                        .WithMany()
+                        .HasForeignKey("CountryCode")
+                        .HasPrincipalKey("Code")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Surakuma.Domain.InternationalIncident", null)
+                        .WithMany()
+                        .HasForeignKey("InternationalIncidentId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Surakuma.Domain.Organisation", null)
+                        .WithMany()
+                        .HasForeignKey("PrimaryOrganisationId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
             modelBuilder.Entity("Surakuma.Domain.CrisisAssignment", b =>
                 {
                     b.HasOne("Surakuma.Domain.Crisis", null)
@@ -1761,11 +2015,6 @@ namespace Surakuma.Infrastructure.Migrations
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
-                });
-
-            modelBuilder.Entity("Surakuma.Domain.Crisis", b =>
-                {
-                    b.HasOne("Surakuma.Domain.Organisation", null).WithMany().HasForeignKey("PrimaryOrganisationId").OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("Surakuma.Domain.Feedback", b =>
@@ -1840,6 +2089,22 @@ namespace Surakuma.Infrastructure.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Surakuma.Domain.OrganisationCountry", b =>
+                {
+                    b.HasOne("Surakuma.Domain.Country", null)
+                        .WithMany()
+                        .HasForeignKey("CountryCode")
+                        .HasPrincipalKey("Code")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Surakuma.Domain.Organisation", null)
+                        .WithMany()
+                        .HasForeignKey("OrganisationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Surakuma.Domain.PotentialDuplicate", b =>
                 {
                     b.HasOne("Surakuma.Domain.AssistanceRequest", null)
@@ -1884,6 +2149,18 @@ namespace Surakuma.Infrastructure.Migrations
 
             modelBuilder.Entity("Surakuma.Domain.Resource", b =>
                 {
+                    b.HasOne("Surakuma.Domain.AdministrativeDivision", null)
+                        .WithMany()
+                        .HasForeignKey("AdministrativeDivisionId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Surakuma.Domain.Country", null)
+                        .WithMany()
+                        .HasForeignKey("CountryCode")
+                        .HasPrincipalKey("Code")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
                     b.HasOne("Surakuma.Domain.Organisation", null)
                         .WithMany()
                         .HasForeignKey("OrganisationId")
@@ -1908,6 +2185,18 @@ namespace Surakuma.Infrastructure.Migrations
 
             modelBuilder.Entity("Surakuma.Domain.Shelter", b =>
                 {
+                    b.HasOne("Surakuma.Domain.AdministrativeDivision", null)
+                        .WithMany()
+                        .HasForeignKey("AdministrativeDivisionId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Surakuma.Domain.Country", null)
+                        .WithMany()
+                        .HasForeignKey("CountryCode")
+                        .HasPrincipalKey("Code")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
                     b.HasOne("Surakuma.Domain.Organisation", null)
                         .WithMany()
                         .HasForeignKey("OrganisationId")

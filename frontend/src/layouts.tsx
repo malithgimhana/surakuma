@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import {
   ArrowUpRight,
   Bell,
+  Building2,
   Boxes,
   ChevronDown,
   ClipboardList,
@@ -14,7 +15,9 @@ import {
   Menu,
   Moon,
   Settings,
-  ShieldCheck,
+  Activity,
+  Inbox,
+  Layers,
   Siren,
   Sun,
   Tent,
@@ -180,7 +183,7 @@ export function AppLayout({
             (path.includes('crises') && user?.roles.includes('Coordinator')),
         ).map(([path, label, icon]) => [path, t(label), icon] as const)
       : effectiveMode === 'admin'
-        ? ([['/admin', 'Administration', ShieldCheck]] as const)
+        ? ([['/admin', 'Overview', LayoutDashboard], ['/admin?section=cases', 'Unassigned cases', Inbox], ['/admin?section=users', 'Users & access', Users], ['/admin?section=organisations', 'Organisations', Building2], ['/admin?section=integrations', 'Integrations', Layers], ['/admin?section=activity', 'Activity', Activity]] as const)
         : effectiveMode === 'volunteer'
           ? ([
               ['/volunteer', 'My assignments', Users],
@@ -202,10 +205,13 @@ export function AppLayout({
                 : 'VOLUNTEER WORKSPACE'}
         </div>
         <nav aria-label="Workspace navigation">
-          {nav.map(([path, label, Icon]) => (
+          {nav.map(([path, label, Icon]) => effectiveMode === 'admin' ? (
+            <Link key={path} to={path} className={location.pathname === '/admin' && (location.search || '') === (path.includes('?') ? '?' + path.split('?')[1] : '') ? 'active' : undefined} aria-current={location.pathname === '/admin' && (location.search || '') === (path.includes('?') ? '?' + path.split('?')[1] : '') ? 'page' : undefined} onClick={() => setOpen(false)}>
+              <Icon size={20} /><span>{label}</span>
+            </Link>
+          ) : (
             <NavLink key={path} to={path} end onClick={() => setOpen(false)}>
-              <Icon size={20} />
-              <span>{label}</span>
+              <Icon size={20} /><span>{label}</span>
             </NavLink>
           ))}
         </nav>

@@ -49,6 +49,22 @@ public sealed class CrisisDbContext(DbContextOptions<CrisisDbContext> options) :
             }
         }
         b.Entity<Resource>().Ignore(x => x.Available);
+        b.Entity<Country>().Property(x => x.Code).HasMaxLength(2).IsUnicode(false);
+        b.Entity<Country>().HasAlternateKey(x => x.Code);
+        foreach (var entity in new[] { typeof(Crisis), typeof(Resource), typeof(Shelter), typeof(AdministrativeDivision), typeof(OrganisationCountry) })
+            b.Entity(entity).Property<string>("CountryCode").HasMaxLength(2).IsUnicode(false).HasDefaultValue("LK");
+        b.Entity<OrganisationCountry>().HasIndex(x => new { x.OrganisationId, x.CountryCode }).IsUnique();
+        b.Entity<AdministrativeDivision>().HasOne<AdministrativeDivision>().WithMany().HasForeignKey(x => x.ParentId).OnDelete(DeleteBehavior.Restrict);
+        b.Entity<AdministrativeDivision>().HasOne<Country>().WithMany().HasForeignKey(x => x.CountryCode).HasPrincipalKey(x => x.Code).OnDelete(DeleteBehavior.Restrict);
+        b.Entity<OrganisationCountry>().HasOne<Country>().WithMany().HasForeignKey(x => x.CountryCode).HasPrincipalKey(x => x.Code).OnDelete(DeleteBehavior.Restrict);
+        b.Entity<Crisis>().HasOne<Country>().WithMany().HasForeignKey(x => x.CountryCode).HasPrincipalKey(x => x.Code).OnDelete(DeleteBehavior.Restrict);
+        b.Entity<Resource>().HasOne<Country>().WithMany().HasForeignKey(x => x.CountryCode).HasPrincipalKey(x => x.Code).OnDelete(DeleteBehavior.Restrict);
+        b.Entity<Shelter>().HasOne<Country>().WithMany().HasForeignKey(x => x.CountryCode).HasPrincipalKey(x => x.Code).OnDelete(DeleteBehavior.Restrict);
+        Fk<OrganisationCountry, Organisation>(b, nameof(OrganisationCountry.OrganisationId));
+        Fk<Crisis, AdministrativeDivision>(b, nameof(Crisis.AdministrativeDivisionId));
+        Fk<Crisis, InternationalIncident>(b, nameof(Crisis.InternationalIncidentId));
+        Fk<Resource, AdministrativeDivision>(b, nameof(Resource.AdministrativeDivisionId));
+        Fk<Shelter, AdministrativeDivision>(b, nameof(Shelter.AdministrativeDivisionId));
         b.Entity<Shelter>().Ignore(x => x.Available);
         b.Entity<AssistanceRequest>().Property(x => x.SubmissionKey).HasMaxLength(100);
         b.Entity<AssistanceRequest>().Property(x => x.CitizenId).HasMaxLength(450);

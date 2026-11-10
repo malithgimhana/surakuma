@@ -12,6 +12,7 @@ vi.mock('../auth', () => ({ useAuth: () => ({ user: { id: 'admin', roles: ['Admi
 vi.mock('../SystemReadiness', () => ({ SystemReadiness: () => null }));
 vi.mock('../api', () => ({
   get: vi.fn((path: string) => Promise.resolve(path === '/public/lookups' ? { crises: [], organisations: [{ id: 'centre', name: 'Response centre' }] } :
+    path === '/admin/users' ? [{ id: 'user1', name: 'Test Person', email: 'person@example.test', memberships: [{ id: 'membership1', role: 'CaseManager', organisationId: 'centre' }] }, { id: 'user2', name: 'Other User', email: 'other@example.test', memberships: [] }] :
     path === '/requests/triage' ? [{ id: 'request', reference: 'SK-TEST', category: 'FoodWater', description: 'Synthetic request', locationText: 'Test location', organisationId: null, requestedForSomeoneElse: false }] : [])),
   api: { request: vi.fn().mockResolvedValue({ data: {} }) },
   errorMessage: () => 'Error',
@@ -31,8 +32,9 @@ it('lets an administrator inspect and assign an unassigned request', async () =>
 
 it('resets the staff access form manually and after a successful grant, but keeps failed entries', async () => {
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-    <MemoryRouter><AdminPage /></MemoryRouter>
+    <MemoryRouter initialEntries={['/admin?section=users']}><AdminPage /></MemoryRouter>
   </QueryClientProvider>);
+  fireEvent.click(screen.getByRole('button', { name: 'Create staff account' }));
   const section = screen.getByRole('heading', { name: 'Create staff account or grant role' }).parentElement!;
   const form = within(section);
   const name = form.getByLabelText('Full name');
@@ -70,4 +72,19 @@ it('resets the staff access form manually and after a successful grant, but keep
   await waitFor(() => expect(name).toHaveValue(''));
   expect(email).toHaveValue('');
   expect(password).toHaveValue('');
+});
+
+it('filters users by name and role in the access workspace', async () => {
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <MemoryRouter initialEntries={['/admin?section=users']}><AdminPage /></MemoryRouter>
+  </QueryClientProvider>);
+  expect(await screen.findByText('Test Person')).toBeVisible();
+  expect(screen.getByText('Other User')).toBeVisible();
+  fireEvent.change(screen.getByLabelText('Search users'), { target: { value: 'other' } });
+  expect(screen.queryByText('Test Person')).not.toBeInTheDocument();
+  expect(screen.getByText('Other User')).toBeVisible();
+  fireEvent.change(screen.getByLabelText('Search users'), { target: { value: '' } });
+  fireEvent.change(screen.getByLabelText('Filter by role'), { target: { value: 'CaseManager' } });
+  expect(screen.getByText('Test Person')).toBeVisible();
+  expect(screen.queryByText('Other User')).not.toBeInTheDocument();
 });

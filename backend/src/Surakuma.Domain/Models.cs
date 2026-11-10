@@ -41,6 +41,29 @@ public abstract class Record
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
     public byte[] Version { get; set; } = [];
 }
+// Geography is reference data; operational records keep their existing IDs and location text.
+public sealed class Country : Record
+{
+    public string Code { get; set; } = "";
+    public string Name { get; set; } = "";
+}
+public sealed class AdministrativeDivision : Record
+{
+    public string CountryCode { get; set; } = "LK";
+    public Guid? ParentId { get; set; }
+    public string Name { get; set; } = "";
+    public string LevelName { get; set; } = "";
+}
+public sealed class OrganisationCountry : Record
+{
+    public Guid OrganisationId { get; set; }
+    public string CountryCode { get; set; } = "LK";
+}
+// A cross-border incident groups separate national crises; it does not grant access.
+public sealed class InternationalIncident : Record
+{
+    public string Name { get; set; } = "";
+}
 public sealed class Organisation : Record
 {
     public string Name { get; set; } = "";
@@ -56,6 +79,9 @@ public sealed class Membership : Record
 }
 public sealed class Crisis : Record
 {
+    public string CountryCode { get; set; } = "LK";
+    public Guid? AdministrativeDivisionId { get; set; }
+    public Guid? InternationalIncidentId { get; set; }
     public string Name { get; set; } = ""; public string Type { get; set; } = "Flood";
     public string District { get; set; } = ""; public bool Active { get; set; } = true;
     public Guid? PrimaryOrganisationId { get; set; }
@@ -251,6 +277,8 @@ public sealed class PotentialDuplicate : Record
 }
 public sealed class Resource : Record
 {
+    public string CountryCode { get; set; } = "LK";
+    public Guid? AdministrativeDivisionId { get; set; }
     public Guid OrganisationId
     {
         get; set;
@@ -331,6 +359,8 @@ public sealed class StockMovement : Record
 }
 public sealed class Shelter : Record
 {
+    public string CountryCode { get; set; } = "LK";
+    public Guid? AdministrativeDivisionId { get; set; }
     public Guid OrganisationId
     {
         get; set;

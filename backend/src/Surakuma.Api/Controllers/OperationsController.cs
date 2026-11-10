@@ -275,15 +275,30 @@ public sealed class OperationsController(Operations ops, AccessService access, C
         return org;
     }
     [HttpGet("admin/audit")]
-    public async Task<object> Audit(CancellationToken ct, int page = 1)
+    public async Task<object> Audit(CancellationToken ct, int page = 1, int pageSize = 50, bool includeTotal = false)
     {
         await Admin(ct);
-        return await db.Set<AuditEvent>().OrderByDescending(x => x.CreatedAt).Skip((Math.Max(1, page) - 1) * 50).Take(50).ToListAsync(ct);
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 50);
+        var total = includeTotal ? await db.Set<AuditEvent>().CountAsync(ct) : 0;
+        var items = await db.Set<AuditEvent>().OrderByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
+        return includeTotal ? new { items, total, pageNumber = page, pageSize } : (object)items;
     }
     [HttpGet("admin/deliveries")]
-    public async Task<object> Deliveries(CancellationToken ct)
+    public async Task<object> Deliveries(CancellationToken ct, int page = 1, int pageSize = 100, bool includeTotal = false)
     {
         await Admin(ct);
-        return await db.Set<OutboxMessage>().OrderByDescending(x => x.CreatedAt).Take(100).Select(x => new { x.Id, x.State, x.Attempts, x.LastError, x.CreatedAt }).ToListAsync(ct);
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+        var total = includeTotal ? await db.Set<OutboxMessage>().CountAsync(ct) : 0;
+        var items = await db.Set<OutboxMessage>().OrderByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id).Skip((page - 1) * pageSize).Take(pageSize).Select(x => new
+        {
+            x.Id, x.State, x.Attempts, x.LastError, x.CreatedAt,
+            EventMessage = x.Message,
+            RecipientName = db.Users.Where(u => u.Id == x.UserId).Select(u => u.DisplayName).FirstOrDefault(),
+            CaseReference = db.Set<AssistanceRequest>().Where(r => r.Id == x.RequestId).Select(r => r.Reference).FirstOrDefault(),
+            Provider = db.Set<NotificationDelivery>().Where(d => d.EventId == x.Id && d.RecipientId == x.UserId).Select(d => d.Provider).FirstOrDefault()
+        }).ToListAsync(ct);
+        return includeTotal ? new { items, total, pageNumber = page, pageSize } : (object)items;
     }
 }
