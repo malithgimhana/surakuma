@@ -174,7 +174,7 @@ public sealed partial class IntegrationTests(ApiFixture fixture) : IClassFixture
             var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
             var request = await db.Set<AssistanceRequest>().FirstAsync(x => x.Category == AidCategory.FoodWater && x.Status == RequestStatus.Approved);
             requestId = request.Id;
-            var resource = new Resource { OrganisationId = request.OrganisationId, Name = "Concurrent allocation test", Category = AidCategory.FoodWater, Stock = 6 };
+            var resource = new Resource { OrganisationId = request.OrganisationId ?? throw new InvalidOperationException("Test request must have an organisation."), Name = "Concurrent allocation test", Category = AidCategory.FoodWater, Stock = 6 };
             db.Add(resource);
             await db.SaveChangesAsync();
             resourceId = resource.Id;
