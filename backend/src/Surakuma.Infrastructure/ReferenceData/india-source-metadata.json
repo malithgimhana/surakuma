@@ -1,0 +1,27 @@
+{
+  "source": "Local Government Directory-derived public archives",
+  "archiveRepository": "https://github.com/ramSeraph/opendata/releases",
+  "syncedAt": "2026-09-23T17:27:33.087Z",
+  "components": {
+    "states": {
+      "records": 36,
+      "archive": "states.23Sep2026.csv.7z",
+      "archiveDate": "2026-09-23"
+    },
+    "districts": {
+      "records": 784,
+      "archive": "districts.23Sep2026.csv.7z",
+      "archiveDate": "2026-09-23"
+    },
+    "subdistricts": {
+      "records": 7092,
+      "archive": "subdistricts.23Sep2026.csv.7z",
+      "archiveDate": "2026-09-23"
+    },
+    "urban_local_bodies": {
+      "records": 5050,
+      "archive": "urban_local_bodies.23Sep2026.csv.7z",
+      "archiveDate": "2026-09-23"
+    }
+  }
+}

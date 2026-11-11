@@ -51,20 +51,25 @@ public sealed class CrisisDbContext(DbContextOptions<CrisisDbContext> options) :
         b.Entity<Resource>().Ignore(x => x.Available);
         b.Entity<Country>().Property(x => x.Code).HasMaxLength(2).IsUnicode(false);
         b.Entity<Country>().HasAlternateKey(x => x.Code);
-        foreach (var entity in new[] { typeof(Crisis), typeof(Resource), typeof(Shelter), typeof(AdministrativeDivision), typeof(OrganisationCountry) })
+        foreach (var entity in new[] { typeof(Crisis), typeof(Resource), typeof(Shelter), typeof(AdministrativeDivision), typeof(OrganisationCountry), typeof(Membership), typeof(VolunteerProfile) })
             b.Entity(entity).Property<string>("CountryCode").HasMaxLength(2).IsUnicode(false).HasDefaultValue("LK");
         b.Entity<OrganisationCountry>().HasIndex(x => new { x.OrganisationId, x.CountryCode }).IsUnique();
-        b.Entity<AdministrativeDivision>().HasOne<AdministrativeDivision>().WithMany().HasForeignKey(x => x.ParentId).OnDelete(DeleteBehavior.Restrict);
+        b.Entity<AdministrativeDivision>().HasOne<AdministrativeDivision>().WithMany().HasForeignKey(x => new { x.ParentId, x.CountryCode }).HasPrincipalKey(x => new { x.Id, x.CountryCode }).OnDelete(DeleteBehavior.Restrict);
         b.Entity<AdministrativeDivision>().HasOne<Country>().WithMany().HasForeignKey(x => x.CountryCode).HasPrincipalKey(x => x.Code).OnDelete(DeleteBehavior.Restrict);
         b.Entity<OrganisationCountry>().HasOne<Country>().WithMany().HasForeignKey(x => x.CountryCode).HasPrincipalKey(x => x.Code).OnDelete(DeleteBehavior.Restrict);
         b.Entity<Crisis>().HasOne<Country>().WithMany().HasForeignKey(x => x.CountryCode).HasPrincipalKey(x => x.Code).OnDelete(DeleteBehavior.Restrict);
         b.Entity<Resource>().HasOne<Country>().WithMany().HasForeignKey(x => x.CountryCode).HasPrincipalKey(x => x.Code).OnDelete(DeleteBehavior.Restrict);
         b.Entity<Shelter>().HasOne<Country>().WithMany().HasForeignKey(x => x.CountryCode).HasPrincipalKey(x => x.Code).OnDelete(DeleteBehavior.Restrict);
         Fk<OrganisationCountry, Organisation>(b, nameof(OrganisationCountry.OrganisationId));
-        Fk<Crisis, AdministrativeDivision>(b, nameof(Crisis.AdministrativeDivisionId));
+        b.Entity<AdministrativeDivision>().HasAlternateKey(x => new { x.Id, x.CountryCode });
+        b.Entity<Crisis>().HasAlternateKey(x => new { x.Id, x.CountryCode });
+        b.Entity<Crisis>().HasOne<AdministrativeDivision>().WithMany().HasForeignKey(x => new { x.AdministrativeDivisionId, x.CountryCode }).HasPrincipalKey(x => new { x.Id, x.CountryCode }).OnDelete(DeleteBehavior.Restrict);
         Fk<Crisis, InternationalIncident>(b, nameof(Crisis.InternationalIncidentId));
-        Fk<Resource, AdministrativeDivision>(b, nameof(Resource.AdministrativeDivisionId));
-        Fk<Shelter, AdministrativeDivision>(b, nameof(Shelter.AdministrativeDivisionId));
+        b.Entity<Resource>().HasOne<AdministrativeDivision>().WithMany().HasForeignKey(x => new { x.AdministrativeDivisionId, x.CountryCode }).HasPrincipalKey(x => new { x.Id, x.CountryCode }).OnDelete(DeleteBehavior.Restrict);
+        b.Entity<Shelter>().HasOne<AdministrativeDivision>().WithMany().HasForeignKey(x => new { x.AdministrativeDivisionId, x.CountryCode }).HasPrincipalKey(x => new { x.Id, x.CountryCode }).OnDelete(DeleteBehavior.Restrict);
+        b.Entity<Membership>().HasOne<Country>().WithMany().HasForeignKey(x => x.CountryCode).HasPrincipalKey(x => x.Code).OnDelete(DeleteBehavior.Restrict);
+        b.Entity<Membership>().HasOne<Crisis>().WithMany().HasForeignKey(x => new { x.CrisisId, x.CountryCode }).HasPrincipalKey(x => new { x.Id, x.CountryCode }).OnDelete(DeleteBehavior.Restrict);
+        b.Entity<VolunteerProfile>().HasOne<Country>().WithMany().HasForeignKey(x => x.CountryCode).HasPrincipalKey(x => x.Code).OnDelete(DeleteBehavior.Restrict);
         b.Entity<Shelter>().Ignore(x => x.Available);
         b.Entity<AssistanceRequest>().Property(x => x.SubmissionKey).HasMaxLength(100);
         b.Entity<AssistanceRequest>().Property(x => x.CitizenId).HasMaxLength(450);
@@ -75,7 +80,7 @@ public sealed class CrisisDbContext(DbContextOptions<CrisisDbContext> options) :
         b.Entity<AssistanceRequest>().HasIndex(x => new { x.CrisisId, x.Status, x.Priority });
         b.Entity<Membership>().Property(x => x.UserId).HasMaxLength(450);
         b.Entity<Membership>().Property(x => x.Role).HasMaxLength(50);
-        b.Entity<Membership>().HasIndex(x => new { x.UserId, x.OrganisationId, x.Role }).IsUnique();
+        b.Entity<Membership>().HasIndex(x => new { x.UserId, x.OrganisationId, x.Role, x.CountryCode, x.CrisisId }).IsUnique().HasFilter(null);
         b.Entity<RefreshSession>().Property(x => x.TokenHash).HasMaxLength(64);
         b.Entity<RefreshSession>().HasIndex(x => x.TokenHash).IsUnique();
         b.Entity<CaseShare>().HasIndex(x => new { x.RequestId, x.OrganisationId }).IsUnique();
@@ -181,5 +186,6 @@ public sealed class EfStore(CrisisDbContext db) : IStore
 }
 public sealed class CurrentActor(IHttpContextAccessor context) : ICurrentActor
 {
+    public string? SelectedCountry => context.HttpContext?.Request.Query["countryCode"].FirstOrDefault();
     public string Id => context.HttpContext?.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? throw new AccessDeniedException();
 }

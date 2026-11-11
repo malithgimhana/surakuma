@@ -1,3 +1,4 @@
+import { RegionField, useCountry } from './geography';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useParams } from 'react-router-dom';
@@ -79,15 +80,16 @@ function MutationMessage({ mutation }: { mutation: ReturnType<typeof useWrite> }
 function useLookups() {
   return useQuery({ queryKey: ['lookups'], queryFn: () => get<Lookups>('/public/lookups') });
 }
-function OrgSelect({ name = 'organisationId' }: { name?: string }) {
+function OrgSelect({ name = 'organisationId', initialId }: { name?: string; initialId?: string }) {
+  const country = useCountry();
   const { user } = useAuth(),
     q = useLookups();
   const orgs = q.data?.organisations.filter((o) =>
-    user?.memberships.some((m) => m.organisationId === o.id),
+    user?.roles.includes('Administrator') || user?.memberships.some((m) => m.countryCode === country && (m.role === 'CountryAdministrator' || m.organisationId === o.id)),
   );
   return (
     <Field label="Organisation">
-      <select name={name} required>
+      <select name={name} required defaultValue={initialId}>
         {orgs?.map((o) => (
           <option key={o.id} value={o.id}>
             {o.name}
@@ -434,17 +436,17 @@ export function CaseDetails() {
     queryFn: () => get<{ id: string; name: string; availableForAssignment: boolean }[]>(`/requests/${id}/case-managers`),
     enabled: !!id && !!user?.roles.includes('Coordinator'),
   });
-  const canCase = user?.roles.some((r) => ['Coordinator', 'CaseManager'].includes(r)),
-    canLogistics = user?.roles.some((r) => ['Coordinator', 'Logistics'].includes(r)),
-    canShelter = user?.roles.some((r) => ['Coordinator', 'ShelterAdmin'].includes(r));
+  const canCase = user?.roles.some((r) => ['Administrator', 'CountryAdministrator', 'Coordinator', 'CaseManager'].includes(r)),
+    canLogistics = user?.roles.some((r) => ['Administrator', 'CountryAdministrator', 'Coordinator', 'Logistics'].includes(r)),
+    canShelter = user?.roles.some((r) => ['Administrator', 'CountryAdministrator', 'Coordinator', 'ShelterAdmin'].includes(r));
   const ai = useQuery({
     queryKey: ['ai', id],
     queryFn: () => get<AiDetail>(`/requests/${id}/recommendations`),
     enabled: canCase,
   });
   const resources = useQuery({
-    queryKey: ['resources'],
-    queryFn: () => get<Resource[]>('/resources'),
+    queryKey: ['case-resources', id],
+    queryFn: () => get<Resource[]>(`/requests/${id}/resources`),
     enabled: canLogistics,
   });
   const allocationRecommendations = useQuery({
@@ -453,8 +455,8 @@ export function CaseDetails() {
     enabled: canLogistics && !!id,
   });
   const shelters = useQuery({
-    queryKey: ['staff-shelters'],
-    queryFn: () => get<Shelter[]>('/staff/shelters'),
+    queryKey: ['case-shelters', id],
+    queryFn: () => get<Shelter[]>(`/requests/${id}/shelters`),
     enabled: canShelter,
   });
   const [resourceId, setResourceId] = useState(''),
@@ -1003,7 +1005,7 @@ export function ResourcesPage() {
               });
             }}
           >
-            <OrgSelect />
+            <OrgSelect /><RegionField />
             <Field label="Resource name">
               <input name="name" required maxLength={100} />
             </Field>
@@ -1188,7 +1190,7 @@ export function ShelterManagement() {
               });
             }}
           >
-            <OrgSelect />
+            <OrgSelect initialId={editing?.organisationId} /><RegionField initialDivisionId={editing?.administrativeDivisionId} />
             <Field label={t('shelterName')}>
               <input name="name" defaultValue={editing?.name} required />
             </Field>

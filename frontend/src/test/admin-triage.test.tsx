@@ -8,7 +8,7 @@ import { api } from '../api';
 
 afterEach(cleanup);
 
-vi.mock('../auth', () => ({ useAuth: () => ({ user: { id: 'admin', roles: ['Administrator'] } }) }));
+vi.mock('../auth', () => ({ useOptionalAuth: () => ({user:{roles:['Administrator']}}), useAuth: () => ({ user: { id: 'admin', roles: ['Administrator'] } }) }));
 vi.mock('../SystemReadiness', () => ({ SystemReadiness: () => null }));
 vi.mock('../api', () => ({
   get: vi.fn((path: string) => Promise.resolve(path === '/public/lookups' ? { crises: [], organisations: [{ id: 'centre', name: 'Response centre' }] } :

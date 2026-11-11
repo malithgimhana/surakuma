@@ -61,8 +61,9 @@ export function useAuth() {
   if (!context) throw new Error('AuthProvider required');
   return context;
 }
+export function useOptionalAuth() { return useContext(Context); }
 export function landing(user: User) {
-  return user.roles.includes('Administrator')
+  return user.roles.some(r => ['Administrator','CountryAdministrator'].includes(r))
     ? '/admin'
     : user.roles.includes('Volunteer')
       ? '/volunteer'

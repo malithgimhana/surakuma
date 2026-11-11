@@ -29,6 +29,13 @@ export async function refreshSession() {
   return refreshFlight;
 }
 api.interceptors.request.use((config) => {
+  let countryCode = 'LK';
+  try { countryCode = localStorage.getItem('surakuma.country') || 'LK'; } catch { /* storage unavailable */ }
+  if (config.method === 'get') config.params = { countryCode, ...config.params };
+  if (config.data && typeof config.data === 'object' && !(config.data instanceof FormData)) {
+    if (['/crises', '/resources', '/shelters', '/volunteers', '/admin/users', '/admin/organisations'].includes(config.url || '')) config.data = { countryCode, ...config.data };
+    if (config.data.administrativeDivisionId === '') config.data.administrativeDivisionId = null;
+  }
   if (accessToken) config.headers.Authorization = `Bearer ${accessToken}`;
   return config;
 });

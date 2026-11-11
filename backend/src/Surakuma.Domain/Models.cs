@@ -4,8 +4,8 @@ public static class Roles
 {
     public const string Citizen = "Citizen", Coordinator = "Coordinator", CaseManager = "CaseManager",
         Logistics = "Logistics", ShelterAdmin = "ShelterAdmin", VolunteerCoordinator = "VolunteerCoordinator",
-        Volunteer = "Volunteer", Partner = "Partner", Administrator = "Administrator";
-    public static readonly string[] All = [Citizen, Coordinator, CaseManager, Logistics, ShelterAdmin, VolunteerCoordinator, Volunteer, Partner, Administrator];
+        Volunteer = "Volunteer", Partner = "Partner", Administrator = "Administrator", CountryAdministrator = "CountryAdministrator";
+    public static readonly string[] All = [Citizen, Coordinator, CaseManager, Logistics, ShelterAdmin, VolunteerCoordinator, Volunteer, Partner, Administrator, CountryAdministrator];
 }
 public enum RequestStatus
 {
@@ -46,6 +46,9 @@ public sealed class Country : Record
 {
     public string Code { get; set; } = "";
     public string Name { get; set; } = "";
+    public string Languages { get; set; } = "en";
+    public string RequiredAlertLanguages { get; set; } = "en";
+    public string EmergencyContactsJson { get; set; } = "[]";
 }
 public sealed class AdministrativeDivision : Record
 {
@@ -70,6 +73,8 @@ public sealed class Organisation : Record
 }
 public sealed class Membership : Record
 {
+    public string CountryCode { get; set; } = "LK";
+    public Guid? CrisisId { get; set; }
     public string UserId { get; set; } = ""; public Guid OrganisationId
     {
         get; set;
@@ -437,6 +442,7 @@ public sealed class ShelterAllocation : Record
 }
 public sealed class VolunteerProfile : Record
 {
+    public string CountryCode { get; set; } = "LK";
     public string UserId { get; set; } = ""; public Guid OrganisationId
     {
         get; set;
@@ -468,6 +474,7 @@ public sealed class VolunteerTask : Record
 }
 public sealed class PublicAlert : Record
 {
+    public string TranslationsJson { get; set; } = "{}";
     public Guid CrisisId
     {
         get; set;

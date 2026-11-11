@@ -13,6 +13,8 @@ export type Status =
   | 'Rejected'
   | 'Cancelled';
 export interface Membership {
+  countryCode?: string;
+  crisisId?: string | null;
   id: string;
   organisationId: string;
   role: string;
@@ -33,6 +35,8 @@ export interface Entity {
   updatedAt: string;
 }
 export interface Crisis extends Entity {
+  countryCode?: string;
+  administrativeDivisionId?: string | null;
   name: string;
   type: string;
   district: string;
@@ -168,6 +172,8 @@ export interface PublicShelter {
   facilities: string;
 }
 export interface Shelter extends PublicShelter {
+  countryCode?: string;
+  administrativeDivisionId?: string | null;
   organisationId: string;
   createdAt: string;
 }

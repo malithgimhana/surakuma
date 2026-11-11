@@ -33,7 +33,7 @@ public sealed class AuthenticationService(UserManager<AppUser> users, CrisisDbCo
     }
     public async Task<AuthSession> Register(RegisterInput input, CancellationToken ct)
     {
-        if (input.Language is not ("en" or "si" or "ta"))
+        if (input.Language is not ("en" or "si" or "ta" or "ne" or "hi"))
             throw new RuleException("Unsupported language.");
         var user = new AppUser { UserName = input.Email, Email = input.Email, DisplayName = input.Name, Language = input.Language };
         await using var tx = await db.Database.BeginTransactionAsync(ct);

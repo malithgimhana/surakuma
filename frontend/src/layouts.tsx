@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { CountrySelector, useCountry, useCountries } from './geography';
+import { useEffect, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
@@ -55,6 +56,9 @@ function ThemeToggle() {
 }
 function Language() {
   const { i18n, t } = useTranslation();
+  const code = useCountry(), countries = useCountries();
+  const languages = (Array.isArray(countries.data) ? countries.data.find(c => c.code === code)?.languages : undefined)?.split(',') || (code === 'LK' ? ['en','si','ta'] : ['en']);
+  useEffect(() => { if (!languages.includes(i18n.language)) void i18n.changeLanguage('en'); }, [code, languages.join(','), i18n]);
   return (
     <label className="language">
       <span className="sr-only">{t('language')}</span>
@@ -63,9 +67,7 @@ function Language() {
         value={i18n.language}
         onChange={(e) => void i18n.changeLanguage(e.target.value)}
       >
-        <option value="en">English</option>
-        <option value="si">සිංහල</option>
-        <option value="ta">தமிழ்</option>
+        {languages.map(code => <option key={code} value={code}>{{en:'English',si:'සිංහල',ta:'தமிழ்',ne:'नेपाली',hi:'हिन्दी'}[code] || code}</option>)}
       </select>
       <ChevronDown size={14} />
     </label>
@@ -100,7 +102,7 @@ export function PublicLayout() {
           </nav>
           <div className="header-actions">
             <ThemeToggle />
-            <Language />
+            <CountrySelector /><Language />
             <Link className="button secondary compact" to={user ? landing(user) : '/login'}>
               {user ? t('workspace') : t('login')}
               <ArrowUpRight size={16} />
@@ -117,7 +119,7 @@ export function PublicLayout() {
         </div>
       </header>
       <main id="main">
-        <Outlet />
+        <CountryOutlet />
       </main>
       <footer className="footer">
         <div className="container footer-top">
@@ -183,7 +185,7 @@ export function AppLayout({
             (path.includes('crises') && user?.roles.includes('Coordinator')),
         ).map(([path, label, icon]) => [path, t(label), icon] as const)
       : effectiveMode === 'admin'
-        ? ([['/admin', 'Overview', LayoutDashboard], ['/admin?section=cases', 'Unassigned cases', Inbox], ['/admin?section=users', 'Users & access', Users], ['/admin?section=organisations', 'Organisations', Building2], ['/admin?section=integrations', 'Integrations', Layers], ['/admin?section=activity', 'Activity', Activity]] as const)
+        ? ([['/admin', 'Overview', LayoutDashboard], ['/admin?section=cases', 'Unassigned cases', Inbox], ['/admin?section=users', 'Users & access', Users], ['/admin?section=organisations', 'Organisations', Building2], ['/admin?section=integrations', 'Integrations', Layers], ['/admin?section=activity', 'Activity', Activity], ['/staff/crises', 'Crisis operations', Siren], ['/staff/resources', 'Resources', Boxes], ['/staff/shelters', 'Shelters', Tent]] as const).filter(([path]) => user?.roles.includes('Administrator') || !['/admin?section=activity','/admin?section=integrations'].includes(path))
         : effectiveMode === 'volunteer'
           ? ([
               ['/volunteer', 'My assignments', Users],
@@ -240,7 +242,7 @@ export function AppLayout({
           </Link>
           <div className="header-actions">
             <ThemeToggle />
-            <Language />
+            <CountrySelector /><Language />
             <Link
               to="/app/notifications"
               className="notification-button"
@@ -256,7 +258,7 @@ export function AppLayout({
           </div>
         </header>
         <main id="main" className="workspace-content">
-          <Outlet />
+          <CountryOutlet />
         </main>
       </div>
       {open && (
@@ -265,3 +267,5 @@ export function AppLayout({
     </div>
   );
 }
+
+function CountryOutlet() { const code = useCountry(); return <Outlet key={code} />; }

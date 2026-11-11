@@ -18,6 +18,9 @@ public sealed class InternationalAllocationIntegrationTests(ApiFixture fixture) 
             var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
             var food = await db.Set<AssistanceRequest>().SingleAsync(x => x.SubmissionKey == "seed-food");
             var shelter = await db.Set<AssistanceRequest>().SingleAsync(x => x.SubmissionKey == "seed-shelter");
+            // Authorise both countries so this exercises allocation compatibility, not the earlier access denial.
+            foreach (var member in await db.Set<Membership>().Where(x => x.OrganisationId == food.OrganisationId && (x.Role == Roles.Logistics || x.Role == Roles.ShelterAdmin)).ToListAsync())
+                db.Add(new Membership { UserId = member.UserId, OrganisationId = member.OrganisationId, Role = member.Role, CountryCode = "NP" });
             foodRequest = food.Id;
             shelterRequest = shelter.Id;
             var stock = new Resource { OrganisationId = food.OrganisationId!.Value, CountryCode = "NP", Name = "Nepal stock", Category = AidCategory.FoodWater, Stock = 10 };

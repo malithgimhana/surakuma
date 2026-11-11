@@ -13,11 +13,13 @@ namespace Surakuma.Api.Controllers;
 [ApiController, Route("api/v1"), Authorize]
 public sealed class OperationsController(Operations ops, AccessService access, CrisisDbContext db, UserManager<AppUser> users, IMappingProvider maps, IMemoryCache cache) : ControllerBase
 {
-    [AllowAnonymous, HttpGet("public/lookups")] public Task<PublicLookups> Lookups(CancellationToken ct) => ops.PublicData(ct);
-    [AllowAnonymous, HttpGet("alerts")] public Task<List<PublicAlert>> Alerts(CancellationToken ct) => ops.Alerts(ct);
-    [AllowAnonymous, HttpGet("shelters")] public Task<List<PublicShelter>> Shelters(CancellationToken ct) => ops.PublicShelters(ct);
+    [AllowAnonymous, HttpGet("public/lookups")] public Task<PublicLookups> Lookups(CancellationToken ct, string countryCode = "LK") => ops.PublicData(ct, countryCode);
+    [AllowAnonymous, HttpGet("alerts")] public Task<List<PublicAlert>> Alerts(CancellationToken ct, string countryCode = "LK") => ops.Alerts(ct, countryCode);
+    [AllowAnonymous, HttpGet("shelters")] public Task<List<PublicShelter>> Shelters(CancellationToken ct, string countryCode = "LK") => ops.PublicShelters(ct, countryCode);
     [HttpGet("staff/shelters")] public Task<List<Shelter>> StaffShelters(CancellationToken ct) => ops.StaffShelters(ct);
     [HttpGet("reports/metrics")] public Task<object> Metrics(CancellationToken ct) => ops.Metrics(ct);
+    [HttpGet("requests/{id:guid}/resources")] public Task<List<Resource>> CaseResources(Guid id, CancellationToken ct) => ops.CaseResources(id, ct);
+    [HttpGet("requests/{id:guid}/shelters")] public Task<List<Shelter>> CaseShelters(Guid id, CancellationToken ct) => ops.CaseShelters(id, ct);
     [HttpGet("resources")] public Task<List<Resource>> Resources(CancellationToken ct) => ops.Resources(ct);
     [HttpPost("resources")] public Task<Resource> Resource(ResourceInput input, CancellationToken ct) => ops.AddResource(input, ct);
     [HttpPost("resources/{id:guid}/replenish")]
@@ -57,17 +59,21 @@ public sealed class OperationsController(Operations ops, AccessService access, C
         return NoContent();
     }
     [HttpGet("crises")]
-    public async Task<object> Crises(CancellationToken ct)
+    public async Task<object> Crises(CancellationToken ct, string? countryCode = null)
     {
         var assignments = await db.Set<CrisisAssignment>().Where(x => x.UserId == access.UserId).Select(x => x.CrisisId).ToListAsync(ct);
-        return await db.Set<Crisis>().Where(x => assignments.Contains(x.Id)).OrderByDescending(x => x.CreatedAt).ToListAsync(ct);
+        var memberships = await access.Memberships(ct);
+        var admin = await access.IsAdmin(ct);
+        var countries = memberships.Where(x => x.Role == Roles.CountryAdministrator).Select(x => x.CountryCode).ToArray();
+        var grants = db.Set<Membership>().Where(x => x.UserId == access.UserId && x.Role == Roles.Coordinator);
+        return await db.Set<Crisis>().Where(x => countryCode == null || x.CountryCode == countryCode).Where(x => admin || countries.Contains(x.CountryCode) || (assignments.Contains(x.Id) && grants.Any(m => m.CountryCode == x.CountryCode && (m.CrisisId == null || m.CrisisId == x.Id)))).OrderByDescending(x => x.CreatedAt).ToListAsync(ct);
     }
     [HttpPut("crises/{id:guid}/centre")]
     public async Task<Crisis> SetCentre(Guid id, CentreRoutingInput input, CancellationToken ct)
     {
         if (!await access.IsAdmin(ct) && !await access.Coordinates(id, ct)) throw new AccessDeniedException();
         var crisis = await db.Set<Crisis>().FindAsync([id], ct) ?? throw new MissingException();
-        if (input.OrganisationId.HasValue && !await db.Set<Organisation>().AnyAsync(x => x.Id == input.OrganisationId, ct)) throw new RuleException("Centre not found.");
+        if (input.OrganisationId.HasValue && !await db.Set<OrganisationCountry>().AnyAsync(x => x.OrganisationId == input.OrganisationId && x.CountryCode == crisis.CountryCode, ct)) throw new RuleException("Centre not found.");
         var previous = crisis.PrimaryOrganisationId;
         crisis.PrimaryOrganisationId = input.OrganisationId;
         ops.Audit("CrisisCentreChanged", crisis, $"From {previous?.ToString() ?? "unassigned"} to {input.OrganisationId?.ToString() ?? "unassigned"}");
@@ -80,7 +86,7 @@ public sealed class OperationsController(Operations ops, AccessService access, C
     public async Task<IActionResult> SetManagerAvailability(Guid membershipId, AvailabilityInput input, CancellationToken ct)
     {
         var membership = await db.Set<Membership>().FindAsync([membershipId], ct) ?? throw new MissingException();
-        if (membership.Role != Roles.CaseManager || (membership.UserId != access.UserId && !await access.IsAdmin(ct) && !(await access.Memberships(ct)).Any(x => x.Role == Roles.Coordinator && x.OrganisationId == membership.OrganisationId))) throw new AccessDeniedException();
+        if (membership.Role != Roles.CaseManager || (membership.UserId != access.UserId && !await access.IsAdmin(ct) && !(await access.Memberships(ct)).Any(x => x.Role == Roles.Coordinator && x.OrganisationId == membership.OrganisationId && x.CountryCode == membership.CountryCode && x.CrisisId == null))) throw new AccessDeniedException();
         membership.AvailableForAssignment = input.Available;
         ops.Audit("CaseManagerAvailabilityChanged", membership, input.Available ? "Available" : "Unavailable");
         await db.SaveChangesAsync(ct);
@@ -89,11 +95,12 @@ public sealed class OperationsController(Operations ops, AccessService access, C
     [HttpPost("crises")]
     public async Task<Crisis> AddCrisis(Crisis input, CancellationToken ct)
     {
-        if (!(await access.Memberships(ct)).Any(x => x.Role == Roles.Coordinator))
+        if (!await access.CountryAccess(input.CountryCode, [Roles.Coordinator], ct))
             throw new AccessDeniedException();
         if (string.IsNullOrWhiteSpace(input.Name) || input.Name.Length > 150 || input.Latitude is < -90 or > 90 || input.Longitude is < -180 or > 180)
             throw new RuleException("Provide a crisis name and valid coordinates.");
-        var crisis = new Crisis { Name = input.Name, Type = input.Type, District = input.District, Latitude = input.Latitude, Longitude = input.Longitude, Active = input.Active };
+        if (input.InternationalIncidentId.HasValue && !await access.IsAdmin(ct)) throw new AccessDeniedException();
+        var crisis = new Crisis { CountryCode = input.CountryCode, AdministrativeDivisionId = input.AdministrativeDivisionId, InternationalIncidentId = input.InternationalIncidentId, Name = input.Name, Type = input.Type, District = input.District, Latitude = input.Latitude, Longitude = input.Longitude, Active = input.Active };
         db.Add(crisis);
         db.Add(new CrisisAssignment { CrisisId = crisis.Id, UserId = access.UserId });
         ops.Audit("CrisisCreated", crisis);
@@ -150,9 +157,20 @@ public sealed class OperationsController(Operations ops, AccessService access, C
             throw new AccessDeniedException();
         if (string.IsNullOrWhiteSpace(input.Title) || string.IsNullOrWhiteSpace(input.Message) || input.ExpiresAt <= DateTimeOffset.UtcNow || input.Title.Length > 150 || input.Message.Length > 2000)
             throw new RuleException("Provide a title, message and future expiry.");
-        if (input.Published && new[] { input.SinhalaTitle, input.SinhalaMessage, input.TamilTitle, input.TamilMessage }.Any(string.IsNullOrWhiteSpace))
-            throw new RuleException("Published public alerts require English, Sinhala and Tamil wording.");
-        var alert = new PublicAlert { CrisisId = input.CrisisId, Title = input.Title, Message = input.Message, SinhalaTitle = input.SinhalaTitle, SinhalaMessage = input.SinhalaMessage, TamilTitle = input.TamilTitle, TamilMessage = input.TamilMessage, Severity = input.Severity, Area = input.Area, Authority = input.Authority, ExpiresAt = input.ExpiresAt, Published = input.Published };
+        var countryCode = await db.Set<Crisis>().Where(x => x.Id == input.CrisisId).Select(x => x.CountryCode).SingleAsync(ct);
+        var policy = await db.Set<Country>().SingleAsync(x => x.Code == countryCode, ct);
+        Dictionary<string, AlertTranslation> translations;
+        try { translations = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, AlertTranslation>>(input.TranslationsJson, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? []; }
+        catch (System.Text.Json.JsonException) { throw new RuleException("Invalid alert translations."); }
+        translations["en"] = new(input.Title, input.Message);
+        if (!string.IsNullOrWhiteSpace(input.SinhalaTitle)) translations["si"] = new(input.SinhalaTitle, input.SinhalaMessage);
+        if (!string.IsNullOrWhiteSpace(input.TamilTitle)) translations["ta"] = new(input.TamilTitle, input.TamilMessage);
+        if (translations.Any(x => x.Value == null || x.Value.Title == null || x.Value.Message == null || x.Value.Title.Length > 150 || x.Value.Message.Length > 2000)) throw new RuleException("Alert translations exceed the allowed length.");
+        if (input.Published && policy.RequiredAlertLanguages.Split(',').Any(language => !translations.TryGetValue(language, out var text) || string.IsNullOrWhiteSpace(text.Title) || string.IsNullOrWhiteSpace(text.Message)))
+            throw new RuleException("Provide alert wording in all required country languages: " + policy.RequiredAlertLanguages);
+        var extraTranslations = System.Text.Json.JsonSerializer.Serialize(translations.Where(x => x.Key is not ("en" or "si" or "ta")).ToDictionary(x => x.Key, x => x.Value), new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase });
+        if (extraTranslations.Length > 4000) throw new RuleException("Additional translations exceed the supported size.");
+        var alert = new PublicAlert { TranslationsJson = extraTranslations, CrisisId = input.CrisisId, Title = input.Title, Message = input.Message, SinhalaTitle = input.SinhalaTitle, SinhalaMessage = input.SinhalaMessage, TamilTitle = input.TamilTitle, TamilMessage = input.TamilMessage, Severity = input.Severity, Area = input.Area, Authority = input.Authority, ExpiresAt = input.ExpiresAt, Published = input.Published };
         db.Add(alert);
         ops.Audit("PublicAlertCreated", alert);
         await db.SaveChangesAsync(ct);
@@ -202,15 +220,20 @@ public sealed class OperationsController(Operations ops, AccessService access, C
             throw new AccessDeniedException();
     }
     [HttpGet("admin/users")]
-    public async Task<object> Users(CancellationToken ct)
+    public async Task<object> Users(CancellationToken ct, string? countryCode = null)
     {
-        await Admin(ct);
-        return await db.Users.OrderBy(x => x.DisplayName).Take(100).Select(x => new { x.Id, Name = x.DisplayName, x.Email, x.Language, Memberships = db.Set<Membership>().Where(m => m.UserId == x.Id).ToList() }).ToListAsync(ct);
+        bool global = await access.IsAdmin(ct);
+        if (!global && (countryCode == null || !await access.CountryAccess(countryCode, [], ct))) throw new AccessDeniedException();
+        var visible = db.Set<Membership>().Where(m => (countryCode == null || m.CountryCode == countryCode) && (global || m.Role != Roles.Administrator));
+        return await db.Users.Where(u => global || visible.Any(m => m.UserId == u.Id)).OrderBy(x => x.DisplayName).Take(100).Select(x => new { x.Id, Name = x.DisplayName, x.Email, x.Language, Memberships = visible.Where(m => m.UserId == x.Id).ToList() }).ToListAsync(ct);
     }
     [HttpPost("admin/users")]
     public async Task<object> AddStaff(StaffInput input, CancellationToken ct)
     {
-        await Admin(ct);
+        if (input.CrisisId.HasValue && input.Role is Roles.CountryAdministrator or Roles.Administrator) throw new RuleException("Administrator grants cannot be limited to a crisis. Choose a crisis staff role instead.");
+        if (!await access.IsAdmin(ct) && (input.Role == Roles.Administrator || !await access.CountryAccess(input.CountryCode, [], ct))) throw new AccessDeniedException();
+        if (!await db.Set<Country>().AnyAsync(x => x.Code == input.CountryCode, ct) || (input.CrisisId.HasValue && !await db.Set<Crisis>().AnyAsync(x => x.Id == input.CrisisId && x.CountryCode == input.CountryCode, ct))) throw new RuleException("Invalid country or crisis scope.");
+        if (!await db.Set<OrganisationCountry>().AnyAsync(x => x.OrganisationId == input.OrganisationId && x.CountryCode == input.CountryCode, ct)) throw new RuleException("Organisation does not operate in this country.");
         if (!Roles.All.Contains(input.Role) || input.Role == Roles.Citizen || !await db.Set<Organisation>().AnyAsync(x => x.Id == input.OrganisationId, ct))
             throw new RuleException("Choose a valid staff role and organisation.");
         await using var tx = await db.Database.BeginTransactionAsync(ct);
@@ -224,8 +247,8 @@ public sealed class OperationsController(Operations ops, AccessService access, C
         }
         if (!await users.IsInRoleAsync(user, input.Role))
             await users.AddToRoleAsync(user, input.Role);
-        if (!await db.Set<Membership>().AnyAsync(x => x.UserId == user.Id && x.Role == input.Role && x.OrganisationId == input.OrganisationId, ct))
-            db.Add(new Membership { UserId = user.Id, Role = input.Role, OrganisationId = input.OrganisationId });
+        if (!await db.Set<Membership>().AnyAsync(x => x.UserId == user.Id && x.Role == input.Role && x.OrganisationId == input.OrganisationId && x.CountryCode == input.CountryCode && x.CrisisId == input.CrisisId, ct))
+            db.Add(new Membership { UserId = user.Id, Role = input.Role, OrganisationId = input.OrganisationId, CountryCode = input.CountryCode, CrisisId = input.CrisisId });
         if (input.CrisisId.HasValue && !await db.Set<CrisisAssignment>().AnyAsync(x => x.UserId == user.Id && x.CrisisId == input.CrisisId, ct))
             db.Add(new CrisisAssignment { UserId = user.Id, CrisisId = input.CrisisId.Value });
         ops.Audit("StaffAccessGranted", new Organisation { Id = input.OrganisationId }, input.Role);
@@ -240,9 +263,9 @@ public sealed class OperationsController(Operations ops, AccessService access, C
     [HttpDelete("admin/memberships/{id:guid}")]
     public async Task<IActionResult> Revoke(Guid id, CancellationToken ct)
     {
-        await Admin(ct);
         await using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, ct);
         var membership = await db.Set<Membership>().FindAsync([id], ct) ?? throw new MissingException();
+        if (!await access.IsAdmin(ct) && (membership.Role == Roles.Administrator || !await access.CountryAccess(membership.CountryCode, [], ct))) throw new AccessDeniedException();
         if (membership.UserId == access.UserId && membership.Role == Roles.Administrator)
             throw new RuleException("You cannot revoke your own administrator access.");
         var user = await users.FindByIdAsync(membership.UserId) ?? throw new MissingException();
@@ -263,13 +286,15 @@ public sealed class OperationsController(Operations ops, AccessService access, C
         return NoContent();
     }
     [HttpPost("admin/organisations")]
-    public async Task<Organisation> AddOrg(Organisation input, CancellationToken ct)
+    public async Task<Organisation> AddOrg(OrganisationInput input, CancellationToken ct)
     {
         await Admin(ct);
         if (string.IsNullOrWhiteSpace(input.Name) || input.Name.Length > 150)
             throw new RuleException("Provide an organisation name under 150 characters.");
+        if (!await db.Set<Country>().AnyAsync(x => x.Code == input.CountryCode, ct)) throw new RuleException("Choose a supported country.");
         var org = new Organisation { Name = input.Name };
         db.Add(org);
+        db.Add(new OrganisationCountry { OrganisationId = org.Id, CountryCode = input.CountryCode });
         ops.Audit("OrganisationCreated", org);
         await db.SaveChangesAsync(ct);
         return org;
@@ -302,3 +327,6 @@ public sealed class OperationsController(Operations ops, AccessService access, C
         return includeTotal ? new { items, total, pageNumber = page, pageSize } : (object)items;
     }
 }
+
+public sealed record AlertTranslation(string Title, string Message);
+public sealed record OrganisationInput(string Name, string CountryCode = "LK");

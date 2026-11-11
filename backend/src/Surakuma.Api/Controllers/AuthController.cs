@@ -78,7 +78,7 @@ public sealed class AuthController(AuthenticationService auth, UserManager<AppUs
     [Authorize, HttpPut("profile")]
     public async Task<object> Profile(ProfileInput input, CancellationToken ct)
     {
-        if (input.Language is not ("en" or "si" or "ta"))
+        if (input.Language is not ("en" or "si" or "ta" or "ne" or "hi"))
             throw new RuleException("Unsupported language.");
         var user = await users.FindByIdAsync(User.FindFirstValue(ClaimTypes.NameIdentifier)!) ?? throw new AccessDeniedException();
         user.DisplayName = input.Name;

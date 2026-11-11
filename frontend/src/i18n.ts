@@ -1,3 +1,4 @@
+import { ne, hi } from './locales/ne-hi';
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
 const entries: string[][] = [
@@ -491,7 +492,7 @@ const resources = Object.fromEntries(
   ]),
 );
 void i18n.use(initReactI18next).init({
-  resources,
+  resources: { ...resources, ne: {translation: ne}, hi: {translation: hi} },
   lng: localStorage.getItem('surakuma.language') || 'en',
   fallbackLng: 'en',
   keySeparator: false,

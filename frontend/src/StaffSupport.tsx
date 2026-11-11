@@ -1,9 +1,12 @@
+import { IncidentManagement } from './IncidentManagement';
+import { CountryAdministration } from './CountryAdministration';
+import { RegionField, useCountry, useCountries } from './geography';
 import { useEffect, useId, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Eye, EyeOff, MapPin, Plus, Users } from 'lucide-react';
 import { api, get } from './api';
-import { useAuth } from './auth';
+import { useAuth, useOptionalAuth } from './auth';
 import { SystemReadiness } from './SystemReadiness';
 import {
   Badge,
@@ -285,13 +288,10 @@ export function VolunteerPage({ self = false }: { self?: boolean }) {
     </>
   );
 }
-const sriLankanDistricts = [
-  'Ampara', 'Anuradhapura', 'Badulla', 'Batticaloa', 'Colombo', 'Galle', 'Gampaha',
-  'Hambantota', 'Jaffna', 'Kalutara', 'Kandy', 'Kegalle', 'Kilinochchi', 'Kurunegala',
-  'Mannar', 'Matale', 'Matara', 'Monaragala', 'Mullaitivu', 'Nuwara Eliya', 'Polonnaruwa',
-  'Puttalam', 'Ratnapura', 'Trincomalee', 'Vavuniya',
-];
 export function CrisesPage() {
+  const country = useCountry(), countries = useCountries();
+  const policy = Array.isArray(countries.data) ? countries.data.find(c => c.code === country) : undefined;
+  const requiredLanguages = (policy?.requiredAlertLanguages || (country === "LK" ? "en,si,ta" : "en")).split(",");
   const query = useQuery({ queryKey: ['crises'], queryFn: () => get<Crisis[]>('/crises') }),
     alerts = useQuery({ queryKey: ['alerts'], queryFn: () => get<Alert[]>('/alerts') }),
     lookups = useQuery({ queryKey: ['lookups'], queryFn: () => get<Lookups>('/public/lookups') }),
@@ -386,12 +386,8 @@ export function CrisesPage() {
                 ))}
               </select>
             </Field>
-            <Field label="District">
-              <select name="district" required defaultValue="">
-                <option value="" disabled>Select a district</option>
-                {sriLankanDistricts.map((district) => <option key={district} value={district}>{district}</option>)}
-              </select>
-            </Field>
+            <RegionField />
+            <Field label="Local area"><input name="district" maxLength={150} /></Field>
             <Field label="Latitude">
               <input
                 type="number"
@@ -511,6 +507,7 @@ export function CrisesPage() {
                 ...f,
                 expiresAt: new Date(String(f.expiresAt)).toISOString(),
                 published: true,
+                translationsJson: JSON.stringify(Object.fromEntries(['ne','hi'].filter(l => f[l + 'Title']).map(l => [l, {title:f[l + 'Title'],message:f[l + 'Message']}]))),
               },
             });
           }}
@@ -544,23 +541,28 @@ export function CrisesPage() {
           <Field label="English instructions">
             <textarea name="message" required />
           </Field>
+          {(policy?.languages || (country === 'LK' ? 'en,si,ta' : 'en')).split(',').includes('si') && <>
           <Field label="සිංහල මාතෘකාව">
-            <input name="sinhalaTitle" lang="si" required />
+            <input name="sinhalaTitle" lang="si" required={requiredLanguages.includes("si")} />
           </Field>
           <Field label="සිංහල උපදෙස්">
-            <textarea name="sinhalaMessage" lang="si" required />
+            <textarea name="sinhalaMessage" lang="si" required={requiredLanguages.includes("si")} />
           </Field>
+          </>}
+          {(policy?.languages || (country === 'LK' ? 'en,si,ta' : 'en')).split(',').includes('ta') && <>
           <Field label="தமிழ் தலைப்பு">
-            <input name="tamilTitle" lang="ta" required />
+            <input name="tamilTitle" lang="ta" required={requiredLanguages.includes("ta")} />
           </Field>
           <Field label="தமிழ் அறிவுறுத்தல்கள்">
-            <textarea name="tamilMessage" lang="ta" required />
+            <textarea name="tamilMessage" lang="ta" required={requiredLanguages.includes("ta")} />
           </Field>
+          </>}
+          {(policy?.languages || '').split(',').filter(l => ['ne','hi'].includes(l)).map(l => <div key={l}><Field label={`${l === 'ne' ? 'Nepali' : 'Hindi'} title`}><input name={l + 'Title'} required={requiredLanguages.includes(l)} /></Field><Field label={`${l === 'ne' ? 'Nepali' : 'Hindi'} instructions`}><textarea name={l + 'Message'} required={requiredLanguages.includes(l)} /></Field></div>)}
           <Field label="Expires at">
             <input name="expiresAt" type="datetime-local" required />
           </Field>
           <div>
-            <p className="muted">Review all three translations before publishing.</p>
+            <p className="muted">Review the translations required for the selected country before publishing.</p>
             <Button busy={write.isPending}>Publish verified alert</Button>
           </div>
         </form>
@@ -590,7 +592,7 @@ interface AdminUser {
   id: string;
   name: string;
   email: string;
-  memberships: { id: string; role: string; organisationId: string }[];
+  memberships: { id: string; role: string; organisationId: string; countryCode?: string; crisisId?: string }[];
 }
 function AdminTriageRequest({ request, organisations }: { request: AidRequest; organisations: Lookups['organisations'] }) {
   const write = useWrite();
@@ -638,6 +640,9 @@ function AdminTriageRequest({ request, organisations }: { request: AidRequest; o
   );
 }
 export function AdminPage() {
+  const countryCode = useCountry();
+  const auth = useOptionalAuth();
+  const globalAdmin = !auth || !!auth.user?.roles.includes("Administrator");
   const [showStaffPassword, setShowStaffPassword] = useState(false);
   const [searchParams] = useSearchParams();
   const section = ['cases', 'users', 'organisations', 'integrations', 'activity'].includes(searchParams.get('section') || '') ? searchParams.get('section')! : 'overview';
@@ -654,14 +659,14 @@ export function AdminPage() {
     lookups = useQuery({ queryKey: ['lookups'], queryFn: () => get<Lookups>('/public/lookups') }),
     triage = useQuery({ queryKey: ['triage'], queryFn: () => get<AidRequest[]>('/requests/triage') }),
     audit = useQuery({
-      queryKey: ['audit', auditPage],
+      queryKey: ['audit', auditPage], enabled: globalAdmin,
       queryFn: () =>
         getHistoryPage<{ id: string; action: string; actorId: string; detail: string; createdAt: string }>(
           `/admin/audit?page=${auditPage}&pageSize=10&includeTotal=true`,
         ),
     }),
     deliveries = useQuery({
-      queryKey: ['deliveries', deliveryPage],
+      queryKey: ['deliveries', deliveryPage], enabled: globalAdmin,
       queryFn: () =>
         getHistoryPage<{ id: string; state: string; attempts: number; lastError: string | null; createdAt: string; eventMessage: string; recipientName: string | null; caseReference: string | null; provider: string | null }>(
           `/admin/deliveries?page=${deliveryPage}&pageSize=10&includeTotal=true`,
@@ -722,7 +727,7 @@ export function AdminPage() {
               const form = e.currentTarget;
               const f = values(form);
               write.mutate(
-                { path: '/admin/users', data: { ...f, crisisId: f.crisisId || null } },
+                { path: '/admin/users', data: { ...f, countryCode, crisisId: f.crisisId || null } },
                 { onSuccess: () => form.reset() },
               );
             }}
@@ -769,8 +774,8 @@ export function AdminPage() {
                   'VolunteerCoordinator',
                   'Volunteer',
                   'Partner',
-                  'Administrator',
-                ].map((r) => (
+                  'Administrator', 'CountryAdministrator',
+                ].filter(r => globalAdmin || r !== 'Administrator').map((r) => (
                   <option key={r}>{r}</option>
                 ))}
               </select>
@@ -796,7 +801,7 @@ export function AdminPage() {
             <tbody>{filteredUsers?.map((u) => <tr key={u.id}>
               <td><div className="admin-person"><span className="admin-person-avatar" aria-hidden="true">{u.name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase()}</span><div><strong>{u.name}</strong><details className="admin-user-id"><summary>View user ID</summary><small>{u.id}</small></details></div></div></td>
               <td>{u.email}</td>
-              <td>{u.memberships.length ? u.memberships.map((m) => <div key={m.id} className="admin-membership"><Badge value={m.role} /><small>{lookups.data?.organisations.find((o) => o.id === m.organisationId)?.name || 'Organisation unavailable'}</small></div>) : <span className="muted">No staff roles</span>}</td>
+              <td>{u.memberships.length ? u.memberships.map((m) => <div key={m.id} className="admin-membership"><Badge value={m.role} /><small>{lookups.data?.organisations.find((o) => o.id === m.organisationId)?.name || 'Organisation unavailable'} · {m.countryCode || 'LK'}{m.crisisId ? ' · crisis scope' : ' · country scope'}</small></div>) : <span className="muted">No staff roles</span>}</td>
               <td>{u.memberships.map((m) => <Button key={m.id} type="button" variant="ghost" busy={write.isPending} onClick={() => { const organisation = lookups.data?.organisations.find((o) => o.id === m.organisationId)?.name || 'this organisation'; if (window.confirm(`Revoke ${m.role} access for ${u.name} at ${organisation}?`)) write.mutate({ path: `/admin/memberships/${m.id}`, method: 'delete' }); }}>Revoke {m.role.replace(/([a-z])([A-Z])/g, '$1 $2')}</Button>)}</td>
             </tr>)}</tbody>
           </table>{filteredUsers?.length === 0 && <p>No users match your search.</p>}</div>}
@@ -804,15 +809,18 @@ export function AdminPage() {
         </Card>
       </div>
       <div hidden={section !== 'organisations'}>
+        <CountryAdministration />
+        {globalAdmin && <IncidentManagement />}
         <Card>
           <h2>Partner organisations</h2>
           {lookups.data?.organisations.map((o) => (
             <p key={o.id}>
               <strong>{o.name}</strong>
               <small className="muted block">{o.id}</small>
+              {globalAdmin && <Button type="button" variant="secondary" busy={write.isPending} onClick={() => write.mutate({path:`/admin/organisations/${o.id}/countries/${countryCode}`,method:'put'})}>Enable in {countryCode}</Button>}
             </p>
           ))}
-          <form
+          <form hidden={!globalAdmin}
             className="stack"
             onSubmit={(e) => {
               e.preventDefault();

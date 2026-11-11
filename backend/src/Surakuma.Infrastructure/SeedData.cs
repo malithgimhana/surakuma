@@ -19,6 +19,7 @@ public static class SeedData
         var org = new Organisation { Name = "Surakuma Community Response (demo)" };
         var partner = new Organisation { Name = "Southern Relief Network (demo)" };
         db.AddRange(org, partner);
+        db.AddRange(new OrganisationCountry { OrganisationId = org.Id }, new OrganisationCountry { OrganisationId = partner.Id });
         await db.SaveChangesAsync();
         var crisis = new Crisis { Name = "Kelani River flood response", Type = "Flood", District = "Colombo", Latitude = 6.93, Longitude = 79.89, PrimaryOrganisationId = org.Id };
         var landslide = new Crisis { Name = "Hill country landslide response", Type = "Landslide", District = "Ratnapura", Latitude = 6.68, Longitude = 80.40, PrimaryOrganisationId = org.Id };

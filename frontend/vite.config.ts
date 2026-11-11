@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  server: { port: 5173, proxy: { '/api': { target: 'https://localhost:7043', secure: false } } },
+  server: { port: 5173, proxy: { '/api': { target: process.env.SURAKUMA_API_PROXY || 'https://localhost:7043', secure: false } } },
   test: {
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],

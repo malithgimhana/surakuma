@@ -30,7 +30,7 @@ public sealed class RequestsController(Operations operations, AccessService acce
         var request = await db.Set<AssistanceRequest>().FindAsync([id], ct) ?? throw new MissingException();
         if (!await access.IsAdmin(ct) && !await access.Coordinates(request.CrisisId, ct)) throw new AccessDeniedException();
         return await (from membership in db.Set<Membership>() join user in db.Users on membership.UserId equals user.Id
-                      where membership.OrganisationId == request.OrganisationId && membership.Role == Roles.CaseManager
+                      where membership.OrganisationId == request.OrganisationId && membership.Role == Roles.CaseManager && (membership.CrisisId == null || membership.CrisisId == request.CrisisId) && db.Set<Crisis>().Any(c => c.Id == request.CrisisId && c.CountryCode == membership.CountryCode)
                       orderby user.DisplayName select new { user.Id, Name = user.DisplayName, membership.AvailableForAssignment }).ToListAsync(ct);
     }
     [HttpGet("{id:guid}")] public Task<object> Detail(Guid id, CancellationToken ct) => operations.Detail(id, ct);

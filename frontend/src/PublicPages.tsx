@@ -1,3 +1,4 @@
+import { useCountries, useCountry } from './geography';
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -44,6 +45,8 @@ function useAlerts() {
 }
 export function AlertCard({ alert }: { alert: Alert }) {
   const { t, i18n } = useTranslation();
+  let translations: Record<string,{title:string;message:string}> = {};
+  try { translations = JSON.parse((alert as Alert & {translationsJson?:string}).translationsJson || "{}"); } catch { /* legacy alert */ }
   return (
     <Card className="alert-card">
       <IconTile
@@ -57,17 +60,17 @@ export function AlertCard({ alert }: { alert: Alert }) {
         </div>
         <h3>
           {i18n.language === 'si'
-            ? alert.sinhalaTitle
+            ? alert.sinhalaTitle || alert.title
             : i18n.language === 'ta'
-              ? alert.tamilTitle
-              : alert.title}
+              ? alert.tamilTitle || alert.title
+              : translations[i18n.language]?.title || alert.title}
         </h3>
         <p>
           {i18n.language === 'si'
-            ? alert.sinhalaMessage
+            ? alert.sinhalaMessage || alert.message
             : i18n.language === 'ta'
-              ? alert.tamilMessage
-              : alert.message}
+              ? alert.tamilMessage || alert.message
+              : translations[i18n.language]?.message || alert.message}
         </p>
         <small className="muted">
           {t('authority')}: {alert.authority} · {t('expires')}:{' '}
@@ -460,6 +463,9 @@ export function ShelterDetails() {
   );
 }
 export function InformationPage({ kind }: { kind: 'contact' | 'privacy' | 'guidance' }) {
+  const country = useCountry(), countries = useCountries();
+  const configuration = Array.isArray(countries.data) ? countries.data.find(c => c.code === country) : undefined;
+  const contacts: {label:string;number:string;sourceUrl:string}[] = JSON.parse(configuration?.emergencyContactsJson || '[]');
   const { t } = useTranslation();
   return (
     <div className="container page narrow">
@@ -468,8 +474,8 @@ export function InformationPage({ kind }: { kind: 'contact' | 'privacy' | 'guida
         <IconTile icon={kind === 'contact' ? LifeBuoy : ShieldCheck} tone="green" />
         <h2>{t(kind === 'contact' ? 'contact' : kind)}</h2>
         {kind === 'contact' ? <div className="stack">
-          <p><strong>{t('policeEmergency')}:</strong> <a className="text-link" href="tel:119">119</a> · <a className="text-link" href="https://www.police.lk/?page_id=1334">Sri Lanka Police</a></p>
-          <p><strong>{t('ambulanceEmergency')}:</strong> <a className="text-link" href="tel:1990">1990</a> · <a className="text-link" href="https://www.1990.lk/faquestions/how-can-i-request-for-an-ambulance/">1990 Suwa Seriya</a></p>
+          {contacts.map(c => <p key={c.number}><strong>{c.label}:</strong> <a className="text-link" href={`tel:${c.number}`}>{c.number}</a> · <a className="text-link" href={c.sourceUrl}>Official source</a></p>)}
+          {!contacts.length && <p>No verified contacts are configured for this country.</p>}
         </div> : <p>
           {t(
             kind === 'privacy' ? 'privacyText' : 'guidanceText',

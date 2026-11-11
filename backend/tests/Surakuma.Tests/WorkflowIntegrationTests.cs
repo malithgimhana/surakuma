@@ -147,11 +147,12 @@ public sealed partial class IntegrationTests
         using var partner = await fixture.Login(account);
         Assert.Equal(HttpStatusCode.NotFound, (await partner.GetAsync($"/api/v1/requests/{requestId}")).StatusCode);
         using var coordinator = await fixture.Login("coordinator");
-        (await coordinator.PostAsJsonAsync($"/api/v1/requests/{requestId}/shares", new
+        var sharing = await coordinator.PostAsJsonAsync($"/api/v1/requests/{requestId}/shares", new
         {
             organisationId = partnerId
-        })).EnsureSuccessStatusCode();
-        Assert.Equal(HttpStatusCode.OK, (await partner.GetAsync($"/api/v1/requests/{requestId}")).StatusCode);
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, sharing.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await partner.GetAsync($"/api/v1/requests/{requestId}")).StatusCode);
     }
     [Fact]
     public async Task ConcurrentShelterReservationsCannotOverbookAndCheckInIsSeparate()

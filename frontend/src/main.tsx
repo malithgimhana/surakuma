@@ -48,7 +48,7 @@ const VolunteerPage = lazy(() =>
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 15000, refetchOnWindowFocus: false } },
 });
-const staffRoles = [
+const staffRoles = ['Administrator', 'CountryAdministrator',
   'Coordinator',
   'CaseManager',
   'Logistics',
@@ -99,7 +99,7 @@ function App() {
         <Route
           path="resources"
           element={
-            <Protected roles={['Coordinator', 'Logistics']}>
+            <Protected roles={['Administrator', 'CountryAdministrator', 'Coordinator', 'Logistics']}>
               <ResourcesPage />
             </Protected>
           }
@@ -107,7 +107,7 @@ function App() {
         <Route
           path="shelters"
           element={
-            <Protected roles={['Coordinator', 'ShelterAdmin']}>
+            <Protected roles={['Administrator', 'CountryAdministrator', 'Coordinator', 'ShelterAdmin']}>
               <ShelterManagement />
             </Protected>
           }
@@ -115,7 +115,7 @@ function App() {
         <Route
           path="volunteers"
           element={
-            <Protected roles={['Coordinator', 'VolunteerCoordinator']}>
+            <Protected roles={['Administrator', 'CountryAdministrator', 'Coordinator', 'VolunteerCoordinator']}>
               <VolunteerPage />
             </Protected>
           }
@@ -123,7 +123,7 @@ function App() {
         <Route
           path="crises"
           element={
-            <Protected roles={['Coordinator']}>
+            <Protected roles={['Administrator', 'CountryAdministrator', 'Coordinator']}>
               <CrisesPage />
             </Protected>
           }
@@ -142,7 +142,7 @@ function App() {
       <Route
         path="admin"
         element={
-          <Protected roles={['Administrator']}>
+          <Protected roles={['Administrator','CountryAdministrator']}>
             <AppLayout mode="admin" />
           </Protected>
         }

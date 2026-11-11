@@ -17,15 +17,15 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
         store.Add(new OutboxMessage { UserId = r.CitizenId, RequestId = r.Id, Message = CitizenMessages.Status(r.Reference, r.Status, "en"), SinhalaMessage = CitizenMessages.Status(r.Reference, r.Status, "si"), TamilMessage = CitizenMessages.Status(r.Reference, r.Status, "ta") });
         Audit("CaseChanged", r, note);
     }
-    public async Task<PublicLookups> PublicData(CancellationToken ct) => new(
-        await store.ListAsync(store.Query<Crisis>().Where(x => x.Active).OrderBy(x => x.Name).Select(x => new PublicLookup(x.Id, x.Name)), ct),
+    public async Task<PublicLookups> PublicData(CancellationToken ct, string countryCode = "LK") => new(
+        await store.ListAsync(store.Query<Crisis>().Where(x => x.Active && x.CountryCode == countryCode).OrderBy(x => x.Name).Select(x => new PublicLookup(x.Id, x.Name)), ct),
         await store.ListAsync(store.Query<Organisation>().OrderBy(x => x.Name).Select(x => new PublicLookup(x.Id, x.Name)), ct));
-    public async Task<List<PublicAlert>> Alerts(CancellationToken ct) => await store.ListAsync(store.Query<PublicAlert>().Where(x => x.Published && x.ExpiresAt > DateTimeOffset.UtcNow).OrderByDescending(x => x.CreatedAt), ct);
-    public Task<List<PublicShelter>> PublicShelters(CancellationToken ct) => store.ListAsync(store.Query<Shelter>().OrderBy(x => x.Name).Select(x => new PublicShelter(x.Id, x.Name, x.Address, x.Latitude, x.Longitude, x.Capacity, x.Reserved, x.Occupancy, x.Capacity - x.Reserved - x.Occupancy, x.Accessible, x.Open, x.Facilities, x.UpdatedAt)), ct);
+    public async Task<List<PublicAlert>> Alerts(CancellationToken ct, string countryCode = "LK") => await store.ListAsync(store.Query<PublicAlert>().Where(x => x.Published && x.ExpiresAt > DateTimeOffset.UtcNow && store.Query<Crisis>().Any(c => c.Id == x.CrisisId && c.CountryCode == countryCode)).OrderByDescending(x => x.CreatedAt), ct);
+    public Task<List<PublicShelter>> PublicShelters(CancellationToken ct, string countryCode = "LK") => store.ListAsync(store.Query<Shelter>().Where(x => x.CountryCode == countryCode).OrderBy(x => x.Name).Select(x => new PublicShelter(x.Id, x.Name, x.Address, x.Latitude, x.Longitude, x.Capacity, x.Reserved, x.Occupancy, x.Capacity - x.Reserved - x.Occupancy, x.Accessible, x.Open, x.Facilities, x.UpdatedAt)), ct);
     public async Task<List<Shelter>> StaffShelters(CancellationToken ct)
     {
         var orgs = await OrgScope(ct);
-        return await store.ListAsync(store.Query<Shelter>().Where(x => orgs.Contains(x.OrganisationId)).OrderBy(x => x.Name), ct);
+        return await store.ListAsync((await access.Located<Shelter>(ct)).OrderBy(x => x.Name), ct);
     }
     public Task<AssistanceRequest> Submit(CreateRequestInput input, CancellationToken ct) => store.RoutingTransactionAsync(async () =>
     {
@@ -48,7 +48,7 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
             CrisisId = input.CrisisId,
             OrganisationId = crisis.PrimaryOrganisationId,
             AssignmentStatus = crisis.PrimaryOrganisationId.HasValue ? AssignmentStatus.AutoAssigned : AssignmentStatus.Unassigned,
-            AssignedCaseManagerId = crisis.PrimaryOrganisationId.HasValue ? await ChooseCaseManager(crisis.PrimaryOrganisationId.Value, ct) : null,
+            AssignedCaseManagerId = crisis.PrimaryOrganisationId.HasValue ? await ChooseCaseManager(crisis.PrimaryOrganisationId.Value, crisis.Id, ct) : null,
             RequestedForSomeoneElse = input.RequestedForSomeoneElse,
             RequesterRelationship = input.RequestedForSomeoneElse ? (input.RequesterRelationship ?? "").Trim() : "",
             RequesterContact = input.RequestedForSomeoneElse ? (input.RequesterContact ?? "").Trim() : "",
@@ -70,9 +70,10 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
         RecordChange(r, "Request received. A staff member will review it.");
         return r;
     }, ct);
-    private async Task<string?> ChooseCaseManager(Guid organisationId, CancellationToken ct)
+    private async Task<string?> ChooseCaseManager(Guid organisationId, Guid crisisId, CancellationToken ct)
     {
-        var managers = (await store.ListAsync(store.Query<Membership>().Where(x => x.OrganisationId == organisationId && x.Role == Roles.CaseManager && x.AvailableForAssignment), ct)).Select(x => x.UserId).Distinct().ToArray();
+        var country = (await store.FindAsync<Crisis>(crisisId, ct))!.CountryCode;
+        var managers = (await store.ListAsync(store.Query<Membership>().Where(x => x.OrganisationId == organisationId && x.Role == Roles.CaseManager && x.CountryCode == country && (x.CrisisId == null || x.CrisisId == crisisId) && x.AvailableForAssignment), ct)).Select(x => x.UserId).Distinct().ToArray();
         if (managers.Length == 0) return null;
         var active = await store.ListAsync(store.Query<AssistanceRequest>().Where(x => x.OrganisationId == organisationId && x.AssignedCaseManagerId != null && managers.Contains(x.AssignedCaseManagerId) && x.Status != RequestStatus.Fulfilled && x.Status != RequestStatus.Closed && x.Status != RequestStatus.Rejected && x.Status != RequestStatus.Cancelled), ct);
         return managers.OrderBy(id => active.Count(x => x.AssignedCaseManagerId == id)).ThenBy(id => id, StringComparer.Ordinal).First();
@@ -96,11 +97,11 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
     {
         var memberships = await access.Memberships(ct);
         if (memberships.Any(x => x.Role == Roles.Administrator))
-            return await store.ListAsync(store.Query<AssistanceRequest>().Where(x => (x.OrganisationId == null || x.AssignedCaseManagerId == null) && x.Status != RequestStatus.Closed && x.Status != RequestStatus.Fulfilled && x.Status != RequestStatus.Cancelled && x.Status != RequestStatus.Rejected).OrderBy(x => x.CreatedAt), ct);
-        if (!memberships.Any(x => x.Role == Roles.Coordinator))
+            return await store.ListAsync((await access.Visible(ct)).Where(x => (x.OrganisationId == null || x.AssignedCaseManagerId == null) && x.Status != RequestStatus.Closed && x.Status != RequestStatus.Fulfilled && x.Status != RequestStatus.Cancelled && x.Status != RequestStatus.Rejected).OrderBy(x => x.CreatedAt), ct);
+        if (!memberships.Any(x => x.Role == Roles.Coordinator || x.Role == Roles.CountryAdministrator))
             throw new AccessDeniedException();
         var crises = (await store.ListAsync(store.Query<CrisisAssignment>().Where(x => x.UserId == access.UserId), ct)).Select(x => x.CrisisId).ToArray();
-        return await store.ListAsync(store.Query<AssistanceRequest>().Where(x => (x.OrganisationId == null || x.AssignedCaseManagerId == null) && crises.Contains(x.CrisisId) && x.Status != RequestStatus.Closed && x.Status != RequestStatus.Fulfilled && x.Status != RequestStatus.Cancelled && x.Status != RequestStatus.Rejected).OrderBy(x => x.CreatedAt), ct);
+        return await store.ListAsync((await access.Visible(ct)).Where(x => (x.OrganisationId == null || x.AssignedCaseManagerId == null) && (crises.Contains(x.CrisisId) || store.Query<Membership>().Any(m => m.UserId == access.UserId && m.Role == Roles.CountryAdministrator && store.Query<Crisis>().Any(c => c.Id == x.CrisisId && c.CountryCode == m.CountryCode))) && x.Status != RequestStatus.Closed && x.Status != RequestStatus.Fulfilled && x.Status != RequestStatus.Cancelled && x.Status != RequestStatus.Rejected).OrderBy(x => x.CreatedAt), ct);
     }
     public Task<AssistanceRequest> Reassign(Guid id, Guid organisationId, CancellationToken ct) => store.RoutingTransactionAsync(async () =>
     {
@@ -113,10 +114,11 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
             ((await store.ListAsync(store.Query<ResourceAllocation>().Where(x => x.RequestId == id && (x.Status == AllocationStatus.Reserved || x.Status == AllocationStatus.Dispatched)), ct)).Count > 0 ||
              (await store.ListAsync(store.Query<ShelterAllocation>().Where(x => x.RequestId == id && (x.Status == StayStatus.Reserved || x.Status == StayStatus.CheckedIn)), ct)).Count > 0))
             throw new RuleException("Complete or cancel active resource allocations and shelter placements before changing the organisation.");
+        if (!(await store.ListAsync(store.Query<OrganisationCountry>().Where(x => x.OrganisationId == organisationId && store.Query<Crisis>().Any(c => c.Id == request.CrisisId && c.CountryCode == x.CountryCode)), ct)).Any()) throw new RuleException("Centre does not operate in this country.");
         var previous = request.OrganisationId;
         var previousManager = request.AssignedCaseManagerId;
         request.OrganisationId = organisationId;
-        request.AssignedCaseManagerId = await ChooseCaseManager(organisationId, ct);
+        request.AssignedCaseManagerId = await ChooseCaseManager(organisationId, request.CrisisId, ct);
         request.AssignmentStatus = AssignmentStatus.Reassigned;
         Audit("RequestReassigned", request, $"Centre {previous?.ToString() ?? "unassigned"} to {organisationId}; case manager {previousManager ?? "unassigned"} to {request.AssignedCaseManagerId ?? "unassigned"}");
         return request;
@@ -125,7 +127,7 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
     {
         var request = await store.FindAsync<AssistanceRequest>(id, ct) ?? throw new MissingException();
         if (!await access.IsAdmin(ct) && !await access.Coordinates(request.CrisisId, ct)) throw new AccessDeniedException();
-        if (!request.OrganisationId.HasValue || (await store.ListAsync(store.Query<Membership>().Where(x => x.OrganisationId == request.OrganisationId && x.Role == Roles.CaseManager && x.UserId == userId), ct)).Count == 0) throw new RuleException("Choose a case manager at the assigned centre.");
+        if (!request.OrganisationId.HasValue || (await store.ListAsync(store.Query<Membership>().Where(x => x.OrganisationId == request.OrganisationId && x.Role == Roles.CaseManager && x.UserId == userId && (x.CrisisId == null || x.CrisisId == request.CrisisId) && store.Query<Crisis>().Any(c => c.Id == request.CrisisId && c.CountryCode == x.CountryCode)), ct)).Count == 0) throw new RuleException("Choose a case manager at the assigned centre.");
         var previous = request.AssignedCaseManagerId;
         request.AssignedCaseManagerId = userId;
         Audit("CaseManagerAssigned", request, $"From {previous ?? "unassigned"} to {userId}");
@@ -289,13 +291,13 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
     public async Task<List<Resource>> Resources(CancellationToken ct)
     {
         var orgs = await OrgScope(ct);
-        return await store.ListAsync(store.Query<Resource>().Where(x => orgs.Contains(x.OrganisationId)).OrderBy(x => x.Name), ct);
+        return await store.ListAsync((await access.Located<Resource>(ct)).OrderBy(x => x.Name), ct);
     }
     public async Task<Resource> AddResource(ResourceInput input, CancellationToken ct)
     {
-        await access.RequireOrg(input.OrganisationId, LogisticsRoles, ct);
+        await access.RequireLocation(input.OrganisationId, input.CountryCode, LogisticsRoles, ct);
         QuantityUnits.ValidateWhole(input.Stock, input.Unit);
-        var r = new Resource { OrganisationId = input.OrganisationId, Name = input.Name, Category = input.Category, Unit = input.Unit, Stock = input.Stock, LocationText = input.LocationText, Latitude = input.Latitude, Longitude = input.Longitude, Suitability = input.Suitability, TransportAvailable = input.TransportAvailable };
+        var r = new Resource { CountryCode = input.CountryCode, AdministrativeDivisionId = input.AdministrativeDivisionId, OrganisationId = input.OrganisationId, Name = input.Name, Category = input.Category, Unit = input.Unit, Stock = input.Stock, LocationText = input.LocationText, Latitude = input.Latitude, Longitude = input.Longitude, Suitability = input.Suitability, TransportAvailable = input.TransportAvailable };
         store.Add(r);
         store.Add(new StockMovement { ResourceId = r.Id, Quantity = r.Stock, Kind = "Opening", ActorId = access.UserId });
         Audit("ResourceCreated", r);
@@ -305,7 +307,7 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
     public async Task Replenish(Guid id, MovementInput input, CancellationToken ct)
     {
         var r = await store.FindAsync<Resource>(id, ct) ?? throw new MissingException();
-        await access.RequireOrg(r.OrganisationId, LogisticsRoles, ct);
+        await access.RequireLocation(r.OrganisationId, r.CountryCode, LogisticsRoles, ct);
         QuantityUnits.ValidateWhole(input.Quantity, r.Unit);
         r.Stock += input.Quantity;
         store.Add(new StockMovement { ResourceId = id, Quantity = input.Quantity, Kind = "Replenishment", ActorId = access.UserId, Note = input.Note });
@@ -315,15 +317,27 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
     public async Task<List<StockMovement>> StockHistory(Guid id, CancellationToken ct)
     {
         var r = await store.FindAsync<Resource>(id, ct) ?? throw new MissingException();
-        await access.RequireOrg(r.OrganisationId, LogisticsRoles, ct);
+        await access.RequireLocation(r.OrganisationId, r.CountryCode, LogisticsRoles, ct);
         return await store.ListAsync(store.Query<StockMovement>().Where(x => x.ResourceId == id).OrderByDescending(x => x.CreatedAt), ct);
+    }
+    public async Task<List<Resource>> CaseResources(Guid requestId, CancellationToken ct)
+    {
+        var request = await access.Request(requestId, LogisticsRoles, ct);
+        var crisis = await store.FindAsync<Crisis>(request.CrisisId, ct) ?? throw new MissingException();
+        return await store.ListAsync((await access.Located<Resource>(ct, request.CrisisId)).Where(x => x.CountryCode == crisis.CountryCode && x.Category == request.Category), ct);
+    }
+    public async Task<List<Shelter>> CaseShelters(Guid requestId, CancellationToken ct)
+    {
+        var request = await access.Request(requestId, ShelterRoles, ct);
+        var crisis = await store.FindAsync<Crisis>(request.CrisisId, ct) ?? throw new MissingException();
+        return await store.ListAsync((await access.Located<Shelter>(ct, request.CrisisId)).Where(x => x.CountryCode == crisis.CountryCode), ct);
     }
     public async Task<AllocationRecommendations> AllocationRecommendations(Guid requestId, CancellationToken ct)
     {
         var request = await access.Request(requestId, LogisticsRoles, ct);
         var crisis = await store.FindAsync<Crisis>(request.CrisisId, ct) ?? throw new MissingException();
         var orgs = (await access.Memberships(ct)).Where(x => LogisticsRoles.Contains(x.Role)).Select(x => x.OrganisationId).Distinct().ToArray();
-        var resources = await store.ListAsync(store.Query<Resource>().Where(x => orgs.Contains(x.OrganisationId) && x.Category == request.Category && x.CountryCode == crisis.CountryCode), ct);
+        var resources = await store.ListAsync((await access.Located<Resource>(ct, request.CrisisId)).Where(x => x.Category == request.Category && x.CountryCode == crisis.CountryCode), ct);
         var cases = await store.ListAsync((await access.Visible(ct)).Where(x => x.OrganisationId == request.OrganisationId && x.CrisisId == request.CrisisId && x.Category == request.Category && (x.Status == RequestStatus.Approved || x.Status == RequestStatus.InProgress || x.Status == RequestStatus.PartiallyFulfilled)), ct);
         if (!cases.Any(x => x.Id == request.Id)) cases.Add(request);
         var ids = cases.Select(x => x.Id).ToArray();
@@ -344,7 +358,7 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
     {
         var r = await access.Request(input.RequestId, LogisticsRoles, ct);
         var resource = await store.FindAsync<Resource>(input.ResourceId, ct) ?? throw new MissingException();
-        await access.RequireOrg(resource.OrganisationId, LogisticsRoles, ct);
+        await access.RequireLocation(resource.OrganisationId, resource.CountryCode, LogisticsRoles, ct, r.CrisisId);
         var crisis = await store.FindAsync<Crisis>(r.CrisisId, ct) ?? throw new MissingException();
         if (resource.CountryCode != crisis.CountryCode)
             throw new RuleException("A resource must be in the same country as the crisis.");
@@ -370,7 +384,7 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
         if (input.RecommendedResourceId.HasValue)
         {
             var suggested = await store.FindAsync<Resource>(input.RecommendedResourceId.Value, ct) ?? throw new RuleException("Recommended resource not found.");
-            await access.RequireOrg(suggested.OrganisationId, LogisticsRoles, ct);
+            await access.RequireLocation(suggested.OrganisationId, suggested.CountryCode, LogisticsRoles, ct, r.CrisisId);
             if (suggested.Category != r.Category) throw new RuleException("Recommended resource category does not match the request.");
             Audit(input.ResourceId == suggested.Id ? "AllocationRecommendationAccepted" : "AllocationRecommendationIgnored", r, $"Recommended resource {suggested.Id}; reserved resource {resource.Id}; quantity {input.Quantity}.");
         }
@@ -381,7 +395,7 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
         var a = await store.FindAsync<ResourceAllocation>(id, ct) ?? throw new MissingException();
         var r = await access.Request(a.RequestId, LogisticsRoles, ct);
         var resource = await store.FindAsync<Resource>(a.ResourceId, ct) ?? throw new MissingException();
-        await access.RequireOrg(resource.OrganisationId, LogisticsRoles, ct);
+        await access.RequireLocation(resource.OrganisationId, resource.CountryCode, LogisticsRoles, ct, r.CrisisId);
         if (action == "Dispatch" && a.Status == AllocationStatus.Reserved)
         {
             resource.Dispatch(a.Quantity);
@@ -406,13 +420,14 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
     }, ct);
     public async Task<Shelter> SaveShelter(Guid? id, ShelterInput input, CancellationToken ct)
     {
-        await access.RequireOrg(input.OrganisationId, ShelterRoles, ct);
-        var shelter = id.HasValue ? await store.FindAsync<Shelter>(id.Value, ct) ?? throw new MissingException() : new Shelter { OrganisationId = input.OrganisationId };
-        if (shelter.OrganisationId != input.OrganisationId)
+        await access.RequireLocation(input.OrganisationId, input.CountryCode, ShelterRoles, ct);
+        var shelter = id.HasValue ? await store.FindAsync<Shelter>(id.Value, ct) ?? throw new MissingException() : new Shelter { CountryCode = input.CountryCode, AdministrativeDivisionId = input.AdministrativeDivisionId, OrganisationId = input.OrganisationId };
+        if (shelter.OrganisationId != input.OrganisationId || shelter.CountryCode != input.CountryCode)
             throw new AccessDeniedException();
         if (input.Capacity < shelter.Occupancy + shelter.Reserved)
             throw new RuleException("Capacity cannot be below active reservations and occupancy.");
         shelter.Name = input.Name;
+        shelter.AdministrativeDivisionId = input.AdministrativeDivisionId;
         shelter.Address = input.Address;
         shelter.Latitude = input.Latitude;
         shelter.Longitude = input.Longitude;
@@ -436,7 +451,7 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
         if ((await store.ListAsync(store.Query<ShelterAllocation>().Where(x => x.RequestId == r.Id && x.Status != StayStatus.Cancelled && x.Status != StayStatus.Departed), ct)).Count > 0)
             throw new RuleException("This household already has an active placement.");
         var shelter = await store.FindAsync<Shelter>(input.ShelterId, ct) ?? throw new MissingException();
-        await access.RequireOrg(shelter.OrganisationId, ShelterRoles, ct);
+        await access.RequireLocation(shelter.OrganisationId, shelter.CountryCode, ShelterRoles, ct, r.CrisisId);
         var crisis = await store.FindAsync<Crisis>(r.CrisisId, ct) ?? throw new MissingException();
         if (shelter.CountryCode != crisis.CountryCode)
             throw new RuleException("A shelter must be in the same country as the crisis.");
@@ -456,7 +471,7 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
         var stay = await store.FindAsync<ShelterAllocation>(id, ct) ?? throw new MissingException();
         var r = await access.Request(stay.RequestId, ShelterRoles, ct);
         var shelter = await store.FindAsync<Shelter>(stay.ShelterId, ct) ?? throw new MissingException();
-        await access.RequireOrg(shelter.OrganisationId, ShelterRoles, ct);
+        await access.RequireLocation(shelter.OrganisationId, shelter.CountryCode, ShelterRoles, ct, r.CrisisId);
         if (action == "CheckIn" && stay.Status == StayStatus.Reserved)
         {
             if (r.Category != AidCategory.Shelter || r.Quantity != 1 || r.DeliveredQuantity != 0)
@@ -485,20 +500,22 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
     {
         var orgs = await OrgScope(ct);
         var ownOrgs = (await access.Memberships(ct)).Where(x => x.Role == Roles.Volunteer).Select(x => x.OrganisationId).ToArray();
-        var q = store.Query<VolunteerProfile>().Where(x => orgs.Contains(x.OrganisationId) || (x.UserId == access.UserId && ownOrgs.Contains(x.OrganisationId)));
+        var global = await access.IsAdmin(ct);
+        var grants = store.Query<Membership>().Where(m => m.UserId == access.UserId);
+        var q = store.Query<VolunteerProfile>().Where(x => access.SelectedCountry == null || x.CountryCode == access.SelectedCountry).Where(x => global || grants.Any(m => m.CountryCode == x.CountryCode && m.CrisisId == null && ((m.Role != Roles.Citizen && m.Role != Roles.Volunteer && (m.OrganisationId == x.OrganisationId || m.Role == Roles.CountryAdministrator)) || (x.UserId == access.UserId && m.Role == Roles.Volunteer && m.OrganisationId == x.OrganisationId))));
         var profiles = await store.ListAsync(q, ct);
         var ids = profiles.Select(x => x.Id).ToArray();
         return new(profiles, await store.ListAsync(store.Query<VolunteerTask>().Where(x => ids.Contains(x.VolunteerId)).OrderBy(x => x.DueAt), ct));
     }
     public async Task<VolunteerProfile> SaveVolunteer(VolunteerProfile input, CancellationToken ct)
     {
-        await access.RequireOrg(input.OrganisationId, VolunteerRoles, ct);
-        if ((await store.ListAsync(store.Query<Membership>().Where(x => x.UserId == input.UserId && x.OrganisationId == input.OrganisationId && x.Role == Roles.Volunteer), ct)).Count == 0)
+        await access.RequireLocation(input.OrganisationId, input.CountryCode, VolunteerRoles, ct);
+        if ((await store.ListAsync(store.Query<Membership>().Where(x => x.UserId == input.UserId && x.OrganisationId == input.OrganisationId && x.CountryCode == input.CountryCode && x.CrisisId == null && x.Role == Roles.Volunteer), ct)).Count == 0)
             throw new RuleException("An administrator must create a volunteer membership in this organisation first.");
         var existing = (await store.ListAsync(store.Query<VolunteerProfile>().Where(x => x.UserId == input.UserId), ct)).SingleOrDefault();
-        if (existing is not null && existing.OrganisationId != input.OrganisationId)
+        if (existing is not null && (existing.OrganisationId != input.OrganisationId || existing.CountryCode != input.CountryCode))
             throw new AccessDeniedException();
-        var v = existing ?? new VolunteerProfile { UserId = input.UserId, OrganisationId = input.OrganisationId };
+        var v = existing ?? new VolunteerProfile { CountryCode = input.CountryCode, UserId = input.UserId, OrganisationId = input.OrganisationId };
         v.Skills = input.Skills;
         v.Availability = input.Availability;
         v.Verified = input.Verified;
@@ -511,9 +528,10 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
     }
     public Task<VolunteerTask> AssignTask(TaskInput input, CancellationToken ct) => store.TransactionAsync(async () =>
     {
-        await access.Request(input.RequestId, VolunteerRoles, ct);
+        var request = await access.Request(input.RequestId, VolunteerRoles, ct);
         var v = await store.FindAsync<VolunteerProfile>(input.VolunteerId, ct) ?? throw new MissingException();
-        await access.RequireOrg(v.OrganisationId, VolunteerRoles, ct);
+        await access.RequireLocation(v.OrganisationId, v.CountryCode, VolunteerRoles, ct);
+        if ((await store.FindAsync<Crisis>(request.CrisisId, ct))?.CountryCode != v.CountryCode) throw new RuleException("Volunteer and crisis countries must match.");
         if (!v.Verified || !v.Available || input.DueAt <= DateTimeOffset.UtcNow || (input.RequiredSkill.Length > 0 && !v.Skills.Contains(input.RequiredSkill, StringComparison.OrdinalIgnoreCase)))
             throw new RuleException("Volunteer verification, availability, skills or due date is unsuitable.");
         var task = new VolunteerTask { RequestId = input.RequestId, VolunteerId = v.Id, Title = input.Title, RequiredSkill = input.RequiredSkill, DueAt = input.DueAt };
@@ -527,7 +545,7 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
         var v = await store.FindAsync<VolunteerProfile>(task.VolunteerId, ct) ?? throw new MissingException();
         if (input.Action == "Verify")
         {
-            await access.RequireOrg(v.OrganisationId, VolunteerRoles, ct);
+            await access.RequireLocation(v.OrganisationId, v.CountryCode, VolunteerRoles, ct);
             await access.Request(task.RequestId, VolunteerRoles, ct);
             if (task.Status != VolunteerTaskStatus.AwaitingVerification)
                 throw new RuleException("Task is not ready for verification.");
@@ -537,7 +555,7 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
         {
             if (v.UserId != access.UserId || !v.Verified)
                 throw new AccessDeniedException();
-            await access.RequireOrg(v.OrganisationId, [Roles.Volunteer], ct);
+            await access.RequireLocation(v.OrganisationId, v.CountryCode, [Roles.Volunteer], ct);
             task.Status = (input.Action, task.Status) switch
             {
                 ("Accept", VolunteerTaskStatus.Assigned) => VolunteerTaskStatus.Accepted,
@@ -574,8 +592,8 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
             Escalated = g.Count(x => x.Escalated),
             Overdue = g.Count(x => x.CreatedAt < cutoff && x.Status != RequestStatus.Closed && x.Status != RequestStatus.Fulfilled && x.Status != RequestStatus.Cancelled && x.Status != RequestStatus.Rejected)
         }), ct)).SingleOrDefault();
-        var shelterTotals = (await store.ListAsync(store.Query<Shelter>().Where(x => orgs.Contains(x.OrganisationId)).GroupBy(x => 1).Select(g => new { Occupancy = g.Sum(x => x.Occupancy), Reserved = g.Sum(x => x.Reserved), Capacity = g.Sum(x => x.Capacity) }), ct)).SingleOrDefault();
-        var resourceTotals = (await store.ListAsync(store.Query<Resource>().Where(x => orgs.Contains(x.OrganisationId)).GroupBy(x => 1).Select(g => new { Reserved = g.Sum(x => x.Reserved), Stock = g.Sum(x => x.Stock) }), ct)).SingleOrDefault();
+        var shelterTotals = (await store.ListAsync((await access.Located<Shelter>(ct)).GroupBy(x => 1).Select(g => new { Occupancy = g.Sum(x => x.Occupancy), Reserved = g.Sum(x => x.Reserved), Capacity = g.Sum(x => x.Capacity) }), ct)).SingleOrDefault();
+        var resourceTotals = (await store.ListAsync((await access.Located<Resource>(ct)).GroupBy(x => 1).Select(g => new { Reserved = g.Sum(x => x.Reserved), Stock = g.Sum(x => x.Stock) }), ct)).SingleOrDefault();
         var decisionCounts = await store.ListAsync(store.Query<HumanDecision>().Where(x => ids.Contains(x.RequestId)).GroupBy(x => x.Action).Select(g => new { Action = g.Key, Count = g.Count() }), ct);
         int decisions = decisionCounts.Sum(x => x.Count);
         int approved = decisionCounts.Where(x => x.Action == "Approve").Sum(x => x.Count);
