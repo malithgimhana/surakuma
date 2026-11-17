@@ -1,7 +1,7 @@
 import { RegionField, useCountry } from './geography';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useLocation, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { BarChart, Bar, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import {
@@ -37,6 +37,8 @@ import {
 } from './components';
 import { MapView } from './MapView';
 import { isMeasuredUnit } from './quantity';
+import { ShelterDashboard } from './ShelterDashboard';
+import { WorkspaceDialog } from './OrganisationDialog';
 import type {
   AidRequest,
   AllocationRecommendations,
@@ -81,16 +83,20 @@ function MutationMessage({ mutation }: { mutation: ReturnType<typeof useWrite> }
 function useLookups() {
   return useQuery({ queryKey: ['lookups'], queryFn: () => get<Lookups>('/public/lookups') });
 }
-function OrgSelect({ name = 'organisationId', initialId }: { name?: string; initialId?: string }) {
+function OrgSelect({ name = 'organisationId' }: { name?: string }) {
   const country = useCountry();
   const { user } = useAuth(),
-    q = useLookups();
+    q = useQuery({
+      queryKey: ['organisation-options', country],
+      queryFn: () => get<Lookups>(`/public/lookups?countryCode=${encodeURIComponent(country)}`),
+    });
   const orgs = q.data?.organisations.filter((o) =>
     user?.roles.includes('Administrator') || user?.memberships.some((m) => m.countryCode === country && (m.role === 'CountryAdministrator' || m.organisationId === o.id)),
   );
   return (
     <Field label="Organisation">
-      <select name={name} required defaultValue={initialId}>
+      <select name={name} required defaultValue="">
+        <option value="" disabled>{q.isPending ? 'Loading organisations…' : 'Select an organisation'}</option>
         {orgs?.map((o) => (
           <option key={o.id} value={o.id}>
             {o.name}
@@ -243,6 +249,13 @@ export function StaffOverview() {
   );
 }
 export function CaseQueue() {
+  const { pathname, search: queueSearch } = useLocation();
+  const country = useCountry();
+  const [params] = useSearchParams();
+  const adminQueue = pathname === '/admin/cases';
+  const view = adminQueue ? params.get('view') : null;
+  const crisisId = adminQueue && params.get('country') === country ? params.get('crisisId') : null;
+  const viewLabel = view === 'overdue' ? 'Overdue cases' : view === 'open' ? 'Open cases' : 'Case queue';
   const { user } = useAuth();
   const { t } = useTranslation();
   const organisations = useLookups();
@@ -269,17 +282,19 @@ export function CaseQueue() {
     [assignedToMe, setAssignedToMe] = useState(isCaseManager),
     [page, setPage] = useState(1);
   const q = useQuery({
-    queryKey: ['cases', search, status, page, assignedToMe],
-    queryFn: () =>
-      get<Page<AidRequest>>(
-        `/requests?search=${encodeURIComponent(search)}&status=${status}&page=${page}&assignedToMe=${assignedToMe}`,
-      ),
+    queryKey: ['cases', country, search, status, page, assignedToMe, view, crisisId],
+    queryFn: () => {
+      const query = new URLSearchParams({ search, status, page: String(page), assignedToMe: String(assignedToMe) });
+      if (view) query.set('view', view);
+      if (crisisId) query.set('crisisId', crisisId);
+      return get<Page<AidRequest>>(`/requests?${query}`);
+    },
   });
   return (
     <>
       <PageHeader
-        title="Case queue"
-        description="Review requests, verify information, and coordinate the next step."
+        title={viewLabel}
+        description={view === 'overdue' ? 'Cases still open more than 24 hours after submission.' : 'Review requests, verify information, and coordinate the next step.'}
       />
       {canFollowUp && <Card>
         <h2>Cases needing follow-up</h2>
@@ -388,7 +403,7 @@ export function CaseQueue() {
                       </td>
                       <td>{r.locationText}</td>
                       <td>
-                        <Link className="text-link" to={`/staff/cases/${r.id}`}>
+                        <Link className="text-link" to={adminQueue ? `/admin/cases/${r.id}${queueSearch}` : `/staff/cases/${r.id}`}>
                           Open
                           <ArrowRight size={16} />
                         </Link>
@@ -421,11 +436,16 @@ export function CaseQueue() {
   );
 }
 export function CaseDetails() {
+  const location = useLocation();
   const { t } = useTranslation();
   const { id } = useParams(),
     { user } = useAuth(),
     lookup = useLookups(),
     write = useWrite();
+  const adminCase = location.pathname.startsWith('/admin/');
+  const fromAssignmentQueue = adminCase && new URLSearchParams(location.search).get('source') === 'triage';
+  const canAssign = user?.roles.includes('Coordinator') || (adminCase &&
+    user?.roles.some(role => role === 'Administrator' || role === 'CountryAdministrator'));
   const q = useQuery({
     queryKey: ['staff-case', id],
     queryFn: () => get<RequestDetail>(`/requests/${id}`),
@@ -433,7 +453,7 @@ export function CaseDetails() {
   const caseManagers = useQuery({
     queryKey: ['case-managers', id],
     queryFn: () => get<{ id: string; name: string; availableForAssignment: boolean }[]>(`/requests/${id}/case-managers`),
-    enabled: !!id && !!user?.roles.includes('Coordinator'),
+    enabled: !!id && !!canAssign,
   });
   const canCase = user?.roles.some((r) => ['Administrator', 'CountryAdministrator', 'Coordinator', 'CaseManager'].includes(r)),
     canLogistics = user?.roles.some((r) => ['Administrator', 'CountryAdministrator', 'Coordinator', 'Logistics'].includes(r)),
@@ -478,7 +498,9 @@ export function CaseDetails() {
   )[r.status];
   return (
     <>
-      <NextLink to="/staff/cases">Back to case queue</NextLink>
+      <NextLink to={fromAssignmentQueue ? '/admin?section=cases' : adminCase ? `/admin/cases${location.search}` : '/staff/cases'}>
+        {fromAssignmentQueue ? 'Back to assignment queue' : 'Back to case queue'}
+      </NextLink>
       <PageHeader
         title={r.reference}
         description={`${t('category.' + r.category)} · ${r.householdSize} household members`}
@@ -526,7 +548,7 @@ export function CaseDetails() {
                 <dt>Requester contact</dt><dd>{r.requesterContact || 'Not provided'}</dd>
               </>}
             </dl>
-            {!r.organisationId && !['Closed', 'Rejected', 'Cancelled'].includes(r.status) && user?.roles.includes('Coordinator') && (
+            {!r.organisationId && !['Closed', 'Rejected', 'Cancelled'].includes(r.status) && canAssign && (
               <form onSubmit={(event) => {
                 event.preventDefault();
                 const form = new FormData(event.currentTarget);
@@ -540,7 +562,7 @@ export function CaseDetails() {
                 <Button type="submit" busy={write.isPending}>Assign</Button>
               </form>
             )}
-            {r.organisationId && !['Closed', 'Rejected', 'Cancelled'].includes(r.status) && user?.roles.includes('Coordinator') && (
+            {r.organisationId && !['Closed', 'Rejected', 'Cancelled'].includes(r.status) && canAssign && (
               <form className="inline" onSubmit={(event) => {
                 event.preventDefault();
                 const userId = String(new FormData(event.currentTarget).get('userId') || '');
@@ -1147,112 +1169,161 @@ export function ResourcesPage() {
 }
 export function ShelterManagement() {
   const country = useCountry();
+  return <CountryShelterManagement key={country} country={country} />;
+}
+
+function CountryShelterManagement({ country }: { country: string }) {
   const { t } = useTranslation();
-  const q = useQuery({ queryKey: ['staff-shelters', country], queryFn: () => get<Shelter[]>('/staff/shelters') }),
-    write = useWrite(),
-    { user } = useAuth();
+  const write = useWrite();
+  const { user } = useAuth();
   const [editing, setEditing] = useState<Shelter | null | undefined>(undefined);
-  const isAdmin = user?.roles.some((role) => role === 'Administrator' || role === 'CountryAdministrator');
+  const isAdmin = user?.roles.some(
+    (role) => role === 'Administrator' || role === 'CountryAdministrator',
+  );
+  const q = useQuery({
+    queryKey: ['staff-shelters', country],
+    queryFn: () => get<Shelter[]>(`/staff/shelters?countryCode=${encodeURIComponent(country)}`),
+    enabled: !isAdmin,
+  });
+  const startEditing = (shelter: Shelter | null) => {
+    write.reset();
+    setEditing(shelter);
+  };
   const shelters = isAdmin
     ? q.data
     : q.data?.filter((s) => user?.memberships.some((m) => m.organisationId === s.organisationId));
+  const editorTitle = t(editing ? 'updateShelter' : 'newShelter');
+  const editor = editing !== undefined && (
+    <form
+      key={editing?.id || 'new'}
+      className="form-grid"
+      onSubmit={(e) => {
+        e.preventDefault();
+        const f = formValues(e.currentTarget);
+        write.mutate(
+          {
+            path:
+              (editing ? `/shelters/${editing.id}` : '/shelters') +
+              `?countryCode=${encodeURIComponent(country)}`,
+            method: editing ? 'put' : 'post',
+            data: {
+              ...f,
+              capacity: Number(f.capacity),
+              latitude: Number(f.latitude),
+              longitude: Number(f.longitude),
+              accessible: f.accessible === 'on',
+              open: f.open === 'on',
+            },
+          },
+          { onSuccess: () => setEditing(undefined) },
+        );
+      }}
+    >
+      {editing ? (
+        <input type="hidden" name="organisationId" value={editing.organisationId} />
+      ) : (
+        <OrgSelect />
+      )}
+      <RegionField initialDivisionId={editing?.administrativeDivisionId} />
+      <Field label={t('shelterName')}>
+        <input name="name" defaultValue={editing?.name} required />
+      </Field>
+      <Field label={t('shelterAddress')}>
+        <input name="address" defaultValue={editing?.address} required />
+      </Field>
+      <Field label={t('shelterCapacity')}>
+        <input
+          name="capacity"
+          type="number"
+          min={1}
+          max={100000}
+          defaultValue={editing?.capacity}
+          required
+        />
+      </Field>
+      <Field label={t('shelterLatitude')}>
+        <input
+          name="latitude"
+          type="number"
+          step="any"
+          min={-90}
+          max={90}
+          defaultValue={editing?.latitude}
+          required
+        />
+      </Field>
+      <Field label={t('shelterLongitude')}>
+        <input
+          name="longitude"
+          type="number"
+          step="any"
+          min={-180}
+          max={180}
+          defaultValue={editing?.longitude}
+          required
+        />
+      </Field>
+      <Field label={t('shelterFacilities')}>
+        <input name="facilities" defaultValue={editing?.facilities} />
+      </Field>
+      <div>
+        <label className="checkbox-label">
+          <input type="checkbox" name="accessible" defaultChecked={editing?.accessible ?? false} />
+          {t('shelterAccessible')}
+        </label>
+        <label className="checkbox-label">
+          <input type="checkbox" name="open" defaultChecked={editing?.open ?? true} />
+          {t('shelterOpen')}
+        </label>
+      </div>
+      <Button busy={write.isPending}>{t('saveShelter')}</Button>
+      <Button
+        type="button"
+        variant="ghost"
+        disabled={write.isPending}
+        onClick={() => setEditing(undefined)}
+      >
+        {t('closeEditor')}
+      </Button>
+      {write.error && <ErrorState error={write.error} />}
+    </form>
+  );
   return (
-    <>
+    <div className={isAdmin ? 'shelter-management' : undefined}>
       <PageHeader
         title={t('staffShelters')}
-        description={t('shelterManagementDescription')}
+        description={
+          isAdmin
+            ? 'Monitor capacity, accommodation and operational readiness.'
+            : t('shelterManagementDescription')
+        }
         action={
-          <Button onClick={() => setEditing(null)}>
-            <Plus size={18} />
+          <Button onClick={() => startEditing(null)}>
+            <Plus size={18} aria-hidden="true" />
             {t('addShelter')}
           </Button>
         }
       />
-      <MutationMessage mutation={write} />
-      {editing !== undefined && (
-        <Card>
-          <h2>{t(editing ? 'updateShelter' : 'newShelter')}</h2>
-          <form
-            key={editing?.id || 'new'}
-            className="form-grid"
-            onSubmit={(e) => {
-              e.preventDefault();
-              const f = formValues(e.currentTarget);
-              write.mutate({
-                path: editing ? `/shelters/${editing.id}` : '/shelters',
-                method: editing ? 'put' : 'post',
-                data: {
-                  ...f,
-                  capacity: Number(f.capacity),
-                  latitude: Number(f.latitude),
-                  longitude: Number(f.longitude),
-                  accessible: f.accessible === 'on',
-                  open: f.open === 'on',
-                },
-              });
-            }}
+      {editing === undefined && <MutationMessage mutation={write} />}
+      {editing !== undefined &&
+        (isAdmin ? (
+          <WorkspaceDialog
+            title={editorTitle}
+            busy={write.isPending}
+            onDismiss={() => setEditing(undefined)}
+            className="shelter-dialog"
           >
-            <OrgSelect initialId={editing?.organisationId} /><RegionField initialDivisionId={editing?.administrativeDivisionId} />
-            <Field label={t('shelterName')}>
-              <input name="name" defaultValue={editing?.name} required />
-            </Field>
-            <Field label={t('shelterAddress')}>
-              <input name="address" defaultValue={editing?.address} required />
-            </Field>
-            <Field label={t('shelterCapacity')}>
-              <input
-                name="capacity"
-                type="number"
-                min={1}
-                defaultValue={editing?.capacity || 50}
-                required
-              />
-            </Field>
-            <Field label={t('shelterLatitude')}>
-              <input
-                name="latitude"
-                type="number"
-                step="any"
-                min={-90}
-                max={90}
-                defaultValue={editing?.latitude || 6.93}
-              />
-            </Field>
-            <Field label={t('shelterLongitude')}>
-              <input
-                name="longitude"
-                type="number"
-                step="any"
-                min={-180}
-                max={180}
-                defaultValue={editing?.longitude || 79.88}
-              />
-            </Field>
-            <Field label={t('shelterFacilities')}>
-              <input name="facilities" defaultValue={editing?.facilities || 'Water, toilets'} />
-            </Field>
-            <div>
-              <label className="checkbox-label">
-                <input
-                  type="checkbox"
-                  name="accessible"
-                  defaultChecked={editing?.accessible ?? true}
-                />
-                {t('shelterAccessible')}
-              </label>
-              <label className="checkbox-label">
-                <input type="checkbox" name="open" defaultChecked={editing?.open ?? true} />
-                {t('shelterOpen')}
-              </label>
-            </div>
-            <Button busy={write.isPending}>{t('saveShelter')}</Button>
-            <Button type="button" variant="ghost" onClick={() => setEditing(undefined)}>
-              {t('closeEditor')}
-            </Button>
-          </form>
-        </Card>
-      )}
-      {q.isPending ? (
+            {editor}
+          </WorkspaceDialog>
+        ) : (
+          <Card>
+            <h2>{editorTitle}</h2>
+            {editor}
+          </Card>
+        ))}
+      {isAdmin ? (
+        <ShelterDashboard country={country} onEdit={startEditing} />
+      ) : q.isPending ? (
         <Loading />
       ) : q.error ? (
         <ErrorState error={q.error} />
@@ -1281,7 +1352,7 @@ export function ShelterManagement() {
                 </div>
               </div>
               <p>{s.facilities}</p>
-              <Button variant="secondary" onClick={() => setEditing(s)}>
+              <Button variant="secondary" onClick={() => startEditing(s)}>
                 {t('editShelter')}
               </Button>
               <NextLink to="/staff/cases">{t('allocateHousehold')}</NextLink>
@@ -1289,6 +1360,6 @@ export function ShelterManagement() {
           ))}
         </div>
       )}
-    </>
+    </div>
   );
 }

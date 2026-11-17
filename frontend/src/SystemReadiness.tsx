@@ -6,7 +6,7 @@ import { useCountry } from './geography';
 import { Button, Card, ErrorState, Loading, PageHeader, formatDate } from './components';
 import './system-readiness.css';
 
-interface SystemStatus {
+export interface SystemStatus {
   checkedAt: string;
   integrations: {
     id: string;
@@ -19,8 +19,8 @@ interface SystemStatus {
   notificationQueue: { state: string; count: number }[];
 }
 
-const serviceIcons = { ai: Sparkles, email: Mail, mapping: MapPin };
-const stateTones: Record<string, string> = {
+export const serviceIcons = { ai: Sparkles, email: Mail, mapping: MapPin };
+export const stateTones: Record<string, string> = {
   Configured: 'blue',
   Capture: 'blue',
   Fallback: 'amber',

@@ -62,6 +62,73 @@ public sealed class AdministrationWorkflowTests(ApiFixture fixture) : IClassFixt
     }
 
     [Fact]
+    public async Task TabDashboardsIsolateCountryDataAndRecordAcknowledgementOnlyOnce()
+    {
+        using var admin = await fixture.Login("admin");
+        var (_, localClient) = await Staff(Roles.CountryAdministrator, "NP");
+        using var local = localClient;
+        using var citizen = await fixture.Login("citizen");
+        var marker = Guid.NewGuid().ToString("N");
+        var refs = new Dictionary<string, string>();
+        var alertIds = new Dictionary<string, Guid>();
+        using (var scope = fixture.Factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
+            var userId = await db.Users.Where(u => u.Email == "citizen@surakuma.test").Select(u => u.Id).SingleAsync();
+            foreach (var code in new[] { "LK", "IN", "NP" })
+            {
+                var crisis = new Crisis { Name = marker + code, CountryCode = code };
+                var request = new AssistanceRequest { CrisisId = crisis.Id, CitizenId = userId, Reference = code + marker[..8], SubmissionKey = marker + code };
+                var alert = new AdminAlert { CountryCode = code, ConditionKey = "unassigned:" + request.Id, Message = request.Reference + " assignment delayed" };
+                var message = new OutboxMessage { UserId = userId, RequestId = request.Id, State = code == "IN" ? "Sent" : "Failed", Message = marker + code };
+                db.AddRange(crisis, request, alert, message, new AuditEvent { Action = "StaffSuspended", CountryCode = code, Detail = marker + code });
+                if (code == "IN")
+                    db.AddRange(new DeliveryAttempt { EventId = message.Id, Number = 1, State = "Failed" },
+                        new Notification { RequestId = request.Id, EventId = message.Id, UserId = userId, Message = marker, Read = false });
+                refs.Add(code, request.Reference);
+                alertIds.Add(code, alert.Id);
+            }
+            await db.SaveChangesAsync();
+        }
+
+        async Task<JsonElement> Page(HttpClient client, string path) => await client.GetFromJsonAsync<JsonElement>("/api/v1/" + path);
+        foreach (var country in refs.Keys)
+        {
+            var alert = await Page(admin, $"admin/alerts?dashboard=true&search={refs[country]}&countryCode={country}");
+            Assert.Equal(1, alert.GetProperty("total").GetInt32());
+            Assert.Equal(refs[country], alert.GetProperty("items")[0].GetProperty("request").GetProperty("reference").GetString());
+            var audit = await Page(admin, $"admin/audit?includeTotal=true&search={marker}&countryCode={country}");
+            Assert.Equal(1, audit.GetProperty("total").GetInt32());
+            Assert.Equal(country, audit.GetProperty("items")[0].GetProperty("countryCode").GetString());
+        }
+        Assert.Equal(3, (await Page(admin, $"admin/audit?includeTotal=true&search={marker}&countryCode=")).GetProperty("total").GetInt32());
+        var failed = await Page(admin, $"admin/deliveries?includeTotal=true&dashboard=true&state=Failed&search={marker}&countryCode=");
+        Assert.Equal(2, failed.GetProperty("total").GetInt32());
+        Assert.All(failed.GetProperty("items").EnumerateArray(), row => Assert.Equal("Failed", row.GetProperty("state").GetString()));
+        var recovered = (await Page(admin, $"admin/deliveries?includeTotal=true&dashboard=true&search={marker}&countryCode=IN")).GetProperty("items")[0];
+        Assert.True(recovered.GetProperty("recovered").GetBoolean());
+        Assert.True(recovered.GetProperty("inAppStored").GetBoolean());
+        var window = Uri.EscapeDataString(DateTimeOffset.UtcNow.AddDays(1).ToString("O"));
+        Assert.Equal(0, (await Page(admin, $"admin/deliveries?includeTotal=true&search={marker}&from={window}&countryCode=")).GetProperty("total").GetInt32());
+        Assert.Equal(0, (await Page(admin, $"admin/audit?includeTotal=true&search={marker}&from={window}&countryCode=")).GetProperty("total").GetInt32());
+
+        var localAlerts = await Page(local, $"admin/alerts?dashboard=true&search={refs["LK"]}&countryCode=");
+        Assert.Equal(0, localAlerts.GetProperty("total").GetInt32());
+        Assert.Equal(HttpStatusCode.Forbidden, (await local.GetAsync("/api/v1/admin/alerts?dashboard=true&countryCode=IN")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await local.GetAsync("/api/v1/admin/deliveries?dashboard=true&countryCode=")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await local.GetAsync("/api/v1/admin/audit?includeTotal=true&countryCode=")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await citizen.GetAsync("/api/v1/admin/alerts?dashboard=true&countryCode=NP")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await local.PostAsync($"/api/v1/admin/alerts/{alertIds["IN"]}/acknowledge", null)).StatusCode);
+        var ack = $"/api/v1/admin/alerts/{alertIds["NP"]}/acknowledge";
+        Assert.Equal(HttpStatusCode.NoContent, (await local.PostAsync(ack, null)).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.PostAsync(ack, null)).StatusCode);
+        var acknowledged = await Page(admin, $"admin/alerts?dashboard=true&search={refs["NP"]}&status=Acknowledged&countryCode=NP");
+        Assert.Equal(1, acknowledged.GetProperty("total").GetInt32());
+        Assert.Equal(JsonValueKind.Null, acknowledged.GetProperty("items")[0].GetProperty("alert").GetProperty("resolvedAt").ValueKind);
+        Assert.Equal(1, (await Page(admin, $"admin/audit?includeTotal=true&action=AlertAcknowledged&search={alertIds["NP"]}&countryCode=NP")).GetProperty("total").GetInt32());
+    }
+
+    [Fact]
     public async Task UserDirectoryFiltersBeforePagingAndSortsByAccountDate()
     {
         using var admin = await fixture.Login("admin");

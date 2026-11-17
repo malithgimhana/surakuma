@@ -5,12 +5,13 @@ import { Button } from './components';
 
 export const organisationIdPattern = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}';
 
-export function OrganisationDialog({ title, context, busy, onDismiss, children }: {
+export function WorkspaceDialog({ title, context, busy, onDismiss, children, className = '' }: {
   title: string;
   context?: string;
   busy?: boolean;
   onDismiss: () => void;
   children: ReactNode;
+  className?: string;
 }) {
   const headingId = useId();
   const ref = useRef<HTMLDialogElement>(null);
@@ -23,7 +24,7 @@ export function OrganisationDialog({ title, context, busy, onDismiss, children }
   return (
     <dialog
       ref={ref}
-      className="organisation-dialog"
+      className={`organisation-dialog ${className}`}
       aria-labelledby={headingId}
       onCancel={(event) => {
         event.preventDefault();
@@ -43,3 +44,5 @@ export function OrganisationDialog({ title, context, busy, onDismiss, children }
     </dialog>
   );
 }
+
+export const OrganisationDialog = WorkspaceDialog;

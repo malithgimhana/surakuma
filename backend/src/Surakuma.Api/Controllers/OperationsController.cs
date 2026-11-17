@@ -13,12 +13,13 @@ using Surakuma.Infrastructure;
 namespace Surakuma.Api.Controllers;
 
 [ApiController, Route("api/v1"), Authorize]
-public sealed class OperationsController(Operations ops, AccessService access, CrisisDbContext db, UserManager<AppUser> users, IMappingProvider maps, IMemoryCache cache, InternalNotifications notifications) : ControllerBase
+public sealed partial class OperationsController(Operations ops, AccessService access, CrisisDbContext db, UserManager<AppUser> users, IMappingProvider maps, IMemoryCache cache, InternalNotifications notifications) : ControllerBase
 {
     [AllowAnonymous, HttpGet("public/lookups")] public Task<PublicLookups> Lookups(CancellationToken ct, string countryCode = "LK") => ops.PublicData(ct, countryCode);
     [AllowAnonymous, HttpGet("alerts")] public Task<List<PublicAlert>> Alerts(CancellationToken ct, string countryCode = "LK") => ops.Alerts(ct, countryCode);
     [AllowAnonymous, HttpGet("shelters")] public Task<List<PublicShelter>> Shelters(CancellationToken ct, string countryCode = "LK") => ops.PublicShelters(ct, countryCode);
-    [HttpGet("staff/shelters")] public Task<List<Shelter>> StaffShelters(CancellationToken ct) => ops.StaffShelters(ct);
+    [HttpGet("staff/shelters")] public async Task<object> StaffShelters(CancellationToken ct, bool dashboard = false) =>
+        dashboard ? await ShelterDashboard(ct) : await ops.StaffShelters(ct);
     [HttpGet("reports/metrics")] public Task<object> Metrics(CancellationToken ct) => ops.Metrics(ct);
     [HttpGet("requests/{id:guid}/resources")] public Task<List<Resource>> CaseResources(Guid id, CancellationToken ct) => ops.CaseResources(id, ct);
     [HttpGet("requests/{id:guid}/shelters")] public Task<List<Shelter>> CaseShelters(Guid id, CancellationToken ct) => ops.CaseShelters(id, ct);
@@ -106,8 +107,7 @@ public sealed class OperationsController(Operations ops, AccessService access, C
     public async Task<Crisis> SetCentre(Guid id, CentreRoutingInput input, CancellationToken ct)
     {
         await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
-        if (!await access.IsAdmin(ct) && !await access.Coordinates(id, ct)) throw new AccessDeniedException();
-        var crisis = await db.Set<Crisis>().FindAsync([id], ct) ?? throw new MissingException();
+        var crisis = await CoordinatedCrisis(id, ct);
         if (input.OrganisationId.HasValue && !await db.Set<OrganisationCountry>().AnyAsync(x => x.OrganisationId == input.OrganisationId && x.CountryCode == crisis.CountryCode, ct)) throw new RuleException("Centre not found.");
         if (input.OrganisationId.HasValue) await access.RequirePartner(input.OrganisationId.Value, crisis.CountryCode, ct);
         var previous = crisis.PrimaryOrganisationId;
@@ -134,11 +134,14 @@ public sealed class OperationsController(Operations ops, AccessService access, C
     [HttpPost("crises")]
     public async Task<Crisis> AddCrisis(Crisis input, CancellationToken ct)
     {
-        if (!await access.CountryAccess(input.CountryCode, [Roles.Coordinator], ct))
+        if (OutsideSelectedCountry(input.CountryCode) || !await access.CountryAccess(input.CountryCode, [Roles.Coordinator], ct))
             throw new AccessDeniedException();
         if (string.IsNullOrWhiteSpace(input.Name) || input.Name.Length > 150 || input.Latitude is < -90 or > 90 || input.Longitude is < -180 or > 180)
             throw new RuleException("Provide a crisis name and valid coordinates.");
         if (input.InternationalIncidentId.HasValue) throw new RuleException("Create a separate crisis for each country.");
+        if (input.AdministrativeDivisionId is Guid divisionId && !await db.Set<AdministrativeDivision>()
+            .AnyAsync(x => x.Id == divisionId && x.CountryCode == input.CountryCode, ct))
+            throw new RuleException("Select an administrative division in the chosen country.");
         var crisis = new Crisis { CountryCode = input.CountryCode, AdministrativeDivisionId = input.AdministrativeDivisionId, Name = input.Name, Type = input.Type, District = input.District, Latitude = input.Latitude, Longitude = input.Longitude, Active = input.Active };
         db.Add(crisis);
         db.Add(new CrisisAssignment { CrisisId = crisis.Id, UserId = access.UserId });
@@ -150,9 +153,7 @@ public sealed class OperationsController(Operations ops, AccessService access, C
     [HttpPut("crises/{id:guid}")]
     public async Task<Crisis> UpdateCrisis(Guid id, Crisis input, CancellationToken ct)
     {
-        if (!await access.Coordinates(id, ct))
-            throw new AccessDeniedException();
-        var crisis = await db.Set<Crisis>().FindAsync([id], ct) ?? throw new MissingException();
+        var crisis = await CoordinatedCrisis(id, ct);
         if (string.IsNullOrWhiteSpace(input.Name) || input.Name.Length > 150)
             throw new RuleException("Provide a valid crisis name.");
         crisis.Name = input.Name;
@@ -163,41 +164,93 @@ public sealed class OperationsController(Operations ops, AccessService access, C
         await db.SaveChangesAsync(ct);
         return crisis;
     }
+    [HttpPut("crises/{id:guid}/response-status")]
+    public async Task<Crisis> SetResponseStatus(Guid id, ResponseStatusInput input, CancellationToken ct)
+    {
+        var crisis = await CoordinatedCrisis(id, ct);
+        if (input.Active is not bool active) throw new RuleException("Specify the response status.");
+        if (crisis.Active == active) return crisis;
+        crisis.Active = active;
+        ops.Audit("CrisisUpdated", crisis, active ? "Response reopened" : "Response ended");
+        await db.SaveChangesAsync(ct);
+        return crisis;
+    }
+
+    private bool OutsideSelectedCountry(string country) =>
+        access.SelectedCountry is { } selected && selected != country;
+
+    private async Task<Crisis> CoordinatedCrisis(Guid id, CancellationToken ct)
+    {
+        if (!await access.Coordinates(id, ct)) throw new AccessDeniedException();
+        var crisis = await db.Set<Crisis>().FindAsync([id], ct) ?? throw new MissingException();
+        if (OutsideSelectedCountry(crisis.CountryCode)) throw new AccessDeniedException();
+        return crisis;
+    }
+
+    public sealed record ResponseStatusInput(bool? Active);
+
     [HttpGet("crises/{id:guid}/areas")]
     public async Task<object> Areas(Guid id, CancellationToken ct)
     {
-        if (!await access.Coordinates(id, ct))
-            throw new AccessDeniedException();
-        return await db.Set<OperationalArea>().Where(x => x.CrisisId == id).ToListAsync(ct);
+        await CoordinatedCrisis(id, ct);
+        return await db.Set<OperationalArea>().Where(x => x.CrisisId == id).OrderBy(x => x.Name).ToListAsync(ct);
     }
     [HttpPost("crises/{id:guid}/areas")]
     public async Task<OperationalArea> AddArea(Guid id, OperationalArea input, CancellationToken ct)
     {
-        if (!await access.Coordinates(id, ct))
-            throw new AccessDeniedException();
-        if (string.IsNullOrWhiteSpace(input.Name) || input.GeoJson.Length > 4000)
+        var crisis = await CoordinatedCrisis(id, ct);
+        if (string.IsNullOrWhiteSpace(input.Name) || input.Name.Length > 150 || string.IsNullOrWhiteSpace(input.GeoJson) || input.GeoJson.Length > 4000)
             throw new RuleException("Provide a name and a GeoJSON geometry under 4,000 characters.");
         try
         {
             using var json = System.Text.Json.JsonDocument.Parse(input.GeoJson);
-            if (json.RootElement.GetProperty("type").GetString() is not ("Polygon" or "MultiPolygon"))
+            if (json.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object
+                || !json.RootElement.TryGetProperty("type", out var type)
+                || type.ValueKind != System.Text.Json.JsonValueKind.String
+                || type.GetString() is not ("Polygon" or "MultiPolygon")
+                || !json.RootElement.TryGetProperty("coordinates", out var coordinates)
+                || coordinates.ValueKind != System.Text.Json.JsonValueKind.Array || coordinates.GetArrayLength() == 0)
                 throw new RuleException("Use a Polygon or MultiPolygon.");
         }
         catch (System.Text.Json.JsonException) { throw new RuleException("Invalid GeoJSON."); }
-        var area = new OperationalArea { CrisisId = id, Name = input.Name, GeoJson = input.GeoJson };
+        var area = new OperationalArea { CrisisId = id, Name = input.Name.Trim(), GeoJson = input.GeoJson };
         db.Add(area);
-        ops.Audit("OperationalAreaCreated", area, countryCode: await db.Set<Crisis>().Where(x => x.Id == id).Select(x => x.CountryCode).SingleAsync(ct));
+        db.Entry(crisis).Property(x => x.UpdatedAt).IsModified = true;
+        ops.Audit("OperationalAreaCreated", area, countryCode: crisis.CountryCode);
         await db.SaveChangesAsync(ct);
         return area;
     }
+    [HttpDelete("crises/{id:guid}/areas/{areaId:guid}")]
+    public async Task<IActionResult> RemoveArea(Guid id, Guid areaId, CancellationToken ct)
+    {
+        await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+        var crisis = await CoordinatedCrisis(id, ct);
+        var area = await db.Set<OperationalArea>().SingleOrDefaultAsync(x => x.Id == areaId && x.CrisisId == id, ct)
+            ?? throw new MissingException();
+        if (await db.Set<LogisticsOrder>().AnyAsync(x => x.OperationalAreaId == areaId, ct))
+            throw new RuleException("This area is linked to a logistics order and must be kept for its history.");
+        db.Remove(area);
+        db.Entry(crisis).Property(x => x.UpdatedAt).IsModified = true;
+        ops.Audit("OperationalAreaRemoved", area, area.Name, crisis.CountryCode);
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+        return NoContent();
+    }
+
     [HttpPost("alerts")]
     public async Task<PublicAlert> Publish(PublicAlert input, CancellationToken ct)
     {
-        if (!await access.Coordinates(input.CrisisId, ct))
-            throw new AccessDeniedException();
+        await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+        var crisis = await CoordinatedCrisis(input.CrisisId, ct);
+        if (input.Published && !crisis.Active)
+            throw new RuleException("Select an active crisis to publish an alert.");
+        if (input.Severity is not ("Information" or "Advisory" or "Warning" or "Critical"))
+            throw new RuleException("Select a valid alert severity.");
+        if (input.Published && (string.IsNullOrWhiteSpace(input.Area) || string.IsNullOrWhiteSpace(input.Authority)))
+            throw new RuleException("Provide an affected area and issuing authority.");
         if (string.IsNullOrWhiteSpace(input.Title) || string.IsNullOrWhiteSpace(input.Message) || input.ExpiresAt <= DateTimeOffset.UtcNow || input.Title.Length > 150 || input.Message.Length > 2000)
             throw new RuleException("Provide a title, message and future expiry.");
-        var countryCode = await db.Set<Crisis>().Where(x => x.Id == input.CrisisId).Select(x => x.CountryCode).SingleAsync(ct);
+        var countryCode = crisis.CountryCode;
         var policy = await db.Set<Country>().SingleAsync(x => x.Code == countryCode, ct);
         Dictionary<string, AlertTranslation> translations;
         try { translations = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, AlertTranslation>>(input.TranslationsJson, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? []; }
@@ -206,7 +259,7 @@ public sealed class OperationsController(Operations ops, AccessService access, C
         if (!string.IsNullOrWhiteSpace(input.SinhalaTitle)) translations["si"] = new(input.SinhalaTitle, input.SinhalaMessage);
         if (!string.IsNullOrWhiteSpace(input.TamilTitle)) translations["ta"] = new(input.TamilTitle, input.TamilMessage);
         if (translations.Any(x => x.Value == null || x.Value.Title == null || x.Value.Message == null || x.Value.Title.Length > 150 || x.Value.Message.Length > 2000)) throw new RuleException("Alert translations exceed the allowed length.");
-        if (input.Published && policy.RequiredAlertLanguages.Split(',').Any(language => !translations.TryGetValue(language, out var text) || string.IsNullOrWhiteSpace(text.Title) || string.IsNullOrWhiteSpace(text.Message)))
+        if (input.Published && policy.RequiredAlertLanguages.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).Any(language => !translations.TryGetValue(language, out var text) || string.IsNullOrWhiteSpace(text.Title) || string.IsNullOrWhiteSpace(text.Message)))
             throw new RuleException("Provide alert wording in all required country languages: " + policy.RequiredAlertLanguages);
         var extraTranslations = System.Text.Json.JsonSerializer.Serialize(translations.Where(x => x.Key is not ("en" or "si" or "ta")).ToDictionary(x => x.Key, x => x.Value), new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase });
         if (extraTranslations.Length > 4000) throw new RuleException("Additional translations exceed the supported size.");
@@ -214,16 +267,17 @@ public sealed class OperationsController(Operations ops, AccessService access, C
         db.Add(alert);
         ops.Audit("PublicAlertCreated", alert, countryCode: countryCode);
         await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
         return alert;
     }
     [HttpPost("alerts/{id:guid}/unpublish")]
     public async Task<IActionResult> Unpublish(Guid id, CancellationToken ct)
     {
         var a = await db.Set<PublicAlert>().FindAsync([id], ct) ?? throw new MissingException();
-        if (!await access.Coordinates(a.CrisisId, ct))
-            throw new AccessDeniedException();
+        var crisis = await CoordinatedCrisis(a.CrisisId, ct);
+        if (!a.Published) return NoContent();
         a.Published = false;
-        ops.Audit("PublicAlertUnpublished", a, countryCode: await db.Set<Crisis>().Where(x => x.Id == a.CrisisId).Select(x => x.CountryCode).SingleAsync(ct));
+        ops.Audit("PublicAlertUnpublished", a, countryCode: crisis.CountryCode);
         await db.SaveChangesAsync(ct);
         return NoContent();
     }
@@ -441,36 +495,68 @@ public sealed class OperationsController(Operations ops, AccessService access, C
         return org;
     }
     [HttpGet("admin/audit")]
-    public async Task<object> Audit(CancellationToken ct, int page = 1, int pageSize = 50, bool includeTotal = false, string? countryCode = null)
+    public async Task<object> Audit(CancellationToken ct, int page = 1, int pageSize = 50, bool includeTotal = false, string? countryCode = null,
+        string? action = null, string? actor = null, string? search = null, DateTimeOffset? from = null, DateTimeOffset? to = null,
+        DateTimeOffset? today = null)
     {
         await Admin(ct);
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 50);
-        var query = db.Set<AuditEvent>().Where(x => countryCode == null || x.CountryCode == countryCode);
-        var total = includeTotal ? await query.CountAsync(ct) : 0;
-        var items = await query.OrderByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id).Skip((page - 1) * pageSize).Take(pageSize).Select(x => new
+        var scope = db.Set<AuditEvent>().Where(x => countryCode == null || x.CountryCode == countryCode);
+        var query = scope.Where(x => (action == null || x.Action == action) && (from == null || x.CreatedAt >= from)
+            && (to == null || x.CreatedAt < to)).Select(x => new
         {
-            x.Id, x.ActorId, x.Action, x.EntityType, x.EntityId, x.Detail, x.CreatedAt, x.UpdatedAt, x.Version,
+            x.Id, x.ActorId, x.Action, x.EntityType, x.EntityId, x.Detail, x.CountryCode, x.CreatedAt, x.UpdatedAt, x.Version,
             ActorName = db.Users.Where(u => u.Id == x.ActorId).Select(u => u.DisplayName).FirstOrDefault()
-        }).ToListAsync(ct);
+        }).Where(x => (actor == null || x.ActorId == actor || (x.ActorName != null && x.ActorName.Contains(actor)))
+            && (search == null || x.Action.Contains(search) || x.Detail.Contains(search) || x.EntityType.Contains(search)
+                || x.EntityId.ToString().Contains(search) || (x.EntityType == nameof(AssistanceRequest)
+                    && db.Set<AssistanceRequest>().Any(r => r.Id == x.EntityId && r.Reference.Contains(search)))));
+        var total = includeTotal ? await query.CountAsync(ct) : 0;
+        var items = await query.OrderByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
+        if (includeTotal && today is { } start)
+        {
+            string[] highRiskActions = ["SystemAdministratorGranted", "SystemAdministratorRevoked", "StaffAccessRevoked", "StaffSuspended",
+                "AccountDisabled", "AccountDeleted", "OrganisationArchived", "CountryServicesConfigured", "DeliveryRetry", "DeliveryAccepted"];
+            var todayEvents = scope.Where(x => x.CreatedAt >= start && x.CreatedAt < start.AddDays(1));
+            var summary = await todayEvents.GroupBy(_ => 1).Select(g => new { EventsToday = g.Count(),
+                HighRiskToday = g.Count(e => highRiskActions.Contains(e.Action)) }).FirstOrDefaultAsync(ct);
+            return new { items, total, pageNumber = page, pageSize, summary };
+        }
         return includeTotal ? new { items, total, pageNumber = page, pageSize } : (object)items;
     }
     [HttpGet("admin/deliveries")]
-    public async Task<object> Deliveries(CancellationToken ct, int page = 1, int pageSize = 100, bool includeTotal = false, string? countryCode = null)
+    public async Task<object> Deliveries(CancellationToken ct, int page = 1, int pageSize = 100, bool includeTotal = false, string? countryCode = null,
+        string? state = null, string? search = null, DateTimeOffset? from = null, DateTimeOffset? to = null, bool dashboard = false)
     {
         await Admin(ct);
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 100);
-        var query = db.DeliveriesInCountry(countryCode);
-        var total = includeTotal ? await query.CountAsync(ct) : 0;
-        var items = await query.OrderByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id).Skip((page - 1) * pageSize).Take(pageSize).Select(x => new
+        var scope = db.DeliveriesInCountry(countryCode);
+        var attempts = db.Set<DeliveryAttempt>();
+        var query = scope.Where(x => (state == null || x.State == state) && (from == null || x.CreatedAt >= from)
+            && (to == null || x.CreatedAt < to)).Select(x => new
         {
             x.Id, x.State, x.Attempts, x.LastError, x.CreatedAt,
             EventMessage = x.Message,
             RecipientName = db.Users.Where(u => u.Id == x.UserId).Select(u => u.DisplayName).FirstOrDefault(),
             CaseReference = db.Set<AssistanceRequest>().Where(r => r.Id == x.RequestId).Select(r => r.Reference).FirstOrDefault(),
-            Provider = db.Set<NotificationDelivery>().Where(d => d.EventId == x.Id && d.RecipientId == x.UserId).Select(d => d.Provider).FirstOrDefault()
-        }).ToListAsync(ct);
+            Provider = db.Set<NotificationDelivery>().Where(d => d.EventId == x.Id && d.RecipientId == x.UserId).Select(d => d.Provider).FirstOrDefault(),
+            InAppStored = dashboard && db.Set<Notification>().Any(n => n.EventId == x.Id && n.UserId == x.UserId && n.RequestId == x.RequestId),
+            Recovered = dashboard && x.State == "Sent" && attempts.Any(a => a.EventId == x.Id && (a.State == "Failed" || a.State == "Retry" || a.State == "Review")),
+        }).Where(x => search == null || x.EventMessage.Contains(search) || (x.CaseReference != null && x.CaseReference.Contains(search))
+            || (x.RecipientName != null && x.RecipientName.Contains(search)));
+        var total = includeTotal ? await query.CountAsync(ct) : 0;
+        var items = await query.OrderByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
+        if (includeTotal && dashboard)
+        {
+            var failed = await scope.CountAsync(x => x.State == "Failed", ct);
+            var recovered = await scope.CountAsync(x => x.State == "Sent" && attempts.Any(a => a.EventId == x.Id && (a.State == "Failed" || a.State == "Retry" || a.State == "Review")), ct);
+            var retrying = await scope.CountAsync(x => x.State == "Retry" || (x.Attempts > 0 && (x.State == "Pending" || x.State == "Processing")), ct);
+            var causes = await scope.Where(x => x.State == "Failed").GroupBy(x => x.LastError)
+                .Select(g => new { Reason = g.Key, Count = g.Count() }).OrderByDescending(x => x.Count).ThenBy(x => x.Reason).Take(3).ToListAsync(ct);
+            return new { items, total, pageNumber = page, pageSize, summary = new { failed, recovered, retrying, causes } };
+        }
         return includeTotal ? new { items, total, pageNumber = page, pageSize } : (object)items;
     }
 }

@@ -190,20 +190,82 @@ public sealed class AdministrationController(CrisisDbContext db, AccessService a
         ops.Audit("AdministrationProposal" + p.State, p, input.Reason); await db.SaveChangesAsync(ct); await tx.CommitAsync(ct); return NoContent();
     }
     [HttpGet("alerts")]
-    public async Task<object> Alerts(CancellationToken ct, string? countryCode = null)
+    public async Task<object> Alerts(CancellationToken ct, string? countryCode = null, bool includeGlobal = false,
+        bool activeOnly = false, bool dashboard = false, int page = 1, string? status = null,
+        string? type = null, string? search = null, DateTimeOffset? from = null, DateTimeOffset? today = null,
+        bool newestFirst = true)
     {
-        var global = await access.IsAdmin(ct); var countries = (await access.Memberships(ct)).Where(m => m.Role == Roles.CountryAdministrator).Select(m => m.CountryCode).ToArray();
+        var global = await access.IsAdmin(ct);
+        var countries = (await access.Memberships(ct)).Where(m => m.Role == Roles.CountryAdministrator && m.CrisisId == null).Select(m => m.CountryCode).ToArray();
         if (!global && countries.Length == 0) throw new AccessDeniedException();
-        if (countryCode != null && !global && !await access.CountryAccess(countryCode, [], ct)) throw new AccessDeniedException();
-        return await db.Set<AdminAlert>().Where(a => (countryCode == null || a.CountryCode == countryCode)
-            && (global || (a.CountryCode != null && countries.Contains(a.CountryCode) && !a.ConditionKey.StartsWith("delivery:"))))
-            .OrderBy(a => a.ResolvedAt != null).ThenByDescending(a => a.CreatedAt).Take(200).ToListAsync(ct);
+        if (countryCode != null && !global && !countries.Contains(countryCode)) throw new AccessDeniedException();
+        var query = db.Set<AdminAlert>().Where(a => (!activeOnly || a.ResolvedAt == null)
+            && (countryCode == null || a.CountryCode == countryCode || (includeGlobal && global && a.CountryCode == null))
+            && (global || (a.CountryCode != null && countries.Contains(a.CountryCode) && !a.ConditionKey.StartsWith("delivery:"))));
+        if (!dashboard)
+            return await query.OrderBy(a => a.ResolvedAt != null).ThenByDescending(a => a.CreatedAt).ThenBy(a => a.Id).Take(200).ToListAsync(ct);
+
+        var todayStart = today ?? new DateTimeOffset(DateTime.UtcNow.Date, TimeSpan.Zero);
+        var weekStart = todayStart.AddDays(-6);
+        var categorized = query.Select(a => new
+        {
+            Alert = a,
+            Type = a.ConditionKey.StartsWith("unassigned:") || a.ConditionKey.StartsWith("manager:") ? "Assignment"
+                : a.ConditionKey.StartsWith("delivery:") ? "Delivery"
+                : a.ConditionKey.StartsWith("service:AdministrativeAccess:") ? "Access"
+                : a.ConditionKey.StartsWith("service:") ? "Provider" : "Other",
+        });
+        var summary = await query.GroupBy(_ => 1).Select(g => new
+        {
+            Active = g.Count(a => a.ResolvedAt == null),
+            Unacknowledged = g.Count(a => a.ResolvedAt == null && a.AcknowledgedAt == null),
+            Acknowledged = g.Count(a => a.ResolvedAt == null && a.AcknowledgedAt != null),
+            ResolvedToday = g.Count(a => a.ResolvedAt >= todayStart && a.ResolvedAt < todayStart.AddDays(1)),
+        }).SingleOrDefaultAsync(ct);
+        var trends = await categorized.Where(a => a.Alert.CreatedAt >= weekStart && a.Alert.CreatedAt < todayStart.AddDays(1))
+            .GroupBy(a => a.Type).Select(g => new { Type = g.Key, Count = g.Count(), Resolved = g.Count(a => a.Alert.ResolvedAt != null) }).ToListAsync(ct);
+        var matching = categorized.Where(a => (type == null || a.Type == type) && (from == null || a.Alert.CreatedAt >= from)
+            && (search == null || a.Alert.Message.Contains(search.Trim()))
+            && (status == null || (status == "Resolved" && a.Alert.ResolvedAt != null)
+                || (a.Alert.ResolvedAt == null && (status == "Active" || (status == "Unacknowledged" && a.Alert.AcknowledgedAt == null)
+                    || (status == "Acknowledged" && a.Alert.AcknowledgedAt != null)))));
+        const int pageSize = 6;
+        var total = await matching.CountAsync(ct);
+        page = Math.Clamp(page, 1, Math.Max(1, (int)Math.Ceiling((double)total / pageSize)));
+        var ordered = newestFirst ? matching.OrderByDescending(a => a.Alert.CreatedAt) : matching.OrderBy(a => a.Alert.CreatedAt);
+        var rows = await ordered.ThenBy(a => a.Alert.Id).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
+        var requestIds = rows.Select(row => row.Type == "Assignment" && Guid.TryParse(row.Alert.ConditionKey.Split(':').Last(), out var id) ? id : (Guid?)null).ToArray();
+        var requests = await db.Set<AssistanceRequest>().Where(r => requestIds.Contains(r.Id)).Select(r => new
+        {
+            r.Id, r.Reference, r.LocationText, r.Category, r.Priority,
+            CountryCode = db.Set<Crisis>().Where(c => c.Id == r.CrisisId).Select(c => c.CountryCode).FirstOrDefault(),
+            Manager = db.Users.Where(u => u.Id == r.AssignedCaseManagerId).Select(u => u.DisplayName).FirstOrDefault(),
+        }).ToDictionaryAsync(r => r.Id, ct);
+        var items = rows.Select((row, index) => new
+        {
+            row.Alert, row.Type,
+            Request = requestIds[index] is Guid id && requests.TryGetValue(id, out var request) && request.CountryCode == row.Alert.CountryCode ? request : null,
+        });
+        return new { items, total, pageNumber = page, pageSize, summary, trends };
     }
     [HttpPost("alerts/{id:guid}/acknowledge")]
     public async Task<IActionResult> Acknowledge(Guid id, CancellationToken ct)
     {
         var item = await db.Set<AdminAlert>().SingleOrDefaultAsync(a => a.Id == id, ct) ?? throw new MissingException();
         if (!await access.IsAdmin(ct) && (item.CountryCode == null || item.ConditionKey.StartsWith("delivery:") || !await access.CountryAccess(item.CountryCode, [], ct))) throw new AccessDeniedException();
-        item.AcknowledgedAt = DateTimeOffset.UtcNow; item.AcknowledgedBy = access.UserId; ops.Audit("AlertAcknowledged", item); await db.SaveChangesAsync(ct); return NoContent();
+        if (item.AcknowledgedAt != null || item.ResolvedAt != null) return NoContent();
+        var now = DateTimeOffset.UtcNow;
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var updated = await db.Set<AdminAlert>().Where(a => a.Id == id && a.CountryCode == item.CountryCode
+            && a.AcknowledgedAt == null && a.ResolvedAt == null).ExecuteUpdateAsync(set => set
+                .SetProperty(a => a.AcknowledgedAt, now).SetProperty(a => a.AcknowledgedBy, access.UserId)
+                .SetProperty(a => a.UpdatedAt, now), ct);
+        if (updated != 0)
+        {
+            ops.Audit("AlertAcknowledged", item, countryCode: item.CountryCode);
+            await db.SaveChangesAsync(ct);
+        }
+        await tx.CommitAsync(ct);
+        return NoContent();
     }
 }

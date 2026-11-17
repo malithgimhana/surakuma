@@ -51,7 +51,6 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
         .OrderBy(x => x.Name).Select(x => new PublicShelter(x.Id, x.Name, x.Address, x.Latitude, x.Longitude, x.Capacity, x.Reserved, x.Occupancy, x.Capacity - x.Reserved - x.Occupancy, x.Accessible, x.Open, x.Facilities, x.UpdatedAt)), ct);
     public async Task<List<Shelter>> StaffShelters(CancellationToken ct)
     {
-        var orgs = await OrgScope(ct);
         return await store.ListAsync((await access.Located<Shelter>(ct)).OrderBy(x => x.Name), ct);
     }
     public Task<AssistanceRequest> Submit(CreateRequestInput input, CancellationToken ct) => store.RoutingTransactionAsync(async () =>
@@ -107,30 +106,44 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
         var active = await store.ListAsync(store.Query<AssistanceRequest>().Where(x => x.OrganisationId == organisationId && x.AssignedCaseManagerId != null && managers.Contains(x.AssignedCaseManagerId) && x.Status != RequestStatus.Fulfilled && x.Status != RequestStatus.Closed && x.Status != RequestStatus.Rejected && x.Status != RequestStatus.Cancelled), ct);
         return managers.OrderBy(id => active.Count(x => x.AssignedCaseManagerId == id)).ThenBy(id => id, StringComparer.Ordinal).First();
     }
-    public async Task<Page<AssistanceRequest>> Requests(bool mine, string? status, string? search, int page, CancellationToken ct, bool assignedToMe = false)
+    public async Task<Page<AssistanceRequest>> Requests(bool mine, string? status, string? search, int page,
+        CancellationToken ct, bool assignedToMe = false, string? view = null, Guid? crisisId = null)
     {
         var q = await access.Visible(ct);
         if (mine)
             q = q.Where(x => x.CitizenId == access.UserId);
         if (assignedToMe)
             q = q.Where(x => x.AssignedCaseManagerId == access.UserId);
+        if (view is "open" or "overdue")
+            q = q.Where(x => !CaseReporting.Ended.Contains(x.Status));
+        if (view == "overdue")
+        {
+            var overdueBefore = CaseReporting.OverdueBefore(DateTimeOffset.UtcNow);
+            q = q.Where(x => x.CreatedAt < overdueBefore);
+        }
+        if (crisisId != null)
+            q = q.Where(x => x.CrisisId == crisisId);
         if (Enum.TryParse<RequestStatus>(status, out var state))
             q = q.Where(x => x.Status == state);
         if (!string.IsNullOrWhiteSpace(search))
             q = q.Where(x => x.Reference.Contains(search) || x.Description.Contains(search) || x.LocationText.Contains(search));
-        int total = (await store.ListAsync(q.Select(x => x.Id), ct)).Count;
+        int total = (await store.ListAsync(q.GroupBy(_ => 1).Select(group => group.Count()), ct)).SingleOrDefault();
         page = Math.Max(1, page);
         return new(await store.ListAsync(q.OrderByDescending(x => x.CreatedAt).Skip((page - 1) * 20).Take(20), ct), total, page, 20);
     }
-    public async Task<List<AssistanceRequest>> Triage(CancellationToken ct)
+    public async Task<List<AssistanceRequest>> Triage(CancellationToken ct, Guid? crisisId = null)
     {
+        var queue = (await access.Visible(ct)).Where(x => (x.OrganisationId == null || x.AssignedCaseManagerId == null)
+            && !CaseReporting.Ended.Contains(x.Status) && (crisisId == null || x.CrisisId == crisisId));
         var memberships = await access.Memberships(ct);
         if (await access.IsAdmin(ct))
-            return await store.ListAsync((await access.Visible(ct)).Where(x => (x.OrganisationId == null || x.AssignedCaseManagerId == null) && x.Status != RequestStatus.Closed && x.Status != RequestStatus.Fulfilled && x.Status != RequestStatus.Cancelled && x.Status != RequestStatus.Rejected).OrderBy(x => x.CreatedAt), ct);
+            return await store.ListAsync(queue.OrderBy(x => x.CreatedAt), ct);
         if (!memberships.Any(x => x.Role == Roles.Coordinator || x.Role == Roles.CountryAdministrator))
             throw new AccessDeniedException();
         var crises = (await store.ListAsync(store.Query<CrisisAssignment>().Where(x => x.UserId == access.UserId), ct)).Select(x => x.CrisisId).ToArray();
-        return await store.ListAsync((await access.Visible(ct)).Where(x => (x.OrganisationId == null || x.AssignedCaseManagerId == null) && (crises.Contains(x.CrisisId) || store.Query<Membership>().Any(m => m.UserId == access.UserId && m.Role == Roles.CountryAdministrator && store.Query<Crisis>().Any(c => c.Id == x.CrisisId && c.CountryCode == m.CountryCode))) && x.Status != RequestStatus.Closed && x.Status != RequestStatus.Fulfilled && x.Status != RequestStatus.Cancelled && x.Status != RequestStatus.Rejected).OrderBy(x => x.CreatedAt), ct);
+        return await store.ListAsync(queue.Where(x => crises.Contains(x.CrisisId) || store.Query<Membership>().Any(m =>
+            m.UserId == access.UserId && m.Role == Roles.CountryAdministrator &&
+            store.Query<Crisis>().Any(c => c.Id == x.CrisisId && c.CountryCode == m.CountryCode))).OrderBy(x => x.CreatedAt), ct);
     }
     public Task<AssistanceRequest> Reassign(Guid id, Guid organisationId, CancellationToken ct) => store.RoutingTransactionAsync(async () =>
     {
@@ -482,14 +495,22 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
         Audit("Allocation" + action, a, reason ?? "", resource.CountryCode);
         return a;
     }, ct);
-    public async Task<Shelter> SaveShelter(Guid? id, ShelterInput input, CancellationToken ct)
+    public Task<Shelter> SaveShelter(Guid? id, ShelterInput input, CancellationToken ct) => store.TransactionAsync(async () =>
     {
+        if (access.SelectedCountry is { } selected && selected != input.CountryCode)
+            throw new AccessDeniedException();
         await access.RequireLocation(input.OrganisationId, input.CountryCode, ShelterRoles, ct);
+        if (input.AdministrativeDivisionId is Guid divisionId &&
+            (await store.FindAsync<AdministrativeDivision>(divisionId, ct))?.CountryCode != input.CountryCode)
+            throw new RuleException("Choose an administrative division in the shelter country.");
         var shelter = id.HasValue ? await store.FindAsync<Shelter>(id.Value, ct) ?? throw new MissingException() : new Shelter { CountryCode = input.CountryCode, AdministrativeDivisionId = input.AdministrativeDivisionId, OrganisationId = input.OrganisationId };
         if (shelter.OrganisationId != input.OrganisationId || shelter.CountryCode != input.CountryCode)
             throw new AccessDeniedException();
         if (input.Capacity < shelter.Occupancy + shelter.Reserved)
             throw new RuleException("Capacity cannot be below active reservations and occupancy.");
+        if (!id.HasValue) await access.RequirePartner(input.OrganisationId, input.CountryCode, ct);
+        var oldCapacity = shelter.Capacity;
+        var wasOpen = shelter.Open;
         shelter.Name = input.Name;
         shelter.AdministrativeDivisionId = input.AdministrativeDivisionId;
         shelter.Address = input.Address;
@@ -499,12 +520,16 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
         shelter.Accessible = input.Accessible;
         shelter.Open = input.Open;
         shelter.Facilities = input.Facilities;
+        shelter.UpdatedAt = DateTimeOffset.UtcNow;
         if (!id.HasValue)
             store.Add(shelter);
-        Audit("ShelterSaved", shelter);
-        await store.SaveAsync(ct);
+        Audit(id.HasValue ? "ShelterUpdated" : "ShelterCreated", shelter);
+        if (id.HasValue && oldCapacity != shelter.Capacity)
+            Audit("ShelterCapacityChanged", shelter, $"{oldCapacity} → {shelter.Capacity} spaces");
+        if (id.HasValue && wasOpen != shelter.Open)
+            Audit("ShelterStatusChanged", shelter, shelter.Open ? "Open" : "Closed");
         return shelter;
-    }
+    }, ct);
     public Task<ShelterAllocation> Place(ShelterPlaceInput input, CancellationToken ct) => store.TransactionAsync(async () =>
     {
         var r = await access.Request(input.RequestId, ShelterRoles, ct);

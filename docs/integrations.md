@@ -4,7 +4,7 @@ The application works in demonstration mode without external accounts. Administr
 
 ## Configure locally
 
-Create your own provider accounts and use the free options. Keep keys in the API terminal's environment, never in frontend code, screenshots or Git. README lists the supported environment variables. Stop and restart the API after changing them. Do not paste keys into chat or the report.
+Create your own provider accounts and use the free options. Keep keys in the API terminal's environment or in an ignored local settings file. README lists the supported environment variables. Stop and restart the API after changing them. Do not paste keys into chat or the report.
 
 For a hidden PowerShell prompt rather than placing a key literally in command history:
 
@@ -13,7 +13,7 @@ $env:Ai__ApiKey = [System.Net.NetworkCredential]::new('', (Read-Host 'Gemini key
 ./scripts/Start-Api.ps1
 ```
 
-Use the same approach for `Mapping__ApiKey` or `Email__ApiKey` before starting the API. This supplies a process environment value; the prompt does not persist it for later terminals. API restarts must use the configured terminal.
+Use the same approach for `Email__ApiKey` before starting the API. The value stays in the current terminal. See the openrouteservice section to save the mapping key for later restarts.
 
 ## Gemini
 
@@ -33,7 +33,15 @@ Use a dedicated synthetic citizen account with an email inbox you control and au
 
 ## openrouteservice
 
-Create an account through [openrouteservice](https://openrouteservice.org/), select its available free API access, and set `Mapping__ApiKey`. After restart, search for a public Sri Lankan demonstration location and generate a short driving route between public points. Record success or explicit unavailability without private household coordinates. The provider expects longitude before latitude internally; see its [routing guidance](https://giscience.github.io/openrouteservice/frequently-asked-questions). Driving output does not certify a safe evacuation route. OpenStreetMap tiles and routing are separate integrations.
+Copy your Standard API key from the [HeiGIT account dashboard](https://account.heigit.org/). Save it in `.env` at the repository root. Git ignores this file.
+
+```dotenv
+Mapping__ApiKey=YOUR_HEIGIT_API_KEY
+```
+
+Restart the local API with `./scripts/Start-Api.ps1`. The script loads the mapping key from `.env` unless a key is already set in the terminal environment.
+
+After restart, refresh Administration → Integration readiness and confirm the mapping card says `Configured`. Search for a public Sri Lankan location such as Colombo Fort to verify the key, then generate a short driving route between public points. Record success or explicit unavailability without private household coordinates. The backend uses the [HeiGIT API endpoints](https://playground.heigit.org/). Driving output does not certify a safe evacuation route. OpenStreetMap tiles and routing are separate integrations.
 
 ## Evidence to complete after account setup
 

@@ -178,6 +178,7 @@ export interface Shelter extends PublicShelter {
   createdAt: string;
 }
 export interface Alert extends Entity {
+  translationsJson?: string;
   crisisId: string;
   title: string;
   message: string;

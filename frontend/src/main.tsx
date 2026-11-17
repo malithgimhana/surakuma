@@ -44,6 +44,7 @@ const StaffOverview = lazy(() =>
 );
 const AdminPage = lazy(() => import('./StaffSupport').then((m) => ({ default: m.AdminPage })));
 const CrisesPage = lazy(() => import('./StaffSupport').then((m) => ({ default: m.CrisesPage })));
+const CrisisOperationsPage = lazy(() => import('./CrisisOperationsPage'));
 const VolunteerPage = lazy(() =>
   import('./StaffSupport').then((m) => ({ default: m.VolunteerPage })),
 );
@@ -152,7 +153,9 @@ function App() {
         }
       >
         <Route index element={<AdminPage />} />
-        <Route path="crises" element={<CrisesPage compactEndedResponses />} />
+        <Route path="cases" element={<CaseQueue />} />
+        <Route path="cases/:id" element={<CaseDetails />} />
+        <Route path="crises" element={<CrisisOperationsPage />} />
         <Route path="resources" element={<AdminLogistics />} />
         <Route path="shelters" element={<ShelterManagement />} />
       </Route>

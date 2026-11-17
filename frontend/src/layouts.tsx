@@ -1,6 +1,6 @@
 import { CountryScope, CountrySelector, useCountry, useCountries } from './geography';
 import { countryAdminCode } from './countryScope';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { get } from './api';
 import { Link, matchPath, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
@@ -32,16 +32,16 @@ import {
 import { Brand, Button } from './components';
 import { landing, useAuth } from './auth';
 import { canViewAdminSection, getAdminSection } from './adminSections';
+import './admin-workspace.css';
 function ThemeToggle() {
   const { t } = useTranslation();
   const [dark, setDark] = useState(() => document.documentElement.dataset.theme === 'dark');
   function toggle() {
-    const next = !dark;
-    setDark(next);
-    if (next) document.documentElement.dataset.theme = 'dark';
-    else delete document.documentElement.dataset.theme;
+    const next = dark ? 'light' : 'dark';
+    setDark(!dark);
+    document.documentElement.dataset.theme = next;
     try {
-      localStorage.setItem('surakuma.theme', next ? 'dark' : 'light');
+      localStorage.setItem('surakuma.theme', next);
     } catch {
       // The selection still works for this page when storage is unavailable.
     }
@@ -183,7 +183,8 @@ export function AppLayout({
   const effectiveMode = mode === 'citizen' && ['/app/notifications', '/app/profile'].includes(location.pathname)
     ? home === '/staff' ? 'staff' : home === '/admin' ? 'admin' : home === '/volunteer' ? 'volunteer' : 'citizen'
     : mode;
-  const fixedCountry = effectiveMode === 'admin' ? countryAdminCode(user) : undefined;
+  const isAdmin = effectiveMode === 'admin';
+  const fixedCountry = isAdmin ? countryAdminCode(user) : undefined;
   const selectedCountry = useCountry();
   const country = fixedCountry ?? selectedCountry;
   const unread = useQuery({
@@ -193,13 +194,28 @@ export function AppLayout({
     refetchInterval: 15000,
   });
   const globalAdmin = !!user?.roles.includes('Administrator');
-  const administrativeAlerts = useQuery({ queryKey: ['admin-alerts-bell', country], enabled: effectiveMode === 'admin', queryFn: () => get<{ id: string; acknowledgedAt?: string; resolvedAt?: string }[]>(`/admin/alerts?countryCode=${country}`), refetchInterval: 60000 });
+  const administrativeAlerts = useQuery({ queryKey: ['admin-alerts-bell', country], enabled: isAdmin, queryFn: () => get<{ id: string; acknowledgedAt?: string; resolvedAt?: string }[]>(`/admin/alerts?countryCode=${country}`), refetchInterval: 60000 });
   const alertCount = Array.isArray(administrativeAlerts.data) ? administrativeAlerts.data.filter(a => !a.acknowledgedAt && !a.resolvedAt).length : 0;
-  const currentAdminSection = effectiveMode === 'admin' && matchPath('/admin', location.pathname)
+  const currentAdminSection = isAdmin && matchPath('/admin', location.pathname)
     ? getAdminSection(new URLSearchParams(location.search).get('section'), globalAdmin)
     : null;
+  const workspaceClass = [
+    'workspace',
+    isAdmin && 'admin-workspace',
+    currentAdminSection === 'overview' && 'admin-overview-shell',
+    matchPath('/admin/crises', location.pathname) && 'crisis-operations-shell',
+  ].filter(Boolean).join(' ');
   const [open, setOpen] = useState(false),
     [logoutError, setLogoutError] = useState(false);
+  const menuToggle = useRef<HTMLButtonElement>(null);
+  const menuDismiss = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (open && isAdmin) menuDismiss.current?.focus();
+  }, [open, isAdmin]);
+  function dismissAdminMenu() {
+    setOpen(false);
+    requestAnimationFrame(() => menuToggle.current?.focus());
+  }
   const citizenNav = [
     ['/app', t('dashboard'), House],
     ['/app/requests', t('myRequests'), ClipboardList],
@@ -229,10 +245,18 @@ export function AppLayout({
           : citizenNav;
   return (
     <CountryScope.Provider value={fixedCountry}>
-    <div className="workspace">
+    <div className={workspaceClass}>
       <a href="#main" className="skip-link">{t('skipMain')}</a>
-      <aside className={`sidebar ${open ? 'open' : ''}`}>
+      <aside className={`sidebar ${open ? 'open' : ''}`} onKeyDown={event => {
+        if (isAdmin && open && event.key === 'Escape') dismissAdminMenu();
+      }}>
         <Brand />
+        {isAdmin && open && (
+          <button type="button" ref={menuDismiss} className="admin-sidebar-dismiss"
+            aria-label={t('closeMenu')} onClick={dismissAdminMenu}>
+            <X size={20} aria-hidden="true" />
+          </button>
+        )}
         <div className="sidebar-caption">
           {effectiveMode === 'citizen'
             ? t('communityTag')
@@ -279,7 +303,7 @@ export function AppLayout({
       </aside>
       <div className="workspace-main">
         <header className="workspace-top">
-          <button className="mobile-menu" aria-label={t(open ? 'closeMenu' : 'menu')} aria-expanded={open} onClick={() => setOpen(!open)}>
+          <button className="mobile-menu" ref={menuToggle} aria-label={t(open ? 'closeMenu' : 'menu')} aria-expanded={open} onClick={() => setOpen(!open)}>
             {open ? <X /> : <Menu />}
           </button>
           <nav className="workspace-page-nav" aria-label="Page navigation">
@@ -299,7 +323,7 @@ export function AppLayout({
           </nav>
           <div className="header-actions">
             <ThemeToggle />
-            <CountrySelector /><Language />
+            <CountrySelector withFlag={isAdmin} /><Language />
             <Link
               to="/app/notifications"
               className="notification-button"
@@ -320,11 +344,17 @@ export function AppLayout({
         </main>
       </div>
       {open && (
-        <button className="sidebar-scrim" aria-label={t('closeMenu')} onClick={() => setOpen(false)} />
+        <button className="sidebar-scrim" aria-label={t('closeMenu')} aria-hidden={isAdmin || undefined}
+          tabIndex={isAdmin ? -1 : undefined} onClick={isAdmin ? dismissAdminMenu : () => setOpen(false)} />
       )}
     </div>
     </CountryScope.Provider>
   );
 }
 
-function CountryOutlet() { const code = useCountry(); return <Outlet key={code} />; }
+function CountryOutlet() {
+  const code = useCountry();
+  const { pathname } = useLocation();
+  // The crisis dashboard keeps its in-memory alert drafts while changing country.
+  return <Outlet key={matchPath('/admin/crises', pathname) || pathname === '/app/profile' ? pathname : code} />;
+}

@@ -28,24 +28,35 @@ public sealed class ProviderTests
     private sealed class CaptureMappingHandler : HttpMessageHandler
     {
         public Uri? Uri { get; private set; }
+        public string? Authorization { get; private set; }
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Uri = request.RequestUri;
+            Authorization = request.Headers.TryGetValues("Authorization", out var values) ? values.Single() : null;
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"features\":[]}", Encoding.UTF8, "application/json") });
         }
     }
     private static IConfiguration Config() => new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Ai:ApiKey"] = "synthetic-test-key", ["Email:Provider"] = "Brevo", ["Email:ApiKey"] = "synthetic-test-key", ["Email:Sender"] = "demo@example.test" }).Build();
-    [Fact]
-    public async Task ReverseGeocodingUsesLatitudeAndLongitudeInProviderRequest()
+    [Theory]
+    [InlineData("search", "/pelias/v1/search?boundary.country=LKA&size=5&text=Fort%20%26%20Pettah")]
+    [InlineData("reverse", "/pelias/v1/reverse?point.lat=6.9271&point.lon=79.8612&size=5")]
+    [InlineData("route", "/openrouteservice/v2/directions/driving-car?start=79.8612,6.9271&end=79.8553,6.9344")]
+    public async Task MappingUsesSupportedHeiGitEndpoints(string operation, string pathAndQuery)
     {
         var handler = new CaptureMappingHandler();
         using var http = new HttpClient(handler);
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Mapping:ApiKey"] = "test-key" }).Build();
-        var result = await new MappingProvider(http, config).ReverseGeocodeAsync(6.9271, 79.8612, default);
+        var maps = new MappingProvider(http, config);
+        var result = await (operation switch
+        {
+            "search" => maps.GeocodeAsync("Fort & Pettah", default),
+            "reverse" => maps.ReverseGeocodeAsync(6.9271, 79.8612, default),
+            "route" => maps.RouteAsync(6.9271, 79.8612, 6.9344, 79.8553, default),
+            _ => throw new ArgumentOutOfRangeException(nameof(operation))
+        });
         Assert.NotNull(result);
-        Assert.Equal("/geocode/reverse", handler.Uri!.AbsolutePath);
-        Assert.Contains("point.lat=6.9271", handler.Uri.Query);
-        Assert.Contains("point.lon=79.8612", handler.Uri.Query);
+        Assert.Equal("https://api.heigit.org" + pathAndQuery, handler.Uri!.AbsoluteUri);
+        Assert.Equal("test-key", handler.Authorization);
     }
     [Fact]
     public async Task ReverseGeocodingWithoutKeyDoesNotContactProvider()

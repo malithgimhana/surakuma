@@ -50,9 +50,12 @@ it('lets an administrator inspect and assign an unassigned request', async () =>
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
     <MemoryRouter initialEntries={['/admin?section=cases']}><AdminPage /></MemoryRouter>
   </QueryClientProvider>);
-  fireEvent.click(await screen.findByText(/SK-TEST/));
-  expect(screen.getByText('Synthetic request')).toBeVisible();
-  const section = screen.getByRole('heading', { name: 'Unassigned requests' }).parentElement!;
+  await screen.findByText('SK-TEST');
+  const summary = screen.getByText('Issue summary');
+  fireEvent.click(summary);
+  expect(within(summary.closest('details')!).getByText('Synthetic request')).toBeVisible();
+  const section = summary.closest('article')!;
+  await within(section).findByRole('option', { name: 'Response centre' });
   fireEvent.change(within(section).getByLabelText('Response centre'), { target: { value: 'centre' } });
   fireEvent.click(within(section).getByRole('button', { name: 'Assign centre' }));
   await waitFor(() => expect(api.request).toHaveBeenCalledWith(expect.objectContaining({ url: '/requests/request/reassign', data: { organisationId: 'centre' } })));

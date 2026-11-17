@@ -48,7 +48,7 @@ function useAlerts() {
 export function AlertCard({ alert }: { alert: Alert }) {
   const { t, i18n } = useTranslation();
   let translations: Record<string,{title:string;message:string}> = {};
-  try { translations = JSON.parse((alert as Alert & {translationsJson?:string}).translationsJson || "{}"); } catch { /* legacy alert */ }
+  try { translations = JSON.parse(alert.translationsJson || "{}"); } catch { /* legacy alert */ }
   return (
     <Card className="alert-card">
       <IconTile

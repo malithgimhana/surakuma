@@ -8,6 +8,7 @@ import { AppLayout } from '../layouts';
 import { AdminPage } from '../StaffSupport';
 
 vi.mock('../api', () => ({ get: vi.fn(), api: { get: vi.fn() }, errorMessage: () => 'Error' }));
+vi.mock('../AdminCrisisMap', () => ({ default: () => null }));
 vi.mock('../auth', () => {
   const auth = { user: { id: 'admin', name: 'Admin', roles: ['Administrator'], memberships: [] }, logout: vi.fn() };
   return { useAuth: () => auth, useOptionalAuth: () => auth, landing: () => '/admin' };
@@ -77,7 +78,12 @@ it('shows crisis-filtered cards on Overview and keeps report details in Reports'
       } as never;
     }
     if (path.startsWith('/admin/reports/filters')) return reportFilters as never;
-    if (path === '/crises?countryCode=LK') return [{ id: 'flood', name: 'Flood response' }] as never;
+    if (path === '/crises?countryCode=LK') return [{ id: 'flood', name: 'Flood response', active: true }] as never;
+    if (path.startsWith('/admin/system')) return { integrations: [], notificationQueue: [] } as never;
+    if (path.startsWith('/admin/overview')) return {
+      stock: { belowThreshold: 1, outOfStock: 0 }, shelters: { openShelters: 1, capacity: 100, reserved: 10, occupancy: 20, available: 70 },
+      partnerVerification: { count: 1 }, systemAccess: { count: 2 },
+    } as never;
     if (path === '/public/lookups') return { organisations: [], crises: [] } as never;
     return [] as never;
   });
@@ -89,13 +95,15 @@ it('shows crisis-filtered cards on Overview and keeps report details in Reports'
 
   const figures = within(await screen.findByRole('list', { name: 'Response figures' }));
   expect(figures.getAllByRole('listitem')).toHaveLength(5);
-  const crises = figures.getByRole('link', { name: /active crises.*needs attention/i });
-  const unassigned = figures.getByRole('link', { name: /unassigned cases.*needs attention/i });
+  const crises = figures.getByRole('link', { name: /^active crises/i });
+  await waitFor(() => expect(crises.querySelector('strong')).toHaveTextContent('1'));
+  const unassigned = await figures.findByRole('link', { name: /unassigned cases.*needs attention/i });
   expect(crises).toHaveAttribute('href', '/admin/crises');
   expect(unassigned).toHaveAttribute('href', '/admin?section=cases');
-  expect(crises).toHaveClass('needs-attention');
-  expect(unassigned).toHaveClass('needs-attention');
-  expect(screen.queryByRole('heading', { name: 'Unassigned requests' })).not.toBeInTheDocument();
+  expect(unassigned.closest('li')).toHaveAttribute('data-tone', 'red');
+  expect(await screen.findByText('70%')).toBeVisible();
+  expect(screen.getByRole('link', { name: /2 pending system administrator access requests/i })).toHaveAttribute('href', '/admin?section=users#system-administrator-requests');
+  expect(screen.queryByRole('heading', { name: 'Assignment queue' })).not.toBeInTheDocument();
   expect(get).not.toHaveBeenCalledWith('/requests/triage');
   expect(figures.getByText('Open cases').closest('li')).toHaveTextContent('5');
   expect(screen.queryByText(/Current snapshot for|Snapshot generated/)).not.toBeInTheDocument();
@@ -108,16 +116,17 @@ it('shows crisis-filtered cards on Overview and keeps report details in Reports'
 
   await screen.findByRole('option', { name: 'Flood response' });
   fireEvent.change(screen.getByRole('combobox', { name: 'Crisis' }), { target: { value: 'flood' } });
-  const filteredFigures = within(await screen.findByRole('list', { name: 'Response figures' }));
-  expect(filteredFigures.getByText('Open cases').closest('li')).toHaveTextContent('2');
-  expect(filteredFigures.getByRole('link', { name: /active crises/i })).not.toHaveClass('needs-attention');
+  const filteredFigures = within(screen.getByRole('list', { name: 'Response figures' }));
+  await waitFor(() => expect(filteredFigures.getByText('Open cases').closest('li')).toHaveTextContent('2'));
+  expect(filteredFigures.getByRole('link', { name: /overdue cases/i })).toHaveAttribute('href', '/admin/cases?view=overdue&country=LK&crisisId=flood');
   const filteredUnassigned = filteredFigures.getByRole('link', { name: /unassigned cases/i });
-  expect(filteredUnassigned).not.toHaveClass('needs-attention');
+  expect(filteredUnassigned).not.toHaveTextContent('Needs attention');
+  expect(screen.getByRole('link', { name: /2 pending system administrator access requests/i })).toBeVisible();
 
   fireEvent.click(filteredUnassigned);
-  expect(await screen.findByRole('heading', { name: 'Unassigned requests' })).toBeVisible();
-  expect(await screen.findByText('No requests are waiting for assignment.')).toBeVisible();
-  expect(get).toHaveBeenCalledWith('/requests/triage');
+  expect(await screen.findByRole('heading', { name: 'Assignment queue' })).toBeVisible();
+  expect(await screen.findByText('No requests are waiting for assignment with these filters.')).toBeVisible();
+  expect(get).toHaveBeenCalledWith('/requests/triage?crisisId=flood');
 
   const nav = within(screen.getByRole('navigation', { name: 'Workspace navigation' }));
   fireEvent.click(nav.getByRole('link', { name: 'Reports' }));

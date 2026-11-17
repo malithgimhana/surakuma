@@ -96,14 +96,15 @@ public sealed class InternationalEndpointTests(ApiFixture fixture) : IClassFixtu
         using var staff = await fixture.Login("logistics");
         Assert.Equal(HttpStatusCode.OK, (await staff.GetAsync($"/api/v1/crises/{np}/areas")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await staff.GetAsync($"/api/v1/crises/{india}/areas")).StatusCode);
-        var alert = await staff.PostAsJsonAsync("/api/v1/alerts", new { crisisId = np, title = "Safety update", message = "Follow local authorised guidance", expiresAt = DateTimeOffset.UtcNow.AddDays(1), published = true });
-        Assert.Equal(HttpStatusCode.OK, alert.StatusCode);
-        // English-only publication is valid under Nepal's default policy, without Sinhala/Tamil.
+        var alert = new { crisisId = np, title = "Safety update", message = "Follow local authorised guidance",
+            area = "Local district", authority = "Local coordination team", expiresAt = DateTimeOffset.UtcNow.AddDays(1), published = true };
+        Assert.Equal(HttpStatusCode.BadRequest, (await staff.PostAsJsonAsync("/api/v1/alerts", alert)).StatusCode);
+        // A country policy change takes effect immediately for the existing coordinator session.
         var contacts = new[] { new { label = "Police emergency", number = "100", sourceUrl = "https://ncb.nepalpolice.gov.np/safety-and-security/" } };
-        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsJsonAsync("/api/v1/countries/NP/services", new { languages = "en,ne", requiredAlertLanguages = "en,ne", contacts })).StatusCode);
-        Assert.Equal(HttpStatusCode.BadRequest, (await staff.PostAsJsonAsync("/api/v1/alerts", new { crisisId = np, title = "Safety update", message = "Follow guidance", expiresAt = DateTimeOffset.UtcNow.AddDays(1), published = true })).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await staff.PostAsJsonAsync("/api/v1/alerts", new { crisisId = np, title = "Safety update", message = "Follow guidance", translationsJson = "{\"ne\":{\"title\":\"सूचना\",\"message\":\"सुरक्षित रहनुहोस्\"}}", expiresAt = DateTimeOffset.UtcNow.AddDays(1), published = true })).StatusCode);
         (await admin.PutAsJsonAsync("/api/v1/countries/NP/services", new { languages = "en,ne", requiredAlertLanguages = "en", contacts })).EnsureSuccessStatusCode();
+        Assert.Equal(HttpStatusCode.OK, (await staff.PostAsJsonAsync("/api/v1/alerts", alert)).StatusCode);
+        (await admin.PutAsJsonAsync("/api/v1/countries/NP/services", new { languages = "en,ne", requiredAlertLanguages = "en,ne", contacts })).EnsureSuccessStatusCode();
+        Assert.Equal(HttpStatusCode.BadRequest, (await staff.PostAsJsonAsync("/api/v1/alerts", alert)).StatusCode);
         Guid membershipId;
         using (var scope = fixture.Factory.Services.CreateScope())
         {

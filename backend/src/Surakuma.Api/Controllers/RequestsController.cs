@@ -18,9 +18,12 @@ public sealed class RequestsController(Operations operations, AccessService acce
             id = r.Id
         }, r);
     }
-    [HttpGet] public Task<Page<AssistanceRequest>> List(string? status, string? search, CancellationToken ct, int page = 1, bool assignedToMe = false) => operations.Requests(false, status, search, page, ct, assignedToMe);
+    [HttpGet]
+    public Task<Page<AssistanceRequest>> List(string? status, string? search, CancellationToken ct, int page = 1,
+        bool assignedToMe = false, string? view = null, Guid? crisisId = null) =>
+        operations.Requests(false, status, search, page, ct, assignedToMe, view, crisisId);
     [HttpGet("mine")] public Task<Page<AssistanceRequest>> Mine(string? status, string? search, CancellationToken ct, int page = 1) => operations.Requests(true, status, search, page, ct);
-    [HttpGet("triage")] public Task<List<AssistanceRequest>> Triage(CancellationToken ct) => operations.Triage(ct);
+    [HttpGet("triage")] public Task<List<AssistanceRequest>> Triage(CancellationToken ct, Guid? crisisId = null) => operations.Triage(ct, crisisId);
     [HttpGet("escalated")] public Task<List<AssistanceRequest>> Escalated(CancellationToken ct) => operations.EscalatedRequests(ct);
     [HttpPost("{id:guid}/reassign")] public Task<AssistanceRequest> Reassign(Guid id, ShareInput input, CancellationToken ct) => operations.Reassign(id, input.OrganisationId, ct);
     [HttpPost("{id:guid}/case-manager")] public Task<AssistanceRequest> AssignManager(Guid id, CaseManagerInput input, CancellationToken ct) => operations.AssignManager(id, input.UserId, ct);

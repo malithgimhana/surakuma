@@ -3116,54 +3116,6 @@ dl {
 .crisis-location-action { display: flex; flex-direction: column; align-items: flex-start; gap: 0.4rem; }
 .admin-workspace [hidden] { display: none !important; }
 .admin-workspace > div:not([hidden]) + div:not([hidden]) { margin-top: 24px; }
-.admin-overview-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-bottom: 24px; }
-.admin-overview-grid > .card + .card { margin-top: 0; }
-.admin-overview-card { display: flex; flex-direction: column; gap: 8px; color: var(--navy); text-decoration: none; }
-.admin-overview-card strong { font-size: 1.65rem; }
-.admin-overview-card small { color: var(--blue); }
-.admin-snapshot-metrics {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 134px), 1fr));
-  gap: 12px;
-  margin: 16px 0 0;
-  padding: 0;
-  list-style: none;
-}
-.admin-snapshot-metric {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  height: 100%;
-  padding: 14px 16px;
-  border: 1px solid var(--border);
-  border-radius: 15px;
-  background: #f8fafd;
-}
-[data-theme='dark'] .admin-snapshot-metric { background: #233348; }
-.admin-snapshot-metric > span { font-weight: 500; }
-.admin-snapshot-metric strong {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 1.65rem;
-  line-height: 1.2;
-  font-variant-numeric: tabular-nums;
-}
-.admin-snapshot-metric small { color: var(--blue); }
-a.admin-snapshot-metric:hover { border-color: var(--blue); }
-.admin-snapshot-metric.needs-attention {
-  --snapshot-alert-ink: #a32c28;
-  background: #ffe9e5;
-  border-color: #dc817a;
-  color: var(--snapshot-alert-ink);
-}
-[data-theme='dark'] .admin-snapshot-metric.needs-attention {
-  --snapshot-alert-ink: #ffada3;
-  background: #3a2229;
-  border-color: #b65e59;
-}
-.admin-snapshot-metric.needs-attention small { color: var(--snapshot-alert-ink); }
-a.admin-snapshot-metric.needs-attention:hover { border-color: var(--snapshot-alert-ink); }
 .organisation-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -3685,8 +3637,8 @@ a.admin-snapshot-metric.needs-attention:hover { border-color: var(--snapshot-ale
 @media (max-width: 600px) {
   .delivery-search-action { width: 100%; }
 }
-@media (max-width: 900px) { .admin-overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .admin-users-toolbar { flex-wrap: wrap; } }
-@media (max-width: 600px) { .admin-overview-grid { grid-template-columns: 1fr; } .admin-users-toolbar { flex-direction: column; align-items: stretch; } .admin-users-toolbar input, .admin-users-toolbar select { flex: auto; width: 100%; } .admin-users-toolbar .button { margin-left: 0; } }
+@media (max-width: 900px) { .admin-users-toolbar { flex-wrap: wrap; } }
+@media (max-width: 600px) { .admin-users-toolbar { flex-direction: column; align-items: stretch; } .admin-users-toolbar input, .admin-users-toolbar select { flex: auto; width: 100%; } .admin-users-toolbar .button { margin-left: 0; } }
 
 .notification-count { background: #b52238; color: white; border-radius: 12px; padding: 1px 6px; font-size: 11px; font-weight: 700; }
 

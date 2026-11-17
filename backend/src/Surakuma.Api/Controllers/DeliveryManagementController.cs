@@ -11,10 +11,10 @@ public sealed class DeliveryManagementController(CrisisDbContext db, AccessServi
     public sealed record RecoveryInput(string Action, string Reason, bool ConfirmedNotDelivered, string? ProviderReference);
     async Task Global(CancellationToken ct) { if (!await access.IsAdmin(ct)) throw new AccessDeniedException(); }
     [HttpGet]
-    public async Task<object> List(CancellationToken ct, string? state = null, string? countryCode = null, DateTimeOffset? from = null, DateTimeOffset? to = null, int page = 1)
+    public async Task<object> List(CancellationToken ct, string? state = null, string? countryCode = null, DateTimeOffset? from = null, DateTimeOffset? to = null, int page = 1, Guid? id = null)
     {
         await Global(ct); page = Math.Max(page, 1);
-        var query = db.DeliveriesInCountry(countryCode).Where(m => (state == null || m.State == state) && (from == null || m.CreatedAt >= from) && (to == null || m.CreatedAt < to));
+        var query = db.DeliveriesInCountry(countryCode).Where(m => (id == null || m.Id == id) && (state == null || m.State == state) && (from == null || m.CreatedAt >= from) && (to == null || m.CreatedAt < to));
         return new { total = await query.CountAsync(ct), items = await query.OrderByDescending(m => m.CreatedAt).Skip((page - 1) * 20).Take(20).Select(m => new { m.Id, m.Message, m.State, m.Attempts, m.LastError, m.CreatedAt, m.Version, History = db.Set<DeliveryAttempt>().Where(a => a.EventId == m.Id).OrderBy(a => a.Number).ToList(), ProviderReference = db.Set<NotificationDelivery>().Where(d => d.EventId == m.Id).Select(d => d.ProviderReference).FirstOrDefault() }).ToListAsync(ct) };
     }
     [HttpPost("{id:guid}")]

@@ -199,9 +199,25 @@ test('real three-country submission, scoped triage, allocation and delivery', as
   await admin.locator('input[name=password]').fill(password);
   await admin.getByRole('button', { name: 'Log in', exact: true }).click();
   await admin.waitForURL('**/admin');
-  await expect(admin.getByRole('heading', { name: 'Humanitarian response overview' })).toBeVisible();
+  await expect(admin.getByRole('heading', { name: 'System Administration' })).toBeVisible();
   await expect(admin.getByRole('combobox', { name: 'Country', exact: true })).toHaveValue('LK');
-  await expect(admin.getByRole('list', { name: 'Response figures' })).toBeVisible();
+  const overviewCountry = admin.getByRole('combobox', { name: 'Country', exact: true });
+  const overviewMetrics = admin.getByRole('list', { name: 'Response figures' }).locator('strong');
+  const distribution = admin.getByRole('region', { name: /Crisis distribution/ });
+  const overviewTable = admin.getByRole('table', { name: 'Country operations overview' });
+  for (const code of ['LK', 'NP', 'IN']) {
+    await overviewCountry.selectOption(code);
+    const report = await (await request.get(`${api}/admin/reports?scope=country&countryCode=${code}`, { headers })).json();
+    await expect(overviewMetrics).toHaveText(['activeCrises', 'open', 'unassigned', 'overdue', 'resolved'].map(key => String(report.totals[key])));
+    await expect(distribution.getByRole('link', { name: new RegExp(`Acceptance ${code}`) })).toBeVisible();
+    for (const other of ['LK', 'NP', 'IN'].filter(country => country !== code))
+      await expect(distribution.getByRole('link', { name: new RegExp(`Acceptance ${other}`) })).toHaveCount(0);
+    await expect(overviewTable.getByRole('row')).toHaveCount(4);
+  }
+  await overviewCountry.selectOption('LK');
+  await expect(distribution.getByRole('link', { name: /Acceptance LK/ })).toBeVisible();
+  await expect(admin.locator('.overview-crisis-map .leaflet-interactive').first()).toBeVisible();
+  await expect(admin.getByText(/Last updated/)).toBeVisible();
   await admin.screenshot({ path: test.info().outputPath('administration-overview.png'), fullPage: true });
   await admin.goto('http://127.0.0.1:5192/admin?section=reports');
   await expect(admin.getByRole('heading', { name: 'Operational reports' })).toBeVisible();
@@ -253,6 +269,9 @@ test('country administrator sees only authorised reporting and cannot verify par
   await expect(page.getByRole('combobox', { name: 'Country', exact: true })).toHaveCount(0);
   await expect(page.locator('.workspace-country')).toHaveText('Country Sri Lanka');
   await expect(page.getByRole('list', { name: 'Response figures' })).toBeVisible();
+  const overview = page.getByRole('table', { name: 'Country operations overview' });
+  await expect(overview.getByRole('rowheader')).toHaveCount(1);
+  await expect(overview.getByRole('rowheader')).toContainText('Sri Lanka');
   await page.goto('http://127.0.0.1:5192/admin?section=users');
   await expect(page.getByRole('row', { name: /national@acceptance\.test/ })).toBeVisible();
   await expect(page.getByRole('row', { name: /citizen@surakuma\.test/ })).toContainText('View only');

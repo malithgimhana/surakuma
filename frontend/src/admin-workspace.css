@@ -1,0 +1,89 @@
+.admin-workspace {
+  --admin-surface: #fff;
+  --admin-raised: #f0f5fc;
+  --admin-border: #ccd9e9;
+  --admin-ink: #111f33;
+  --admin-muted: #465b73;
+  --admin-link: #0758a9;
+  --admin-selected: #e1edfc;
+  --admin-red: #992838;
+  --admin-green: #126644;
+  --admin-green-bg: #e0f5ea;
+}
+
+[data-theme='dark'] .admin-workspace {
+  --admin-surface: #121f32;
+  --admin-raised: #182940;
+  --admin-border: #2a405b;
+  --admin-ink: #f0f5fd;
+  --admin-muted: #afc0d6;
+  --admin-link: #8acbff;
+  --admin-selected: #1a3658;
+  --admin-red: #ff969c;
+  --admin-green: #70e7ac;
+  --admin-green-bg: #13362e;
+}
+
+.admin-workspace .workspace-main { min-width: 0; }
+.admin-workspace .sidebar,
+.admin-workspace .workspace-top { background: var(--admin-surface); border-color: var(--admin-border); }
+.admin-workspace .sidebar { padding-top: 16px; }
+.admin-workspace .sidebar-caption { color: var(--admin-muted); margin-block: 23px 12px; }
+.admin-workspace .sidebar nav { gap: 3px; }
+.admin-workspace .sidebar nav a { color: var(--admin-ink); min-height: 39px; padding-block: 8px; }
+.admin-workspace .sidebar nav a svg { width: 17px; height: 17px; }
+.admin-workspace .sidebar nav a:hover,
+.admin-workspace .sidebar nav a.active { background: var(--admin-selected); color: var(--admin-link); }
+.admin-workspace .sidebar-bottom { padding-top: 20px; }
+.admin-workspace .care-note { background: var(--admin-green-bg); color: var(--admin-green); padding: 14px 10px; }
+.admin-workspace .logout { color: var(--admin-red); }
+.admin-workspace .workspace-top { min-height: 57px; padding-block: 6px; }
+.admin-workspace .workspace-top .workspace-page-nav { color: var(--admin-ink); border-color: var(--admin-border); }
+.admin-workspace .workspace-top .workspace-page-nav a { background: var(--admin-raised); border-color: var(--admin-border); }
+.admin-workspace .workspace-top .workspace-page-nav > :hover:not(:disabled) { background: var(--admin-selected); }
+.admin-workspace .workspace-page-nav > * { min-height: 36px; }
+.admin-workspace :is(.brand, .brand small, .workspace-top :is(select, .user-meta small, .theme-toggle, .notification-button, .mobile-menu)) {
+  color: var(--admin-ink);
+}
+.admin-workspace :is(.theme-toggle:hover, .mobile-menu) { background: var(--admin-raised); }
+.admin-workspace .workspace-top select option { background: var(--admin-surface); }
+.admin-workspace .country-selector-with-flag { display: flex; align-items: center; gap: 6px; width: 118px; }
+.admin-workspace .country-selector-with-flag select { flex: 1; min-width: 0; }
+.admin-workspace .workspace-country { display: inline-flex; align-items: center; gap: 6px; }
+.admin-workspace .workspace-country-flag { width: 20px; height: 15px; border-radius: 2px; object-fit: contain; flex: none; }
+.admin-workspace .admin-sidebar-dismiss { display: none; }
+
+.admin-workspace :is(.sidebar, .workspace-top) :is(a, button, select):focus-visible {
+  outline: 2px solid var(--admin-link);
+  outline-offset: 2px;
+}
+
+@media (min-width: 851px) {
+  .admin-workspace { --admin-sidebar-width: 207px; }
+  .admin-workspace .sidebar { width: var(--admin-sidebar-width); padding-inline: 15px; }
+  .admin-workspace .workspace-main { margin-left: var(--admin-sidebar-width); width: calc(100% - var(--admin-sidebar-width)); }
+  .admin-workspace .workspace-top { padding-inline: 25px; }
+}
+
+@media (max-width: 850px) {
+  .admin-workspace .sidebar:not(.open) { visibility: hidden; }
+  .admin-workspace:has(.sidebar.open) .workspace-top .mobile-menu { visibility: hidden; }
+  .admin-workspace .admin-sidebar-dismiss {
+    position: absolute;
+    inset: 16px 12px auto auto;
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    color: var(--admin-ink);
+    background: var(--admin-raised);
+    border: 1px solid var(--admin-border);
+    border-radius: 9px;
+    cursor: pointer;
+  }
+}
+
+@media (max-width: 615px) {
+  .admin-workspace .workspace-top .header-actions { max-width: 100%; margin-inline-start: 0; }
+  .admin-workspace .workspace-top .country-selector-with-flag { max-width: 110px; }
+}

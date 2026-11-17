@@ -1,7 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { AlertCircle, Ban, ChevronDown, CirclePause, CirclePlay, Mail, Trash2, UserMinus } from 'lucide-react';
+import { Ban, Bell, BookOpen, ChartNoAxesCombined, ChevronDown, CircleCheck, CirclePause, CirclePlay, Mail, Trash2, TriangleAlert, UserMinus } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
@@ -9,7 +9,9 @@ import { Link } from 'react-router-dom';
 import { api, errorMessage, get } from './api';
 import { useOptionalAuth } from './auth';
 import { useCountry } from './geography';
-import { Button, Card, ErrorState, Field, Loading, PageHeader, formatDate } from './components';
+import { Badge, Button, Card, ErrorState, Field, Loading, PageHeader, formatDate } from './components';
+import { AdminMetrics, AdminPagination, AdminPanelHeading, AdminScopeField, AdminTimestamp, ResetAdminFilters, startOfAdminDay, useAdminTabScope } from './AdminTabUi';
+import type { Page } from './types';
 
 function useAction() {
   const client = useQueryClient();
@@ -363,94 +365,6 @@ export function PartnerVerification({
     </div>
   );
 }
-interface ReportRow {
-  countryCode: string;
-  country: string;
-  activeCrises: number;
-  open: number;
-  unassigned: number;
-  overdue: number;
-  resolved: number;
-}
-function ResponseSnapshot({ row }: { row?: ReportRow }) {
-  if (!row) return <p className="muted">No response figures are available for the selected country.</p>;
-
-  const metrics = [
-    { label: 'Active crises', count: row.activeCrises, to: '/admin/crises', action: 'View crisis operations', flagNonzero: true },
-    { label: 'Open cases', count: row.open },
-    { label: 'Unassigned cases', count: row.unassigned, to: '/admin?section=cases', action: 'Review requests', flagNonzero: true },
-    { label: 'Overdue cases', count: row.overdue },
-    { label: 'Resolved cases', count: row.resolved },
-  ];
-
-  return (
-    <ul className="admin-snapshot-metrics" aria-label="Response figures">
-      {metrics.map(({ label, count, to, action, flagNonzero }) => {
-        const attention = flagNonzero && count > 0;
-        const contents = (
-          <>
-            <span>{label}</span>
-            <strong>
-              {count}
-              {attention && (
-                <>
-                  <AlertCircle size={18} aria-hidden="true" />
-                  <span className="sr-only">Needs attention</span>
-                </>
-              )}
-            </strong>
-          </>
-        );
-        return (
-          <li key={label}>
-            {to ? (
-              <Link to={to} className={attention ? 'admin-snapshot-metric needs-attention' : 'admin-snapshot-metric'}>
-                {contents}
-                <small>{action} <span aria-hidden="true">→</span></small>
-              </Link>
-            ) : (
-              <div className="admin-snapshot-metric">{contents}</div>
-            )}
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
-
-export function AdministrationOverview() {
-  const country = useCountry();
-  const [selectedCrisis, setSelectedCrisis] = useState({ country, id: '' });
-  const crisisId = selectedCrisis.country === country ? selectedCrisis.id : '';
-  const params = new URLSearchParams({ scope: 'country', countryCode: country });
-  if (crisisId) params.set('crisisId', crisisId);
-  const query = useQuery({
-    queryKey: ['admin-report', params.toString()],
-    queryFn: () => get<{ countries: ReportRow[] }>(`/admin/reports?${params}`),
-  });
-  const crises = useQuery({
-    queryKey: ['report-crises', country],
-    queryFn: () => get<{ id: string; name: string }[]>(`/crises?countryCode=${country}`),
-  });
-
-  return (
-    <Card>
-      <h2>Humanitarian response overview</h2>
-      <div className="form-grid">
-        <Field label="Crisis">
-          <select value={crisisId} onChange={(event) => setSelectedCrisis({ country, id: event.target.value })}>
-            <option value="">All crises</option>
-            {crises.data?.map((crisis) => <option key={crisis.id} value={crisis.id}>{crisis.name}</option>)}
-          </select>
-        </Field>
-      </div>
-      {query.isPending ? <Loading /> : query.error ? <ErrorState error={query.error} /> : (
-        <ResponseSnapshot row={query.data?.countries?.find(row => row.countryCode === country)} />
-      )}
-    </Card>
-  );
-}
-
 interface Proposal {
   id: string;
   state: string;
@@ -545,60 +459,142 @@ export function SystemAdministratorRequests() {
 }
 interface Alert {
   id: string;
+  conditionKey: string;
   message: string;
   countryCode?: string;
   link: string;
   acknowledgedAt?: string;
   resolvedAt?: string;
   createdAt: string;
+  updatedAt: string;
 }
-export function AdministratorAlerts() {
-  const country = useCountry();
-  const q = useQuery({
-      queryKey: ['admin-alerts-bell', country],
-      queryFn: () => get<Alert[]>(`/admin/alerts?countryCode=${country}`),
-      refetchInterval: 60000,
-    }),
-    action = useAction();
+interface AlertRow {
+  alert: Alert;
+  type: string;
+  request: { id: string; reference: string; locationText: string; category: string; priority: string; manager: string | null } | null;
+}
+interface AlertPage extends Page<AlertRow> {
+  summary: { active: number; unacknowledged: number; acknowledged: number; resolvedToday: number } | null;
+  trends: { type: string; count: number; resolved: number }[];
+}
+const alertTypes: Record<string, string> = { Assignment: 'Assignment issue', Delivery: 'Delivery issue', Access: 'Access issue', Provider: 'Provider issue', Other: 'Other alert' };
+const initialAlertFilters = { type: '', status: '', days: '', search: '' };
+export function AdministratorAlerts({ globalAdmin }: { globalAdmin: boolean }) {
+  const selection = useAdminTabScope(globalAdmin);
+  const [filters, setFilters] = useState(initialAlertFilters);
+  const [page, setPage] = useState(1);
+  const [sort, setSort] = useState('newest');
+  const [search, setSearch] = useState('');
+  useEffect(() => {
+    if (search === filters.search.trim()) return;
+    const timer = window.setTimeout(() => { setSearch(filters.search.trim()); setPage(1); }, 250);
+    return () => window.clearTimeout(timer);
+  }, [filters.search, search]);
+  const today = startOfAdminDay();
+  const params = new URLSearchParams({ countryCode: selection.scope, dashboard: 'true',
+    today, page: String(page), newestFirst: String(sort === 'newest') });
+  if (filters.type) params.set('type', filters.type);
+  if (filters.status) params.set('status', filters.status);
+  if (filters.days) params.set('from', new Date(Date.parse(today) - (Number(filters.days) - 1) * 86_400_000).toISOString());
+  if (search) params.set('search', search);
+  const q = useQuery({ queryKey: ['admin-alert-queue', params.toString()],
+    queryFn: async () => {
+      const result = await get<AlertPage>(`/admin/alerts?${params}`);
+      if (!Array.isArray(result?.items) || !Array.isArray(result?.trends)) throw new Error('The API needs to be restarted to load the alert queue.');
+      return result;
+    }, refetchInterval: 60_000 });
+  const action = useAction();
+  const summary = q.isSuccess ? (q.data.summary ?? { active: 0, unacknowledged: 0, acknowledged: 0, resolvedToday: 0 }) : undefined;
+  const total = q.data?.trends.reduce((sum, trend) => sum + trend.count, 0) ?? 0;
+  const resolved = q.data?.trends.reduce((sum, trend) => sum + trend.resolved, 0) ?? 0;
+  const percent = (count: number) => total ? Math.round(100 * count / total) : 0;
+  const change = (name: keyof typeof filters, value: string) => { setFilters({ ...filters, [name]: value }); if (name !== 'search') setPage(1); };
   return (
-    <>
-      <PageHeader
-        title="Administrator alerts"
-        description="Follow up on assignment delays, delivery failures and access issues."
-      />
-      {q.isPending ? (
-        <Loading />
-      ) : q.error ? (
-        <ErrorState error={q.error} />
-      ) : !q.data?.length ? (
-        <Card>No administrator alerts.</Card>
-      ) : (
-        q.data.map((a) => (
-          <Card key={a.id}>
-            <h3>{a.message}</h3>
-            <p>
-              {a.resolvedAt
-                ? 'Resolved'
-                : a.acknowledgedAt
-                  ? 'Acknowledged — still active'
-                  : 'Needs attention'}{' '}
-              · {a.countryCode || 'Global'} · {formatDate(a.createdAt)}
-            </p>
-            <Link to={a.link}>Review issue</Link>
-            {!a.acknowledgedAt && !a.resolvedAt && (
-              <Button
-                type="button"
-                disabled={action.isPending}
-                onClick={() => action.mutate({ path: `/admin/alerts/${a.id}/acknowledge` })}
-              >
-                Acknowledge
-              </Button>
-            )}
+    <div className="admin-tab">
+      <PageHeader title="Administrator alerts" description="Follow up on assignment delays, delivery failures, and access issues." />
+      <div className="admin-tab-with-rail">
+        <div className="admin-tab-stack">
+          <AdminMetrics items={[
+            { label: 'Active alerts', value: summary?.active, icon: Bell },
+            { label: 'Unacknowledged', value: summary?.unacknowledged, icon: TriangleAlert, tone: 'coral' },
+            { label: 'Acknowledged (active)', value: summary?.acknowledged, icon: CircleCheck },
+            { label: 'Resolved today', value: summary?.resolvedToday, icon: CircleCheck, tone: 'green' },
+          ]} />
+          <Card className="admin-tab-filters">
+            <AdminScopeField selection={selection} onChange={() => setPage(1)} />
+            <Field label="Alert type"><select value={filters.type} onChange={e => change('type', e.target.value)}>
+              <option value="">All types</option>{Object.entries(alertTypes).map(([type, label]) => <option value={type} key={type}>{label}</option>)}
+            </select></Field>
+            <Field label="Status"><select value={filters.status} onChange={e => change('status', e.target.value)}>
+              <option value="">All statuses</option>{['Active', 'Unacknowledged', 'Acknowledged', 'Resolved'].map(status => <option key={status}>{status}</option>)}
+            </select></Field>
+            <Field label="Date range"><select value={filters.days} onChange={e => change('days', e.target.value)}>
+              <option value="">Any date</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option>
+            </select></Field>
+            <Field label="Search alerts"><input placeholder="Case ID or alert message" type="search" value={filters.search} onChange={e => change('search', e.target.value)} /></Field>
+            <ResetAdminFilters onClick={() => { selection.setScope(selection.country); setFilters(initialAlertFilters); setSearch(''); setPage(1); }} />
           </Card>
-        ))
-      )}
-      <Outcome action={action} />
-    </>
+          <Card className="admin-tab-stack">
+            <div className="admin-tab-section-bar">
+              <h2>Alert queue</h2>
+              {q.isSuccess && <small className="muted" role="status">Showing {q.data.items.length} of {q.data.total} matching alerts</small>}
+              <Field label="Sort by"><select value={sort} onChange={e => { setSort(e.target.value); setPage(1); }}>
+                <option value="newest">Created time (newest)</option><option value="oldest">Created time (oldest)</option>
+              </select></Field>
+            </div>
+            <small className="muted">Dates and times use Sri Lanka time (UTC+05:30).</small>
+            <Outcome action={action} />
+            {q.isPending ? <Loading /> : q.error ? <ErrorState error={q.error} retry={() => void q.refetch()} /> : q.data.items.length ? <>
+              <div className="admin-tab-queue">{q.data.items.map(({ alert: a, type, request }) => {
+                const status = a.resolvedAt ? 'Resolved' : a.acknowledgedAt ? 'Acknowledged' : 'Unacknowledged';
+                const openCountry = () => { if (a.countryCode && selection.country !== a.countryCode) selection.setScope(a.countryCode); };
+                const casePath = request ? `/admin/cases/${request.id}?source=triage` : undefined;
+                const deliveryId = type === 'Delivery' ? a.conditionKey.slice('delivery:'.length) : '';
+                const reviewPath = request && a.link === '/admin?section=cases' ? (a.resolvedAt ? casePath : `${a.link}&reference=${encodeURIComponent(request.reference)}`) :
+                  deliveryId ? `/admin?section=activity&view=delivery&deliveryId=${encodeURIComponent(deliveryId)}#delivery-recovery`
+                    : casePath && a.link === `/staff/cases/${request?.id}` ? casePath : a.link;
+                return <article className={`admin-tab-row admin-tab-alert-row${a.resolvedAt ? ' resolved' : ''}`} key={a.id}>
+                  <div><div className="admin-tab-inline"><strong>{request?.reference ?? alertTypes[type]}</strong>
+                    {request?.priority && <Badge value={request.priority} />}</div><p>{a.message}</p></div>
+                  <div><span className={`badge ${a.resolvedAt ? 'green' : a.acknowledgedAt ? 'blue' : 'red'}`}>{status}</span>
+                    <small>{a.countryCode ? selection.options.find(c => c.code === a.countryCode)?.name ?? a.countryCode : 'Global'}</small>
+                    {request?.locationText && <small>{request.locationText}</small>}</div>
+                  <div><small>Trigger type</small><strong>{alertTypes[type]}</strong>
+                    {request?.category && <small>{request.category === 'FoodWater' ? 'Food & water' : request.category}</small>}</div>
+                  <div><small>Created</small><AdminTimestamp value={a.createdAt} /><small>Last updated</small><AdminTimestamp value={a.updatedAt} /></div>
+                  {request && <div><small>Case manager</small><strong>{request.manager || 'Unassigned'}</strong></div>}
+                  <div className="admin-tab-row-actions">
+                    {!a.acknowledgedAt && !a.resolvedAt && <Button type="button" disabled={action.isPending}
+                      busy={action.isPending && action.variables?.path === `/admin/alerts/${a.id}/acknowledge`}
+                      onClick={() => action.mutate({ path: `/admin/alerts/${a.id}/acknowledge` })}>Acknowledge</Button>}
+                    {reviewPath && reviewPath !== casePath && <Link to={reviewPath} onClick={openCountry}>Review issue</Link>}
+                    {casePath && <Link to={casePath} onClick={openCountry}>Open case</Link>}
+                  </div>
+                </article>;
+              })}</div>
+              {q.data.total > q.data.pageSize && <AdminPagination label="Alert queue pages" page={q.data.pageNumber} total={q.data.total} size={q.data.pageSize} setPage={setPage} />}
+            </> : <p className="muted">No administrator alerts match these filters.</p>}
+          </Card>
+        </div>
+        <aside className="admin-tab-stack">
+          <Card>
+            <AdminPanelHeading icon={BookOpen} title="Escalation guidance" />
+            <p className="muted">Review the underlying issue before escalating to the responsible team.</p>
+            <div className="admin-tab-callout"><strong>When to follow up</strong><p>Prioritise delays on critical cases, repeated delivery failures, and repeated denied administrator actions. Acknowledging an alert leaves it active until its condition clears.</p></div>
+          </Card>
+          <Card>
+            <AdminPanelHeading icon={ChartNoAxesCombined} title="Alert trends" />
+            <p className="muted">Alerts created in the last 7 days</p>
+            {q.data?.trends.map(trend => <div className="admin-tab-meter" key={trend.type}>
+              <div><strong>{alertTypes[trend.type]}</strong><span>{trend.count} / {total} ({percent(trend.count)}%)</span></div>
+              <progress max={total} value={trend.count} aria-label={alertTypes[trend.type]} />
+            </div>)}
+            <div className="admin-tab-count"><span>Total alerts</span><strong>{q.isSuccess ? total : '—'}</strong></div>
+            <div className="admin-tab-count"><span>Resolved</span><strong>{q.isSuccess ? `${resolved} (${percent(resolved)}%)` : '—'}</strong></div>
+          </Card>
+        </aside>
+      </div>
+    </div>
   );
 }
 interface Delivery {
@@ -690,12 +686,14 @@ function DeliveryCard({ d }: { d: Delivery }) {
     </Card>
   );
 }
-export function DeliveryRecovery() {
-  const [filters, setFilters] = useState({ state: 'Failed', startDate: '', endDate: '' });
-  const [appliedFilters, setAppliedFilters] = useState<typeof filters | null>(null);
+export function DeliveryRecovery({ countryCode, focusId }: { countryCode?: string; focusId?: string } = {}) {
+  const [focused, setFocused] = useState(focusId);
+  const [filters, setFilters] = useState({ state: focusId ? '' : 'Failed', startDate: '', endDate: '' });
+  const [appliedFilters, setAppliedFilters] = useState<typeof filters | null>(focusId ? filters : null);
   const [page, setPage] = useState(1);
   const { state, startDate, endDate } = filters;
-  const country = useCountry();
+  const operationalCountry = useCountry();
+  const country = countryCode ?? operationalCountry;
   const dateGroupId = useId();
   const lastSupportedDate = '9999-12-31';
   const startError = startDate.length > 10 ? 'Enter a year with four digits.' : undefined;
@@ -711,6 +709,7 @@ export function DeliveryRecovery() {
     page: String(page),
   });
   const sriLankaMidnight = 'T00:00:00+05:30';
+  if (focused) params.set('id', focused);
   if (appliedFilters?.startDate && appliedFilters.startDate !== '0001-01-01') {
     params.set('from', new Date(appliedFilters.startDate + sriLankaMidnight).toISOString());
   }
@@ -746,7 +745,7 @@ export function DeliveryRecovery() {
   }
 
   return (
-    <section className="delivery-recovery" aria-labelledby={`${dateGroupId}-heading`}>
+    <section className="delivery-recovery" id="delivery-recovery" aria-labelledby={`${dateGroupId}-heading`}>
       <header className="delivery-recovery-heading">
         <h2 id={`${dateGroupId}-heading`}>Delivery recovery</h2>
         <p>Sent means the provider accepted the message. Verify uncertain outcomes before retrying.</p>
@@ -756,6 +755,7 @@ export function DeliveryRecovery() {
           <div className="delivery-state-filter">
             <Field label="Delivery state">
               <select value={state} onChange={(e) => setFilters({ ...filters, state: e.target.value })}>
+                <option value="">All states</option>
                 {['Failed', 'Review', 'Pending', 'Retry', 'Sent', 'Captured'].map((s) => (
                   <option key={s}>{s}</option>
                 ))}
@@ -810,13 +810,17 @@ export function DeliveryRecovery() {
           </div>
         </form>
       </Card>
+      {focused && <p>
+        Showing the delivery linked from Alerts.{' '}
+        <Button variant="ghost" type="button" onClick={() => { setFocused(undefined); clearDates(); }}>Clear selected delivery</Button>
+      </p>}
       {appliedFilters && (
         <>
           {q.isPending ? (
             <Loading />
           ) : q.error ? (
             <ErrorState error={q.error} />
-          ) : (
+          ) : !q.data?.items.length ? <p className="muted">No delivery records match these filters.</p> : (
             q.data?.items?.map((d) => <DeliveryCard key={d.id} d={d} />)
           )}
           {(page > 1 || (q.data?.total ?? 0) > 20) && (

@@ -144,7 +144,7 @@ public sealed class MappingProvider(HttpClient http, IConfiguration config) : IM
             return null;
         }
     }
-    public Task<object?> GeocodeAsync(string query, CancellationToken ct) => Get("https://api.openrouteservice.org/geocode/search?boundary.country=LKA&size=5&text=" + Uri.EscapeDataString(query), ct);
-    public Task<object?> ReverseGeocodeAsync(double latitude, double longitude, CancellationToken ct) => Get(FormattableString.Invariant($"https://api.openrouteservice.org/geocode/reverse?point.lat={latitude}&point.lon={longitude}&size=5"), ct);
-    public Task<object?> RouteAsync(double startLat, double startLng, double endLat, double endLng, CancellationToken ct) => Get(FormattableString.Invariant($"https://api.openrouteservice.org/v2/directions/driving-car?start={startLng},{startLat}&end={endLng},{endLat}"), ct);
+    public Task<object?> GeocodeAsync(string query, CancellationToken ct) => Get("https://api.heigit.org/pelias/v1/search?boundary.country=LKA&size=5&text=" + Uri.EscapeDataString(query), ct);
+    public Task<object?> ReverseGeocodeAsync(double latitude, double longitude, CancellationToken ct) => Get(FormattableString.Invariant($"https://api.heigit.org/pelias/v1/reverse?point.lat={latitude}&point.lon={longitude}&size=5"), ct);
+    public Task<object?> RouteAsync(double startLat, double startLng, double endLat, double endLng, CancellationToken ct) => Get(FormattableString.Invariant($"https://api.heigit.org/openrouteservice/v2/directions/driving-car?start={startLng},{startLat}&end={endLng},{endLat}"), ct);
 }

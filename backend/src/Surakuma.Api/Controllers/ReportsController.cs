@@ -12,9 +12,6 @@ namespace Surakuma.Api.Controllers;
 [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
 public sealed class ReportsController(CrisisDbContext db, AccessService access) : ControllerBase
 {
-    private static readonly RequestStatus[] Ended =
-        [RequestStatus.Fulfilled, RequestStatus.Closed, RequestStatus.Rejected, RequestStatus.Cancelled];
-
     [HttpGet("filters")]
     public async Task<object> Filters(CancellationToken ct)
     {
@@ -37,7 +34,7 @@ public sealed class ReportsController(CrisisDbContext db, AccessService access) 
         from = from?.ToUniversalTime();
         to = to?.ToUniversalTime();
         var now = DateTimeOffset.UtcNow;
-        var overdueBefore = now.AddHours(-24);
+        var overdueBefore = CaseReporting.OverdueBefore(now);
         var (global, authorized) = await AuthorizedCountries(ct);
         var selected = scope == "country" ? authorized.Where(c => c.Code == countryCode) : authorized;
         var countries = await selected.OrderBy(c => c.Name).ThenBy(c => c.Code)
@@ -72,7 +69,7 @@ public sealed class ReportsController(CrisisDbContext db, AccessService access) 
                     {
                         c.CountryCode,
                         Current = request.CreatedAt >= periodStart,
-                        IsOpen = !Ended.Contains(request.Status),
+                        IsOpen = !CaseReporting.Ended.Contains(request.Status),
                         MissingAssignment = request.OrganisationId == null || request.AssignedCaseManagerId == null,
                         IsOverdue = request.CreatedAt < overdueBefore,
                         IsResolved = request.Status == RequestStatus.Fulfilled || request.Status == RequestStatus.Closed,

@@ -1,11 +1,15 @@
-import { AdministrationOverview, AdministratorAlerts, DeliveryRecovery, StaffLifecycle, SystemAdministratorRequests } from './AdministrationWorkflows';
+import { CrisisCreationForm } from './CrisisCreationForm';
+import { AdministratorAlerts, StaffLifecycle, SystemAdministratorRequests } from './AdministrationWorkflows';
+import { AdminCaseQueue } from './AdminCaseQueue';
+import { AdminActivity } from './AdminActivity';
+import { AdministrationOverview } from './AdministrationOverview';
 import { OperationalReports } from './OperationalReports';
 import { OrganisationsPage, usePartnerDirectory } from './OrganisationsPage';
-import { RegionField, useCountry, useCountries } from './geography';
-import { useEffect, useId, useRef, useState } from 'react';
+import { useCountry, useCountries } from './geography';
+import { useEffect, useId, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, Building2, Eye, EyeOff, MapPin, Plus, Users } from 'lucide-react';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
+import { ArrowLeft, ArrowRight, Building2, Eye, EyeOff, Plus, Users } from 'lucide-react';
 import { api, get } from './api';
 import { useAuth, useOptionalAuth } from './auth';
 import { SystemReadiness } from './SystemReadiness';
@@ -48,12 +52,6 @@ function Message({ mutation }: { mutation: ReturnType<typeof useWrite> }) {
   ) : null;
 }
 const values = (form: HTMLFormElement) => Object.fromEntries(new FormData(form).entries());
-async function getHistoryPage<T>(path: string): Promise<Page<T>> {
-  const result = await get<Page<T>>(path);
-  if (!Array.isArray(result?.items) || typeof result.total !== 'number')
-    throw new Error('The API needs to be restarted to load activity page totals.');
-  return result;
-}
 export function VolunteerPage({ self = false }: { self?: boolean }) {
   const { user } = useAuth(),
     query = useQuery({
@@ -290,10 +288,11 @@ export function VolunteerPage({ self = false }: { self?: boolean }) {
     </>
   );
 }
-export function CrisesPage({ compactEndedResponses = false }: { compactEndedResponses?: boolean }) {
+export function CrisesPage() {
   const country = useCountry(), countries = useCountries();
   const [searchParams] = useSearchParams();
   const requestedCentre = searchParams.get('centre');
+  const requestedCrisis = searchParams.get('crisisId');
   const [preparedCrisis, setPreparedCrisis] = useState<string | null>(null);
   const policy = Array.isArray(countries.data) ? countries.data.find(c => c.code === country) : undefined;
   const requiredLanguages = (policy?.requiredAlertLanguages || (country === "LK" ? "en,si,ta" : "en")).split(",");
@@ -302,59 +301,17 @@ export function CrisesPage({ compactEndedResponses = false }: { compactEndedResp
     lookups = useQuery({ queryKey: ['lookups', country], queryFn: () => get<Lookups>('/public/lookups') }),
     write = useWrite();
   const activeCrises = query.data?.filter((crisis) => crisis.active) ?? [];
-  const endedCrises = query.data?.filter((crisis) => !crisis.active) ?? [];
-  const crisisTiles = compactEndedResponses ? activeCrises : query.data ?? [];
+  useEffect(() => {
+    if (requestedCrisis && query.data?.some(crisis => crisis.id === requestedCrisis))
+      document.getElementById(`crisis-${requestedCrisis}`)?.focus();
+  }, [requestedCrisis, query.data]);
   const directory = usePartnerDirectory(country, !!requestedCentre);
   const preferredCentre = directory.data?.find((organisation) => organisation.id === requestedCentre && organisation.enabled && ["Verified", "LegacyActive"].includes(organisation.verification?.verificationState || ""));
   const [create, setCreate] = useState(false),
     [areaCrisis, setAreaCrisis] = useState('');
-  const showAreas = compactEndedResponses
-    ? activeCrises.some((crisis) => crisis.id === areaCrisis)
-    : !!areaCrisis;
-  const [latitude, setLatitude] = useState(''), [longitude, setLongitude] = useState('');
-  const [locating, setLocating] = useState(false), [locationError, setLocationError] = useState('');
-  const locationRequest = useRef(0);
-  function locateCrisis() {
-    setLocationError('');
-    if (!navigator.geolocation) {
-      setLocationError('Location is unavailable. Enter the coordinates manually.');
-      return;
-    }
-    const request = ++locationRequest.current;
-    setLocating(true);
-    navigator.geolocation.getCurrentPosition(
-      ({ coords }) => {
-        if (locationRequest.current !== request) return;
-        setLatitude(String(coords.latitude));
-        setLongitude(String(coords.longitude));
-        setLocating(false);
-      },
-      () => {
-        if (locationRequest.current !== request) return;
-        setLocationError('Could not get your location. Allow location access or enter the coordinates manually.');
-        setLocating(false);
-      },
-      { timeout: 10000 },
-    );
-  }
-  function editCoordinates(setValue: (value: string) => void, value: string) {
-    locationRequest.current++;
-    setLocating(false);
-    setLocationError('');
-    setValue(value);
-  }
+  const showAreas = !!areaCrisis;
   function setResponseActive(crisis: Crisis, active: boolean) {
-    write.mutate(
-      { path: `/crises/${crisis.id}`, method: 'put', data: { ...crisis, active } },
-      {
-        onSuccess: () => {
-          if (compactEndedResponses && !active) {
-            setAreaCrisis((selected) => (selected === crisis.id ? '' : selected));
-            setPreparedCrisis((selected) => (selected === crisis.id ? null : selected));
-          }
-        },
-      },
-    );
+    write.mutate({ path: `/crises/${crisis.id}`, method: 'put', data: { ...crisis, active } });
   }
   const areas = useQuery({
     queryKey: ['areas', areaCrisis],
@@ -368,7 +325,7 @@ export function CrisesPage({ compactEndedResponses = false }: { compactEndedResp
         title="Crises & public information"
         description="Manage response areas and publish verified, translated public alerts."
         action={
-          <Button onClick={() => { locationRequest.current++; setLocating(false); setLocationError(''); setCreate(!create); }}>
+          <Button onClick={() => setCreate(!create)}>
             <Plus size={18} />
             Create crisis
           </Button>
@@ -379,89 +336,19 @@ export function CrisesPage({ compactEndedResponses = false }: { compactEndedResp
       {create && (
         <Card>
           <h2>New crisis</h2>
-          <form
-            className="form-grid"
-            onSubmit={(e) => {
-              e.preventDefault();
-              const f = values(e.currentTarget);
-              write.mutate({
-                path: '/crises',
-                data: {
-                  ...f,
-                  active: true,
-                  latitude: Number(f.latitude),
-                  longitude: Number(f.longitude),
-                },
-              });
-            }}
-          >
-            <Field label="Crisis name">
-              <input name="name" required maxLength={150} />
-            </Field>
-            <Field label="Type">
-              <select name="type">
-                {[
-                  'Flood',
-                  'Landslide',
-                  'Earthquake',
-                  'Storm',
-                  'Disease outbreak',
-                  'Displacement',
-                  'Other',
-                ].map((x) => (
-                  <option key={x}>{x}</option>
-                ))}
-              </select>
-            </Field>
-            <RegionField />
-            <Field label="Local area"><input name="district" maxLength={150} /></Field>
-            <Field label="Latitude">
-              <input
-                type="number"
-                name="latitude"
-                min={-90}
-                max={90}
-                step="any"
-                value={latitude}
-                onChange={(e) => editCoordinates(setLatitude, e.target.value)}
-                required
-              />
-            </Field>
-            <Field label="Longitude">
-              <input
-                type="number"
-                name="longitude"
-                min={-180}
-                max={180}
-                step="any"
-                value={longitude}
-                onChange={(e) => editCoordinates(setLongitude, e.target.value)}
-                required
-              />
-            </Field>
-            <div className="crisis-location-action">
-              <Button type="button" variant="secondary" busy={locating} onClick={locateCrisis}>
-                <MapPin size={18} aria-hidden="true" /> Use my current location
-              </Button>
-              <small className="muted">Use this only if you are at the crisis location, or enter coordinates manually.</small>
-              {locationError && <small className="field-error" role="alert">{locationError}</small>}
-            </div>
-            <Button busy={write.isPending}>Create response event</Button>
-          </form>
+          <CrisisCreationForm busy={write.isPending} onCreate={(data) => write.mutate({ path: '/crises', data })} />
         </Card>
       )}
       {query.isPending ? (
         <Loading />
       ) : query.error ? (
         <ErrorState error={query.error} />
-      ) : compactEndedResponses && activeCrises.length === 0 ? (
-        <p className="muted">No active crises.</p>
       ) : (
         <div className="resource-grid section-small">
-          {crisisTiles.map((c) => (
+          {(query.data ?? []).map((c) => (
             <Card key={c.id}>
               <Badge value={c.active ? 'Open' : 'Closed'} />
-              <h3>{c.name}</h3>
+              <h3 id={`crisis-${c.id}`} tabIndex={-1}>{c.name}</h3>
               <p>
                 {c.type} · {c.district}
               </p>
@@ -611,32 +498,6 @@ export function CrisesPage({ compactEndedResponses = false }: { compactEndedResp
             </div>
           ))}
       </Card>
-      {compactEndedResponses && endedCrises.length > 0 && (
-        <Card>
-          <h2>Ended responses</h2>
-          <ul className="ended-response-list">
-            {endedCrises.map((crisis) => (
-              <li className="inline spread" key={crisis.id}>
-                <div>
-                  <strong>{crisis.name}</strong>
-                  <small className="muted">
-                    {[crisis.type, crisis.district].filter(Boolean).join(' · ')}
-                  </small>
-                </div>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={write.isPending}
-                  aria-label={`Reopen response for ${crisis.name}`}
-                  onClick={() => setResponseActive(crisis, true)}
-                >
-                  Reopen response
-                </Button>
-              </li>
-            ))}
-          </ul>
-        </Card>
-      )}
     </>
   );
 }
@@ -747,51 +608,6 @@ function AdminAccountRow({ user, global, lookups }: { user: AdminUser; global: b
     </tr>
   );
 }
-function AdminTriageRequest({ request, organisations }: { request: AidRequest; organisations: Lookups['organisations'] }) {
-  const write = useWrite();
-  const managers = useQuery({
-    queryKey: ['case-managers', request.id],
-    queryFn: () => get<{ id: string; name: string; availableForAssignment: boolean }[]>(`/requests/${request.id}/case-managers`),
-    enabled: !!request.organisationId,
-  });
-  return (
-    <div className="audit-entry">
-      <details>
-        <summary>{request.reference} · {request.category} · {request.organisationId ? 'Awaiting case manager' : 'Awaiting centre'}</summary>
-        <p>{request.description}</p>
-        <p>Location: {request.locationText}</p>
-        {request.requestedForSomeoneElse && <p>Requester: {request.requesterRelationship || 'Relationship not provided'} · {request.requesterContact || 'Contact not provided'}</p>}
-      </details>
-      <Message mutation={write} />
-      {!request.organisationId ? (
-        <form className="inline" onSubmit={(event) => {
-          event.preventDefault();
-          const organisationId = String(new FormData(event.currentTarget).get('organisationId') || '');
-          if (organisationId) write.mutate({ path: `/requests/${request.id}/reassign`, data: { organisationId } });
-        }}>
-          <label>Response centre <select name="organisationId" required defaultValue="">
-            <option value="">Select a centre</option>
-            {organisations.map((organisation) => <option key={organisation.id} value={organisation.id}>{organisation.name}</option>)}
-          </select></label>
-          <Button busy={write.isPending}>Assign centre</Button>
-        </form>
-      ) : (
-        <form className="inline" onSubmit={(event) => {
-          event.preventDefault();
-          const userId = String(new FormData(event.currentTarget).get('userId') || '');
-          if (userId) write.mutate({ path: `/requests/${request.id}/case-manager`, data: { userId } });
-        }}>
-          {managers.error && <ErrorState error={managers.error} />}
-          <label>Case manager <select name="userId" required defaultValue="">
-            <option value="">Select a case manager</option>
-            {managers.data?.map((manager) => <option key={manager.id} value={manager.id}>{manager.name}{manager.availableForAssignment ? '' : ' (unavailable)'}</option>)}
-          </select></label>
-          <Button busy={write.isPending}>Assign case manager</Button>
-        </form>
-      )}
-    </div>
-  );
-}
 const auditActionLabels = new Map([
   ['Login', 'Successful sign-in'],
   ['CitizenRegistered', 'Citizen account created'],
@@ -837,6 +653,7 @@ const auditActionLabels = new Map([
   ['CrisisCreated', 'Crisis created'],
   ['CrisisUpdated', 'Crisis updated'],
   ['OperationalAreaCreated', 'Operational area added'],
+  ['OperationalAreaRemoved', 'Operational area removed'],
   ['PublicAlertCreated', 'Public alert created'],
   ['PublicAlertUnpublished', 'Public alert unpublished'],
   ['StaffAccessGranted', 'Staff access granted'],
@@ -862,6 +679,12 @@ export function AdminPage() {
   const administratorRole = staffRole === 'Administrator' || staffRole === 'CountryAdministrator';
   const [searchParams] = useSearchParams();
   const section = getAdminSection(searchParams.get('section'), globalAdmin);
+  const { hash } = useLocation();
+  useEffect(() => {
+    if (hash === '#system-administrator-requests')
+      document.getElementById(hash.slice(1))?.scrollIntoView?.();
+  }, [hash, section]);
+  const triageCrisis = searchParams.get('country') === countryCode ? searchParams.get('crisisId') : null;
   const requestedOrganisation = section === 'users' ? searchParams.get('organisation') : null;
   const [showStaffForm, setShowStaffForm] = useState(!!requestedOrganisation);
   useEffect(() => { if (requestedOrganisation) setShowStaffForm(true); }, [requestedOrganisation]);
@@ -878,8 +701,6 @@ export function AdminPage() {
     }, 250);
     return () => window.clearTimeout(timer);
   }, [userSearch, appliedUserSearch]);
-  const [auditPage, setAuditPage] = useState(1);
-  const [deliveryPage, setDeliveryPage] = useState(1);
   const staffPasswordId = useId();
   const userParams = new URLSearchParams({
     includeTotal: 'true',
@@ -913,69 +734,30 @@ export function AdminPage() {
         const start = (pageNumber - 1) * pageSize;
         return { items: matches.slice(start, start + pageSize), total: matches.length, pageNumber, pageSize, legacy: true };
       },
-      enabled: section === 'users' || section === 'overview',
+      enabled: section === 'users',
     }),
-    lookups = useQuery({ queryKey: ['lookups', countryCode], queryFn: () => get<Lookups>('/public/lookups'), enabled: ['overview', 'cases', 'users'].includes(section) }),
-    triage = useQuery({ queryKey: ['triage', countryCode], queryFn: () => get<AidRequest[]>('/requests/triage'), enabled: section === 'cases' }),
-    audit = useQuery({
-      queryKey: ['audit', countryCode, auditPage], enabled: globalAdmin && section === 'activity',
-      queryFn: () =>
-        getHistoryPage<{ id: string; action: string; actorId: string; actorName?: string | null; detail: string; createdAt: string }>(
-          `/admin/audit?page=${auditPage}&pageSize=10&includeTotal=true&countryCode=${countryCode}`,
-        ),
-    }),
-    deliveries = useQuery({
-      queryKey: ['deliveries', countryCode, deliveryPage], enabled: globalAdmin && section === 'activity',
-      queryFn: () =>
-        getHistoryPage<{ id: string; state: string; attempts: number; lastError: string | null; createdAt: string; eventMessage: string; recipientName: string | null; caseReference: string | null; provider: string | null }>(
-          `/admin/deliveries?page=${deliveryPage}&pageSize=10&includeTotal=true&countryCode=${countryCode}`,
-        ),
-    }),
+    lookups = useQuery({ queryKey: ['lookups', countryCode], queryFn: () => get<Lookups>('/public/lookups'), enabled: section === 'users' }),
     write = useWrite();
   const userList = users.data?.items ?? [];
   const currentUserPage = users.data?.pageNumber ?? 1;
   const userPageCount = Math.max(1, Math.ceil((users.data?.total ?? 0) / (users.data?.pageSize ?? adminUsersPageSize)));
   const directory = usePartnerDirectory(countryCode, !!requestedOrganisation);
   const preferredOrganisation = directory.data?.find((organisation) => organisation.id === requestedOrganisation && organisation.enabled && ["Verified", "LegacyActive"].includes(organisation.verification?.verificationState || ""))?.id;
+  if (section === 'overview') return <AdministrationOverview key={countryCode} globalAdmin={globalAdmin} auditActionLabel={auditActionLabel} />;
+  if (section === 'cases') return <AdminCaseQueue globalAdmin={globalAdmin} crisisId={triageCrisis} />;
+  if (section === 'activity') return <AdminActivity actionLabel={auditActionLabel} actionOptions={[...auditActionLabels.keys()]} />;
   if (section === 'integrations') return <SystemReadiness />;
-  const titles: Record<Exclude<typeof section, 'organisations' | 'integrations'>, [string, string]> = {
-    overview: globalAdmin
-      ? ['System administration', 'Monitor country responses and manage platform-wide access and settings.']
-      : ['Country administration', 'Manage your country’s crisis response, organisations and staff access.'],
-    cases: ['Unassigned cases', 'Review requests waiting for a response centre or case manager.'],
-    users: ['Users & access', 'Manage staff accounts, roles, and access to organisations.'],
-    activity: ['Activity', 'Review audit events and notification delivery.'],
-    reports: ['Reports', 'Country-level response statistics.'],
-    alerts: ['Alerts', 'Operational issues needing attention.'],
-  };
   if (section === 'reports') return <OperationalReports />;
-  if (section === 'alerts') return <AdministratorAlerts />;
+  if (section === 'alerts') return <AdministratorAlerts globalAdmin={globalAdmin} />;
   if (section === 'organisations') {
     return <div className="admin-workspace"><OrganisationsPage globalAdmin={globalAdmin} /></div>;
   }
 
   return (
     <div className="admin-workspace">
-      <PageHeader
-        title={titles[section][0]}
-        description={titles[section][1]}
-      />
-      {section === 'overview' && <AdministrationOverview />}
-      {section === 'activity' && globalAdmin && <DeliveryRecovery />}
-      {section === 'overview' && <div className="admin-overview-grid">
-        <Link className="card admin-overview-card" to="/admin?section=users"><span>Users & access</span><strong>{users.data?.total ?? '—'}</strong><small>Manage access →</small></Link>
-        <Link className="card admin-overview-card" to="/admin?section=organisations"><span>Organisations</span><strong>{lookups.data?.organisations.length ?? '—'}</strong><small>View organisations →</small></Link>
-        {globalAdmin && <Link className="card admin-overview-card" to="/admin?section=integrations"><span>Integrations</span><strong>Service status</strong><small>View readiness →</small></Link>}
-      </div>}
+      <PageHeader title="Users & access" description="Manage staff accounts, roles, and access to organisations." />
       <Message mutation={write} />
-      {section === 'cases' && (
-        <Card>
-          <h2>Unassigned requests</h2>
-          {triage.isPending ? <Loading /> : triage.error ? <ErrorState error={triage.error} /> :
-            triage.data?.length ? triage.data.map((request) => <AdminTriageRequest key={request.id} request={request} organisations={lookups.data?.organisations || []} />) : <p>No requests are waiting for assignment.</p>}
-        </Card>
-      )}
-      <div hidden={section !== 'users'}>
+      <div>
         <Card className="admin-users-card">
           <div className="admin-users-toolbar">
             <input type="search" aria-label="Search users" placeholder="Search by name or email" value={userSearch} onChange={(e) => setUserSearch(e.target.value)} />
@@ -1110,56 +892,6 @@ export function AdminPage() {
         </Card>
       </div>
       {section === 'users' && globalAdmin && <SystemAdministratorRequests />}
-      <div className="two-column" hidden={section !== 'activity'}>
-        <Card>
-          <h2>Recent Audit History</h2>
-          {audit.isPending ? <Loading /> : audit.error ? (
-            <ErrorState error={audit.error} />
-          ) : (
-            audit.data?.items.map((a) => (
-              <div className="audit-entry" key={a.id}>
-                <strong>{auditActionLabel(a.action)}</strong>
-                <small className="block">
-                  {a.actorName?.trim() || (a.actorId ? `Account ${a.actorId.slice(0, 8)}` : 'Unknown actor')} · <time dateTime={a.createdAt}>{formatDate(a.createdAt)}</time>
-                </small>
-                {a.detail?.trim() && <p>{a.detail}</p>}
-              </div>
-            ))
-          )}
-          {!audit.isPending && !audit.error && <div className="admin-pagination" role="group" aria-label="Audit event pages">
-            <Button type="button" variant="secondary" disabled={auditPage === 1 || audit.isFetching} onClick={() => setAuditPage((page) => page - 1)}>Previous</Button>
-            <span aria-live="polite">Page {auditPage} of {Math.max(1, Math.ceil((audit.data?.total ?? 0) / 10))}</span>
-            <Button type="button" variant="secondary" disabled={auditPage >= Math.max(1, Math.ceil((audit.data?.total ?? 0) / 10)) || audit.isFetching} onClick={() => setAuditPage((page) => page + 1)}>Next</Button>
-          </div>}
-          {!audit.isPending && !audit.error && audit.data?.items.length === 0 && <p>No audit events for this country on this page.</p>}
-        </Card>
-        <Card>
-          <h2>Notification delivery</h2>
-          <p className="muted">
-            Captured means stored locally; Sent means the provider accepted the message, not that it reached the inbox.
-          </p>
-          {deliveries.isPending ? <Loading /> : deliveries.error ? (
-            <ErrorState error={deliveries.error} />
-          ) : (
-            deliveries.data?.items.map((d) => (
-              <div className="audit-entry" key={d.id}>
-                <Badge value={d.state} />
-                <span> {d.attempts} attempt(s)</span>
-                <p>{d.eventMessage || 'Message unavailable'}</p>
-                <small>{formatDate(d.createdAt)} · {d.recipientName || 'Recipient unavailable'}{d.caseReference ? ` · ${d.caseReference}` : ''}{d.provider ? ` · ${d.provider}` : ''}</small>
-                <small className="muted block">Event message in English; the delivered language may differ.</small>
-                {d.lastError && <p>{d.lastError}</p>}
-              </div>
-            ))
-          )}
-          {!deliveries.isPending && !deliveries.error && deliveries.data?.items.length === 0 && <p>No delivery events for this country on this page.</p>}
-          {!deliveries.isPending && !deliveries.error && <div className="admin-pagination" role="group" aria-label="Notification delivery pages">
-            <Button type="button" variant="secondary" disabled={deliveryPage === 1 || deliveries.isFetching} onClick={() => setDeliveryPage((page) => page - 1)}>Previous</Button>
-            <span aria-live="polite">Page {deliveryPage} of {Math.max(1, Math.ceil((deliveries.data?.total ?? 0) / 10))}</span>
-            <Button type="button" variant="secondary" disabled={deliveryPage >= Math.max(1, Math.ceil((deliveries.data?.total ?? 0) / 10)) || deliveries.isFetching} onClick={() => setDeliveryPage((page) => page + 1)}>Next</Button>
-          </div>}
-        </Card>
-      </div>
     </div>
   );
 }

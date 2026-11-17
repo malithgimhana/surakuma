@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Surakuma role workspaces</title>
+<style>
+  :root { color-scheme: light; color: #10213c; background: #f3f6fa; font: 16px/1.5 system-ui, sans-serif; }
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+  header { background: #123452; color: #fff; }
+  header div, main { width: min(1300px, 100% - 3rem); margin: auto; }
+  header div { padding-block: 2rem; }
+  h1 { font-size: clamp(2rem, 5vw, 3.25rem); line-height: 1.08; margin: 0 0 .6rem; }
+  h2 { font-size: 1.8rem; line-height: 1.15; margin: 0; }
+  p { margin-top: .45rem; }
+  header p { margin-bottom: 0; color: #e7eff7; }
+  .roles { display: flex; flex-wrap: wrap; gap: .5rem; margin-block: 1.5rem; }
+  .roles a { background: white; border: 1px solid #c2d0dd; border-radius: .5rem; padding: .45rem .7rem; }
+  a { color: #144e79; text-decoration-thickness: .08em; text-underline-offset: .18em; }
+  a:focus-visible { outline: 3px solid #1673ae; outline-offset: 4px; }
+  .roles span, figcaption span, .account { color: #52677d; }
+  .roles span { margin-left: .25rem; }
+  .account { margin: .2rem 0 .7rem; font-size: .94rem; }
+  section { border-top: 1px solid #c2d0dd; padding-block: 1.6rem; }
+  .screens { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr)); gap: .8rem; }
+  figure { margin: 0; min-width: 0; background: white; border: 1px solid #c2d0dd; border-radius: .65rem; overflow: hidden; }
+  figure > a { display: block; background: #e5ebf3; }
+  img { display: block; width: 100%; aspect-ratio: 16/10; object-fit: cover; object-position: top; }
+  figcaption { font-weight: 600; padding: .65rem; }
+  figcaption span { margin-right: .1rem; }
+  @media (max-width: 550px) { header div, main { width: calc(100% - 1.5rem); } }
+</style>
+<header><div>
+  <h1>Surakuma role workspaces</h1>
+  <p>97 screenshots across 9 roles, captured in Microsoft Edge with synthetic local accounts.</p>
+  <p>Open any screenshot to view its full-size PNG.</p>
+</div></header>
+<main>
+  <nav class="roles" aria-label="Account roles"><a href="#citizen">Citizen <span>22</span></a>
+<a href="#crisis-coordinator">Crisis Coordinator <span>10</span></a>
+<a href="#case-manager">Case Manager <span>8</span></a>
+<a href="#logistics">Logistics Staff <span>11</span></a>
+<a href="#shelter-administrator">Shelter Administrator <span>9</span></a>
+<a href="#volunteer">Volunteer <span>6</span></a>
+<a href="#volunteer-coordinator">Volunteer Coordinator <span>10</span></a>
+<a href="#partner">Partner <span>4</span></a>
+<a href="#country-administrator">Country Administrator <span>17</span></a></nav>
+  <section id="citizen">
+    <h2>Citizen</h2>
+    <p class="account">citizen@surakuma.test</p>
+    <p>Check public alerts and shelter listings, submit an aid request, and follow its status from My requests or Notifications.</p>
+    <div class="screens"><figure>
+    <a href="citizen/01-my-overview.png" target="_blank" rel="noopener"><img src="citizen/01-my-overview.png" loading="lazy" alt="Citizen workspace, My overview"></a>
+    <figcaption><span>1.</span> <a href="citizen/01-my-overview.png" target="_blank" rel="noopener">My overview</a></figcaption>
+  </figure>
+<figure>
+    <a href="citizen/02-my-requests.png" target="_blank" rel="noopener"><img src="citizen/02-my-requests.png" loading="lazy" alt="Citizen workspace, My requests"></a>
+    <figcaption><span>2.</span> <a href="citizen/02-my-requests.png" target="_blank" rel="noopener">My requests</a></figcaption>
+  </figure>
+<figure>
+    <a href="citizen/03-notifications.png" target="_blank" rel="noopener"><img src="citizen/03-notifications.png" loading="lazy" alt="Citizen workspace, Notifications"></a>
+    <figcaption><span>3.</span> <a href="citizen/03-notifications.png" target="_blank" rel="noopener">Notifications</a></figcaption>
+  </figure>
+<figure>
+    <a href="citizen/04-find-a-shelter.png" target="_blank" rel="noopener"><img src="citizen/04-find-a-shelter.png" loading="lazy" alt="Citizen workspace, Find a shelter"></a>
+    <figcaption><span>4.</span> <a href="citizen/04-find-a-shelter.png" target="_blank" rel="noopener">Find a shelter</a></figcaption>
+  </figure>
+<figure>
+    <a href="citizen/05-emergency-alerts.png" target="_blank" rel="noopener"><img src="citizen/05-emergency-alerts.png" loading="lazy" alt="Citizen workspace, Emergency alerts"></a>
+    <figcaption><span>5.</span> <a href="citizen/05-emergency-alerts.png" target="_blank" rel="noopener">Emergency alerts</a></figcaption>
+  </figure>
+<figure>
+    <a href="citizen/06-my-profile.png" target="_blank" rel="noopener"><img src="citizen/06-my-profile.png" loading="lazy" alt="Citizen workspace, My profile"></a>
+    <figcaption><span>6.</span> <a href="citizen/06-my-profile.png" target="_blank" rel="noopener">My profile</a></figcaption>
+  </figure>
+<figure>
+    <a href="citizen/07-track-an-existing-request.png" target="_blank" rel="noopener"><img src="citizen/07-track-an-existing-request.png" loading="lazy" alt="Citizen workspace, Track an existing request"></a>
+    <figcaption><span>7.</span> <a href="citizen/07-track-an-existing-request.png" target="_blank" rel="noopener">Track an existing request</a></figcaption>
+  </figure>
+<figure>
+    <a href="citizen/08-check-a-public-shelter-listing.png" target="_blank" rel="noopener"><img src="citizen/08-check-a-public-shelter-listing.png" loading="lazy" alt="Citizen workspace, Check a public shelter listing"></a>
+    <figcaption><span>8.</span> <a href="citizen/08-check-a-public-shelter-listing.png" target="_blank" rel="noopener">Check a public shelter listing</a></figcaption>
+  </figure>
+<figure>
+    <a href="citizen/09-new-request-1-choose-assistance.png" target="_blank" rel="noopener"><img src="citizen/09-new-request-1-choose-assistance.png" loading="lazy" alt="Citizen workspace, New request 1 - Choose assistance"></a>
+    <figcaption><span>9.</span> <a href="citizen/09-new-request-1-choose-assistance.png" target="_blank" rel="noopener">New request 1 - Choose assistance</a></figcaption>
+  </figure>
+<figure>
+    <a href="citizen/10-new-request-2-add-request-details.png" target="_blank" rel="noopener"><img src="citizen/10-new-request-2-add-request-details.png" loading="lazy" alt="Citizen workspace, New request 2 - Add request details"></a>
+    <figcaption><span>10.</span> <a href="citizen/10-new-request-2-add-request-details.png" target="_blank" rel="noopener">New request 2 - Add request details</a></figcaption>
+  </figure>
+<figure>
+    <a href="citizen/11-new-request-3-set-the-location.png" target="_blank" rel="noopener"><img src="citizen/11-new-request-3-set-the-location.png" loading="lazy" alt="Citizen workspace, New request 3 - Set the location"></a>
+    <figcaption><span>11.</span> <a href="citizen/11-new-request-3-set-the-location.png" target="_blank" rel="noopener">New request 3 - Set the location</a></figcaption>
+  </figure>
+<figure>
+    <a href="citizen/12-new-request-4-review-before-submitting.png" target="_blank" rel="noopener"><img src="citizen/12-new-request-4-review-before-submitting.png" loading="lazy" alt="Citizen workspace, New request 4 - Review before submitting"></a>
+    <figcaption><span>12.</span> <a href="citizen/12-new-request-4-review-before-submitting.png" target="_blank" rel="noopener">New request 4 - Review before submitting</a></figcaption>
+  </figure>
+<figure>
+    <a href="citizen/13-new-request-5-submission-and-tracking.png" target="_blank" rel="noopener"><img src="citizen/13-new-request-5-submission-and-tracking.png" loading="lazy" alt="Citizen workspace, New request 5 - Submission and tracking"></a>
+    <figcaption><span>13.</span> <a href="citizen/13-new-request-5-submission-and-tracking.png" target="_blank" rel="noopener">New request 5 - Submission and tracking</a></figcaption>
+  </figure>
+<figure>
+    <a href="citizen/14-my-requests-received.png" target="_blank" rel="noopener"><img src="citizen/14-my-requests-received.png" loading="lazy" alt="Citizen workspace, My requests - Received"></a>
+    <figcaption><span>14.</span> <a href="citizen/14-my-requests-received.png" target="_blank" rel="noopener">My requests - Received</a></figcaption>
+  </figure>
+<figure>
+    <a href="citizen/15-my-requests-in-progress.png" target="_blank" rel="noopener"><img src="citizen/15-my-requests-in-progress.png" loading="lazy" alt="Citizen workspace, My requests - In progress"></a>
+    <figcaption><span>15.</span> <a href="citizen/15-my-requests-in-progress.png" target="_blank" rel="noopener">My requests - In progress</a></figcaption>
+  </figure>
+<figure>
+    <a href="citizen/16-my-requests-assistance-delivered.png" target="_blank" rel="noopener"><img src="citizen/16-my-requests-assistance-delivered.png" loading="lazy" alt="Citizen workspace, My requests - Assistance delivered"></a>
+    <figcaption><span>16.</span> <a href="citizen/16-my-requests-assistance-delivered.png" target="_blank" rel="noopener">My requests - Assistance delivered</a></figcaption>
+  </figure>
+<figure>
+    <a href="citizen/17-my-requests-completed.png" target="_blank" rel="noopener"><img src="citizen/17-my-requests-completed.png" loading="lazy" alt="Citizen workspace, My requests - Completed"></a>
+    <figcaption><span>17.</span> <a href="citizen/17-my-requests-completed.png" target="_blank" rel="noopener">My requests - Completed</a></figcaption>
+  </figure>
+<figure>
+    <a href="citizen/18-track-the-delivered-request.png" target="_blank" rel="noopener"><img src="citizen/18-track-the-delivered-request.png" loading="lazy" alt="Citizen workspace, Track the delivered request"></a>
+    <figcaption><span>18.</span> <a href="citizen/18-track-the-delivered-request.png" target="_blank" rel="noopener">Track the delivered request</a></figcaption>
+  </figure>
+<figure>
+    <a href="citizen/19-read-case-progress-notifications.png" target="_blank" rel="noopener"><img src="citizen/19-read-case-progress-notifications.png" loading="lazy" alt="Citizen workspace, Read case progress notifications"></a>
+    <figcaption><span>19.</span> <a href="citizen/19-read-case-progress-notifications.png" target="_blank" rel="noopener">Read case progress notifications</a></figcaption>
+  </figure>
+<figure>
+    <a href="citizen/20-find-a-shelter-map.png" target="_blank" rel="noopener"><img src="citizen/20-find-a-shelter-map.png" loading="lazy" alt="Citizen workspace, Find a shelter - Map"></a>
+    <figcaption><span>20.</span> <a href="citizen/20-find-a-shelter-map.png" target="_blank" rel="noopener">Find a shelter - Map</a></figcaption>
+  </figure>
+<figure>
+    <a href="citizen/21-emergency-alerts-warning.png" target="_blank" rel="noopener"><img src="citizen/21-emergency-alerts-warning.png" loading="lazy" alt="Citizen workspace, Emergency alerts - Warning"></a>
+    <figcaption><span>21.</span> <a href="citizen/21-emergency-alerts-warning.png" target="_blank" rel="noopener">Emergency alerts - Warning</a></figcaption>
+  </figure>
+<figure>
+    <a href="citizen/22-emergency-alerts-information.png" target="_blank" rel="noopener"><img src="citizen/22-emergency-alerts-information.png" loading="lazy" alt="Citizen workspace, Emergency alerts - Information"></a>
+    <figcaption><span>22.</span> <a href="citizen/22-emergency-alerts-information.png" target="_blank" rel="noopener">Emergency alerts - Information</a></figcaption>
+  </figure></div>
+  </section>
+<section id="crisis-coordinator">
+    <h2>Crisis Coordinator</h2>
+    <p class="account">coordinator@surakuma.test</p>
+    <p>Review case routing and assignments, then manage the response, operational areas, and public alerts. The workspace also links to stock, shelters, and volunteers.</p>
+    <div class="screens"><figure>
+    <a href="crisis-coordinator/01-overview.png" target="_blank" rel="noopener"><img src="crisis-coordinator/01-overview.png" loading="lazy" alt="Crisis Coordinator workspace, Overview"></a>
+    <figcaption><span>1.</span> <a href="crisis-coordinator/01-overview.png" target="_blank" rel="noopener">Overview</a></figcaption>
+  </figure>
+<figure>
+    <a href="crisis-coordinator/02-cases-and-ai-review.png" target="_blank" rel="noopener"><img src="crisis-coordinator/02-cases-and-ai-review.png" loading="lazy" alt="Crisis Coordinator workspace, Cases &amp; AI review"></a>
+    <figcaption><span>2.</span> <a href="crisis-coordinator/02-cases-and-ai-review.png" target="_blank" rel="noopener">Cases &amp; AI review</a></figcaption>
+  </figure>
+<figure>
+    <a href="crisis-coordinator/03-resources-and-logistics.png" target="_blank" rel="noopener"><img src="crisis-coordinator/03-resources-and-logistics.png" loading="lazy" alt="Crisis Coordinator workspace, Resources &amp; logistics"></a>
+    <figcaption><span>3.</span> <a href="crisis-coordinator/03-resources-and-logistics.png" target="_blank" rel="noopener">Resources &amp; logistics</a></figcaption>
+  </figure>
+<figure>
+    <a href="crisis-coordinator/04-shelter-management.png" target="_blank" rel="noopener"><img src="crisis-coordinator/04-shelter-management.png" loading="lazy" alt="Crisis Coordinator workspace, Shelter management"></a>
+    <figcaption><span>4.</span> <a href="crisis-coordinator/04-shelter-management.png" target="_blank" rel="noopener">Shelter management</a></figcaption>
+  </figure>
+<figure>
+    <a href="crisis-coordinator/05-volunteer-coordination.png" target="_blank" rel="noopener"><img src="crisis-coordinator/05-volunteer-coordination.png" loading="lazy" alt="Crisis Coordinator workspace, Volunteer coordination"></a>
+    <figcaption><span>5.</span> <a href="crisis-coordinator/05-volunteer-coordination.png" target="_blank" rel="noopener">Volunteer coordination</a></figcaption>
+  </figure>
+<figure>
+    <a href="crisis-coordinator/06-crises-and-public-alerts.png" target="_blank" rel="noopener"><img src="crisis-coordinator/06-crises-and-public-alerts.png" loading="lazy" alt="Crisis Coordinator workspace, Crises &amp; public alerts"></a>
+    <figcaption><span>6.</span> <a href="crisis-coordinator/06-crises-and-public-alerts.png" target="_blank" rel="noopener">Crises &amp; public alerts</a></figcaption>
+  </figure>
+<figure>
+    <a href="crisis-coordinator/07-my-profile.png" target="_blank" rel="noopener"><img src="crisis-coordinator/07-my-profile.png" loading="lazy" alt="Crisis Coordinator workspace, My profile"></a>
+    <figcaption><span>7.</span> <a href="crisis-coordinator/07-my-profile.png" target="_blank" rel="noopener">My profile</a></figcaption>
+  </figure>
+<figure>
+    <a href="crisis-coordinator/08-notifications.png" target="_blank" rel="noopener"><img src="crisis-coordinator/08-notifications.png" loading="lazy" alt="Crisis Coordinator workspace, Notifications"></a>
+    <figcaption><span>8.</span> <a href="crisis-coordinator/08-notifications.png" target="_blank" rel="noopener">Notifications</a></figcaption>
+  </figure>
+<figure>
+    <a href="crisis-coordinator/09-review-case-routing-and-assignment.png" target="_blank" rel="noopener"><img src="crisis-coordinator/09-review-case-routing-and-assignment.png" loading="lazy" alt="Crisis Coordinator workspace, Review case routing and assignment"></a>
+    <figcaption><span>9.</span> <a href="crisis-coordinator/09-review-case-routing-and-assignment.png" target="_blank" rel="noopener">Review case routing and assignment</a></figcaption>
+  </figure>
+<figure>
+    <a href="crisis-coordinator/10-open-the-crisis-creation-form.png" target="_blank" rel="noopener"><img src="crisis-coordinator/10-open-the-crisis-creation-form.png" loading="lazy" alt="Crisis Coordinator workspace, Open the crisis creation form"></a>
+    <figcaption><span>10.</span> <a href="crisis-coordinator/10-open-the-crisis-creation-form.png" target="_blank" rel="noopener">Open the crisis creation form</a></figcaption>
+  </figure></div>
+  </section>
+<section id="case-manager">
+    <h2>Case Manager</h2>
+    <p class="account">case@surakuma.test</p>
+    <p>Review an assigned case, examine the information and AI recommendations, then verify and approve the request. The case timeline records the decisions.</p>
+    <div class="screens"><figure>
+    <a href="case-manager/01-overview.png" target="_blank" rel="noopener"><img src="case-manager/01-overview.png" loading="lazy" alt="Case Manager workspace, Overview"></a>
+    <figcaption><span>1.</span> <a href="case-manager/01-overview.png" target="_blank" rel="noopener">Overview</a></figcaption>
+  </figure>
+<figure>
+    <a href="case-manager/02-cases-and-ai-review.png" target="_blank" rel="noopener"><img src="case-manager/02-cases-and-ai-review.png" loading="lazy" alt="Case Manager workspace, Cases &amp; AI review"></a>
+    <figcaption><span>2.</span> <a href="case-manager/02-cases-and-ai-review.png" target="_blank" rel="noopener">Cases &amp; AI review</a></figcaption>
+  </figure>
+<figure>
+    <a href="case-manager/03-my-profile.png" target="_blank" rel="noopener"><img src="case-manager/03-my-profile.png" loading="lazy" alt="Case Manager workspace, My profile"></a>
+    <figcaption><span>3.</span> <a href="case-manager/03-my-profile.png" target="_blank" rel="noopener">My profile</a></figcaption>
+  </figure>
+<figure>
+    <a href="case-manager/04-notifications.png" target="_blank" rel="noopener"><img src="case-manager/04-notifications.png" loading="lazy" alt="Case Manager workspace, Notifications"></a>
+    <figcaption><span>4.</span> <a href="case-manager/04-notifications.png" target="_blank" rel="noopener">Notifications</a></figcaption>
+  </figure>
+<figure>
+    <a href="case-manager/05-review-an-assigned-aid-request.png" target="_blank" rel="noopener"><img src="case-manager/05-review-an-assigned-aid-request.png" loading="lazy" alt="Case Manager workspace, Review an assigned aid request"></a>
+    <figcaption><span>5.</span> <a href="case-manager/05-review-an-assigned-aid-request.png" target="_blank" rel="noopener">Review an assigned aid request</a></figcaption>
+  </figure>
+<figure>
+    <a href="case-manager/06-begin-case-review.png" target="_blank" rel="noopener"><img src="case-manager/06-begin-case-review.png" loading="lazy" alt="Case Manager workspace, Begin case review"></a>
+    <figcaption><span>6.</span> <a href="case-manager/06-begin-case-review.png" target="_blank" rel="noopener">Begin case review</a></figcaption>
+  </figure>
+<figure>
+    <a href="case-manager/07-verify-the-request.png" target="_blank" rel="noopener"><img src="case-manager/07-verify-the-request.png" loading="lazy" alt="Case Manager workspace, Verify the request"></a>
+    <figcaption><span>7.</span> <a href="case-manager/07-verify-the-request.png" target="_blank" rel="noopener">Verify the request</a></figcaption>
+  </figure>
+<figure>
+    <a href="case-manager/08-approve-the-request.png" target="_blank" rel="noopener"><img src="case-manager/08-approve-the-request.png" loading="lazy" alt="Case Manager workspace, Approve the request"></a>
+    <figcaption><span>8.</span> <a href="case-manager/08-approve-the-request.png" target="_blank" rel="noopener">Approve the request</a></figcaption>
+  </figure></div>
+  </section>
+<section id="logistics">
+    <h2>Logistics Staff</h2>
+    <p class="account">logistics@surakuma.test</p>
+    <p>Check stock and its ledger, open an approved case, reserve suitable supplies, dispatch them, and confirm delivery.</p>
+    <div class="screens"><figure>
+    <a href="logistics/01-overview.png" target="_blank" rel="noopener"><img src="logistics/01-overview.png" loading="lazy" alt="Logistics Staff workspace, Overview"></a>
+    <figcaption><span>1.</span> <a href="logistics/01-overview.png" target="_blank" rel="noopener">Overview</a></figcaption>
+  </figure>
+<figure>
+    <a href="logistics/02-cases-and-ai-review.png" target="_blank" rel="noopener"><img src="logistics/02-cases-and-ai-review.png" loading="lazy" alt="Logistics Staff workspace, Cases &amp; AI review"></a>
+    <figcaption><span>2.</span> <a href="logistics/02-cases-and-ai-review.png" target="_blank" rel="noopener">Cases &amp; AI review</a></figcaption>
+  </figure>
+<figure>
+    <a href="logistics/03-resources-and-logistics.png" target="_blank" rel="noopener"><img src="logistics/03-resources-and-logistics.png" loading="lazy" alt="Logistics Staff workspace, Resources &amp; logistics"></a>
+    <figcaption><span>3.</span> <a href="logistics/03-resources-and-logistics.png" target="_blank" rel="noopener">Resources &amp; logistics</a></figcaption>
+  </figure>
+<figure>
+    <a href="logistics/04-my-profile.png" target="_blank" rel="noopener"><img src="logistics/04-my-profile.png" loading="lazy" alt="Logistics Staff workspace, My profile"></a>
+    <figcaption><span>4.</span> <a href="logistics/04-my-profile.png" target="_blank" rel="noopener">My profile</a></figcaption>
+  </figure>
+<figure>
+    <a href="logistics/05-notifications.png" target="_blank" rel="noopener"><img src="logistics/05-notifications.png" loading="lazy" alt="Logistics Staff workspace, Notifications"></a>
+    <figcaption><span>5.</span> <a href="logistics/05-notifications.png" target="_blank" rel="noopener">Notifications</a></figcaption>
+  </figure>
+<figure>
+    <a href="logistics/06-open-the-new-resource-form.png" target="_blank" rel="noopener"><img src="logistics/06-open-the-new-resource-form.png" loading="lazy" alt="Logistics Staff workspace, Open the new resource form"></a>
+    <figcaption><span>6.</span> <a href="logistics/06-open-the-new-resource-form.png" target="_blank" rel="noopener">Open the new resource form</a></figcaption>
+  </figure>
+<figure>
+    <a href="logistics/07-replenish-stock-and-check-the-ledger.png" target="_blank" rel="noopener"><img src="logistics/07-replenish-stock-and-check-the-ledger.png" loading="lazy" alt="Logistics Staff workspace, Replenish stock and check the ledger"></a>
+    <figcaption><span>7.</span> <a href="logistics/07-replenish-stock-and-check-the-ledger.png" target="_blank" rel="noopener">Replenish stock and check the ledger</a></figcaption>
+  </figure>
+<figure>
+    <a href="logistics/08-review-the-requested-supplies-and-available-stock.png" target="_blank" rel="noopener"><img src="logistics/08-review-the-requested-supplies-and-available-stock.png" loading="lazy" alt="Logistics Staff workspace, Review the requested supplies and available stock"></a>
+    <figcaption><span>8.</span> <a href="logistics/08-review-the-requested-supplies-and-available-stock.png" target="_blank" rel="noopener">Review the requested supplies and available stock</a></figcaption>
+  </figure>
+<figure>
+    <a href="logistics/09-reserve-the-supplies.png" target="_blank" rel="noopener"><img src="logistics/09-reserve-the-supplies.png" loading="lazy" alt="Logistics Staff workspace, Reserve the supplies"></a>
+    <figcaption><span>9.</span> <a href="logistics/09-reserve-the-supplies.png" target="_blank" rel="noopener">Reserve the supplies</a></figcaption>
+  </figure>
+<figure>
+    <a href="logistics/10-dispatch-the-reserved-supplies.png" target="_blank" rel="noopener"><img src="logistics/10-dispatch-the-reserved-supplies.png" loading="lazy" alt="Logistics Staff workspace, Dispatch the reserved supplies"></a>
+    <figcaption><span>10.</span> <a href="logistics/10-dispatch-the-reserved-supplies.png" target="_blank" rel="noopener">Dispatch the reserved supplies</a></figcaption>
+  </figure>
+<figure>
+    <a href="logistics/11-confirm-delivery.png" target="_blank" rel="noopener"><img src="logistics/11-confirm-delivery.png" loading="lazy" alt="Logistics Staff workspace, Confirm delivery"></a>
+    <figcaption><span>11.</span> <a href="logistics/11-confirm-delivery.png" target="_blank" rel="noopener">Confirm delivery</a></figcaption>
+  </figure></div>
+  </section>
+<section id="shelter-administrator">
+    <h2>Shelter Administrator</h2>
+    <p class="account">shelter@surakuma.test</p>
+    <p>Check available capacity and facilities, open a shelter case, then reserve a suitable place and check the household in.</p>
+    <div class="screens"><figure>
+    <a href="shelter-administrator/01-overview.png" target="_blank" rel="noopener"><img src="shelter-administrator/01-overview.png" loading="lazy" alt="Shelter Administrator workspace, Overview"></a>
+    <figcaption><span>1.</span> <a href="shelter-administrator/01-overview.png" target="_blank" rel="noopener">Overview</a></figcaption>
+  </figure>
+<figure>
+    <a href="shelter-administrator/02-cases-and-ai-review.png" target="_blank" rel="noopener"><img src="shelter-administrator/02-cases-and-ai-review.png" loading="lazy" alt="Shelter Administrator workspace, Cases &amp; AI review"></a>
+    <figcaption><span>2.</span> <a href="shelter-administrator/02-cases-and-ai-review.png" target="_blank" rel="noopener">Cases &amp; AI review</a></figcaption>
+  </figure>
+<figure>
+    <a href="shelter-administrator/03-shelter-management.png" target="_blank" rel="noopener"><img src="shelter-administrator/03-shelter-management.png" loading="lazy" alt="Shelter Administrator workspace, Shelter management"></a>
+    <figcaption><span>3.</span> <a href="shelter-administrator/03-shelter-management.png" target="_blank" rel="noopener">Shelter management</a></figcaption>
+  </figure>
+<figure>
+    <a href="shelter-administrator/04-my-profile.png" target="_blank" rel="noopener"><img src="shelter-administrator/04-my-profile.png" loading="lazy" alt="Shelter Administrator workspace, My profile"></a>
+    <figcaption><span>4.</span> <a href="shelter-administrator/04-my-profile.png" target="_blank" rel="noopener">My profile</a></figcaption>
+  </figure>
+<figure>
+    <a href="shelter-administrator/05-notifications.png" target="_blank" rel="noopener"><img src="shelter-administrator/05-notifications.png" loading="lazy" alt="Shelter Administrator workspace, Notifications"></a>
+    <figcaption><span>5.</span> <a href="shelter-administrator/05-notifications.png" target="_blank" rel="noopener">Notifications</a></figcaption>
+  </figure>
+<figure>
+    <a href="shelter-administrator/06-edit-shelter-facilities-and-capacity.png" target="_blank" rel="noopener"><img src="shelter-administrator/06-edit-shelter-facilities-and-capacity.png" loading="lazy" alt="Shelter Administrator workspace, Edit shelter facilities and capacity"></a>
+    <figcaption><span>6.</span> <a href="shelter-administrator/06-edit-shelter-facilities-and-capacity.png" target="_blank" rel="noopener">Edit shelter facilities and capacity</a></figcaption>
+  </figure>
+<figure>
+    <a href="shelter-administrator/07-match-a-household-to-an-accessible-shelter.png" target="_blank" rel="noopener"><img src="shelter-administrator/07-match-a-household-to-an-accessible-shelter.png" loading="lazy" alt="Shelter Administrator workspace, Match a household to an accessible shelter"></a>
+    <figcaption><span>7.</span> <a href="shelter-administrator/07-match-a-household-to-an-accessible-shelter.png" target="_blank" rel="noopener">Match a household to an accessible shelter</a></figcaption>
+  </figure>
+<figure>
+    <a href="shelter-administrator/08-reserve-a-suitable-shelter-place.png" target="_blank" rel="noopener"><img src="shelter-administrator/08-reserve-a-suitable-shelter-place.png" loading="lazy" alt="Shelter Administrator workspace, Reserve a suitable shelter place"></a>
+    <figcaption><span>8.</span> <a href="shelter-administrator/08-reserve-a-suitable-shelter-place.png" target="_blank" rel="noopener">Reserve a suitable shelter place</a></figcaption>
+  </figure>
+<figure>
+    <a href="shelter-administrator/09-check-the-household-in.png" target="_blank" rel="noopener"><img src="shelter-administrator/09-check-the-household-in.png" loading="lazy" alt="Shelter Administrator workspace, Check the household in"></a>
+    <figcaption><span>9.</span> <a href="shelter-administrator/09-check-the-household-in.png" target="_blank" rel="noopener">Check the household in</a></figcaption>
+  </figure></div>
+  </section>
+<section id="volunteer">
+    <h2>Volunteer</h2>
+    <p class="account">volunteer@surakuma.test</p>
+    <p>Open My assignments, accept the task, start it, and submit the completed work for verification.</p>
+    <div class="screens"><figure>
+    <a href="volunteer/01-my-assignments.png" target="_blank" rel="noopener"><img src="volunteer/01-my-assignments.png" loading="lazy" alt="Volunteer workspace, My assignments"></a>
+    <figcaption><span>1.</span> <a href="volunteer/01-my-assignments.png" target="_blank" rel="noopener">My assignments</a></figcaption>
+  </figure>
+<figure>
+    <a href="volunteer/02-my-profile.png" target="_blank" rel="noopener"><img src="volunteer/02-my-profile.png" loading="lazy" alt="Volunteer workspace, My profile"></a>
+    <figcaption><span>2.</span> <a href="volunteer/02-my-profile.png" target="_blank" rel="noopener">My profile</a></figcaption>
+  </figure>
+<figure>
+    <a href="volunteer/03-notifications.png" target="_blank" rel="noopener"><img src="volunteer/03-notifications.png" loading="lazy" alt="Volunteer workspace, Notifications"></a>
+    <figcaption><span>3.</span> <a href="volunteer/03-notifications.png" target="_blank" rel="noopener">Notifications</a></figcaption>
+  </figure>
+<figure>
+    <a href="volunteer/04-accept-the-assignment.png" target="_blank" rel="noopener"><img src="volunteer/04-accept-the-assignment.png" loading="lazy" alt="Volunteer workspace, Accept the assignment"></a>
+    <figcaption><span>4.</span> <a href="volunteer/04-accept-the-assignment.png" target="_blank" rel="noopener">Accept the assignment</a></figcaption>
+  </figure>
+<figure>
+    <a href="volunteer/05-start-the-assignment.png" target="_blank" rel="noopener"><img src="volunteer/05-start-the-assignment.png" loading="lazy" alt="Volunteer workspace, Start the assignment"></a>
+    <figcaption><span>5.</span> <a href="volunteer/05-start-the-assignment.png" target="_blank" rel="noopener">Start the assignment</a></figcaption>
+  </figure>
+<figure>
+    <a href="volunteer/06-submit-completed-work-for-verification.png" target="_blank" rel="noopener"><img src="volunteer/06-submit-completed-work-for-verification.png" loading="lazy" alt="Volunteer workspace, Submit completed work for verification"></a>
+    <figcaption><span>6.</span> <a href="volunteer/06-submit-completed-work-for-verification.png" target="_blank" rel="noopener">Submit completed work for verification</a></figcaption>
+  </figure></div>
+  </section>
+<section id="volunteer-coordinator">
+    <h2>Volunteer Coordinator</h2>
+    <p class="account">volunteers@surakuma.test</p>
+    <p>Review volunteer skills and availability, assign cases to verified volunteers, and verify completed tasks.</p>
+    <div class="screens"><figure>
+    <a href="volunteer-coordinator/01-overview.png" target="_blank" rel="noopener"><img src="volunteer-coordinator/01-overview.png" loading="lazy" alt="Volunteer Coordinator workspace, Overview"></a>
+    <figcaption><span>1.</span> <a href="volunteer-coordinator/01-overview.png" target="_blank" rel="noopener">Overview</a></figcaption>
+  </figure>
+<figure>
+    <a href="volunteer-coordinator/02-cases-and-ai-review.png" target="_blank" rel="noopener"><img src="volunteer-coordinator/02-cases-and-ai-review.png" loading="lazy" alt="Volunteer Coordinator workspace, Cases &amp; AI review"></a>
+    <figcaption><span>2.</span> <a href="volunteer-coordinator/02-cases-and-ai-review.png" target="_blank" rel="noopener">Cases &amp; AI review</a></figcaption>
+  </figure>
+<figure>
+    <a href="volunteer-coordinator/03-volunteer-coordination.png" target="_blank" rel="noopener"><img src="volunteer-coordinator/03-volunteer-coordination.png" loading="lazy" alt="Volunteer Coordinator workspace, Volunteer coordination"></a>
+    <figcaption><span>3.</span> <a href="volunteer-coordinator/03-volunteer-coordination.png" target="_blank" rel="noopener">Volunteer coordination</a></figcaption>
+  </figure>
+<figure>
+    <a href="volunteer-coordinator/04-my-profile.png" target="_blank" rel="noopener"><img src="volunteer-coordinator/04-my-profile.png" loading="lazy" alt="Volunteer Coordinator workspace, My profile"></a>
+    <figcaption><span>4.</span> <a href="volunteer-coordinator/04-my-profile.png" target="_blank" rel="noopener">My profile</a></figcaption>
+  </figure>
+<figure>
+    <a href="volunteer-coordinator/05-notifications.png" target="_blank" rel="noopener"><img src="volunteer-coordinator/05-notifications.png" loading="lazy" alt="Volunteer Coordinator workspace, Notifications"></a>
+    <figcaption><span>5.</span> <a href="volunteer-coordinator/05-notifications.png" target="_blank" rel="noopener">Notifications</a></figcaption>
+  </figure>
+<figure>
+    <a href="volunteer-coordinator/06-open-the-volunteer-profile-and-verification-form.png" target="_blank" rel="noopener"><img src="volunteer-coordinator/06-open-the-volunteer-profile-and-verification-form.png" loading="lazy" alt="Volunteer Coordinator workspace, Open the volunteer profile and verification form"></a>
+    <figcaption><span>6.</span> <a href="volunteer-coordinator/06-open-the-volunteer-profile-and-verification-form.png" target="_blank" rel="noopener">Open the volunteer profile and verification form</a></figcaption>
+  </figure>
+<figure>
+    <a href="volunteer-coordinator/07-review-work-awaiting-coordinator-verification.png" target="_blank" rel="noopener"><img src="volunteer-coordinator/07-review-work-awaiting-coordinator-verification.png" loading="lazy" alt="Volunteer Coordinator workspace, Review work awaiting coordinator verification"></a>
+    <figcaption><span>7.</span> <a href="volunteer-coordinator/07-review-work-awaiting-coordinator-verification.png" target="_blank" rel="noopener">Review work awaiting coordinator verification</a></figcaption>
+  </figure>
+<figure>
+    <a href="volunteer-coordinator/08-verify-the-completed-assignment.png" target="_blank" rel="noopener"><img src="volunteer-coordinator/08-verify-the-completed-assignment.png" loading="lazy" alt="Volunteer Coordinator workspace, Verify the completed assignment"></a>
+    <figcaption><span>8.</span> <a href="volunteer-coordinator/08-verify-the-completed-assignment.png" target="_blank" rel="noopener">Verify the completed assignment</a></figcaption>
+  </figure>
+<figure>
+    <a href="volunteer-coordinator/09-match-a-case-to-a-verified-volunteer.png" target="_blank" rel="noopener"><img src="volunteer-coordinator/09-match-a-case-to-a-verified-volunteer.png" loading="lazy" alt="Volunteer Coordinator workspace, Match a case to a verified volunteer"></a>
+    <figcaption><span>9.</span> <a href="volunteer-coordinator/09-match-a-case-to-a-verified-volunteer.png" target="_blank" rel="noopener">Match a case to a verified volunteer</a></figcaption>
+  </figure>
+<figure>
+    <a href="volunteer-coordinator/10-confirm-the-new-volunteer-assignment.png" target="_blank" rel="noopener"><img src="volunteer-coordinator/10-confirm-the-new-volunteer-assignment.png" loading="lazy" alt="Volunteer Coordinator workspace, Confirm the new volunteer assignment"></a>
+    <figcaption><span>10.</span> <a href="volunteer-coordinator/10-confirm-the-new-volunteer-assignment.png" target="_blank" rel="noopener">Confirm the new volunteer assignment</a></figcaption>
+  </figure></div>
+  </section>
+<section id="partner">
+    <h2>Partner</h2>
+    <p class="account">partner@surakuma.test</p>
+    <p>Open the staff workspace and use My profile to see the partner organisation, country scope, and verification status.</p>
+    <div class="screens"><figure>
+    <a href="partner/01-overview.png" target="_blank" rel="noopener"><img src="partner/01-overview.png" loading="lazy" alt="Partner workspace, Overview"></a>
+    <figcaption><span>1.</span> <a href="partner/01-overview.png" target="_blank" rel="noopener">Overview</a></figcaption>
+  </figure>
+<figure>
+    <a href="partner/02-cases-and-ai-review.png" target="_blank" rel="noopener"><img src="partner/02-cases-and-ai-review.png" loading="lazy" alt="Partner workspace, Cases &amp; AI review"></a>
+    <figcaption><span>2.</span> <a href="partner/02-cases-and-ai-review.png" target="_blank" rel="noopener">Cases &amp; AI review</a></figcaption>
+  </figure>
+<figure>
+    <a href="partner/03-my-profile.png" target="_blank" rel="noopener"><img src="partner/03-my-profile.png" loading="lazy" alt="Partner workspace, My profile"></a>
+    <figcaption><span>3.</span> <a href="partner/03-my-profile.png" target="_blank" rel="noopener">My profile</a></figcaption>
+  </figure>
+<figure>
+    <a href="partner/04-notifications.png" target="_blank" rel="noopener"><img src="partner/04-notifications.png" loading="lazy" alt="Partner workspace, Notifications"></a>
+    <figcaption><span>4.</span> <a href="partner/04-notifications.png" target="_blank" rel="noopener">Notifications</a></figcaption>
+  </figure></div>
+  </section>
+<section id="country-administrator">
+    <h2>Country Administrator</h2>
+    <p class="account">country-admin@surakuma.test</p>
+    <p>Review the country overview and unassigned cases, then manage staff access, organisations, local crises, supplies, and shelters. Use Reports and Alerts to track operations.</p>
+    <div class="screens"><figure>
+    <a href="country-administrator/01-overview.png" target="_blank" rel="noopener"><img src="country-administrator/01-overview.png" loading="lazy" alt="Country Administrator workspace, Overview"></a>
+    <figcaption><span>1.</span> <a href="country-administrator/01-overview.png" target="_blank" rel="noopener">Overview</a></figcaption>
+  </figure>
+<figure>
+    <a href="country-administrator/02-unassigned-cases.png" target="_blank" rel="noopener"><img src="country-administrator/02-unassigned-cases.png" loading="lazy" alt="Country Administrator workspace, Unassigned cases"></a>
+    <figcaption><span>2.</span> <a href="country-administrator/02-unassigned-cases.png" target="_blank" rel="noopener">Unassigned cases</a></figcaption>
+  </figure>
+<figure>
+    <a href="country-administrator/03-users-and-access.png" target="_blank" rel="noopener"><img src="country-administrator/03-users-and-access.png" loading="lazy" alt="Country Administrator workspace, Users &amp; access"></a>
+    <figcaption><span>3.</span> <a href="country-administrator/03-users-and-access.png" target="_blank" rel="noopener">Users &amp; access</a></figcaption>
+  </figure>
+<figure>
+    <a href="country-administrator/04-organisations.png" target="_blank" rel="noopener"><img src="country-administrator/04-organisations.png" loading="lazy" alt="Country Administrator workspace, Organisations"></a>
+    <figcaption><span>4.</span> <a href="country-administrator/04-organisations.png" target="_blank" rel="noopener">Organisations</a></figcaption>
+  </figure>
+<figure>
+    <a href="country-administrator/05-reports.png" target="_blank" rel="noopener"><img src="country-administrator/05-reports.png" loading="lazy" alt="Country Administrator workspace, Reports"></a>
+    <figcaption><span>5.</span> <a href="country-administrator/05-reports.png" target="_blank" rel="noopener">Reports</a></figcaption>
+  </figure>
+<figure>
+    <a href="country-administrator/06-alerts.png" target="_blank" rel="noopener"><img src="country-administrator/06-alerts.png" loading="lazy" alt="Country Administrator workspace, Alerts"></a>
+    <figcaption><span>6.</span> <a href="country-administrator/06-alerts.png" target="_blank" rel="noopener">Alerts</a></figcaption>
+  </figure>
+<figure>
+    <a href="country-administrator/07-crisis-operations.png" target="_blank" rel="noopener"><img src="country-administrator/07-crisis-operations.png" loading="lazy" alt="Country Administrator workspace, Crisis operations"></a>
+    <figcaption><span>7.</span> <a href="country-administrator/07-crisis-operations.png" target="_blank" rel="noopener">Crisis operations</a></figcaption>
+  </figure>
+<figure>
+    <a href="country-administrator/08-resources.png" target="_blank" rel="noopener"><img src="country-administrator/08-resources.png" loading="lazy" alt="Country Administrator workspace, Resources"></a>
+    <figcaption><span>8.</span> <a href="country-administrator/08-resources.png" target="_blank" rel="noopener">Resources</a></figcaption>
+  </figure>
+<figure>
+    <a href="country-administrator/09-shelters.png" target="_blank" rel="noopener"><img src="country-administrator/09-shelters.png" loading="lazy" alt="Country Administrator workspace, Shelters"></a>
+    <figcaption><span>9.</span> <a href="country-administrator/09-shelters.png" target="_blank" rel="noopener">Shelters</a></figcaption>
+  </figure>
+<figure>
+    <a href="country-administrator/10-my-profile.png" target="_blank" rel="noopener"><img src="country-administrator/10-my-profile.png" loading="lazy" alt="Country Administrator workspace, My profile"></a>
+    <figcaption><span>10.</span> <a href="country-administrator/10-my-profile.png" target="_blank" rel="noopener">My profile</a></figcaption>
+  </figure>
+<figure>
+    <a href="country-administrator/11-notifications.png" target="_blank" rel="noopener"><img src="country-administrator/11-notifications.png" loading="lazy" alt="Country Administrator workspace, Notifications"></a>
+    <figcaption><span>11.</span> <a href="country-administrator/11-notifications.png" target="_blank" rel="noopener">Notifications</a></figcaption>
+  </figure>
+<figure>
+    <a href="country-administrator/12-open-shelter-management-details.png" target="_blank" rel="noopener"><img src="country-administrator/12-open-shelter-management-details.png" loading="lazy" alt="Country Administrator workspace, Open shelter management details"></a>
+    <figcaption><span>12.</span> <a href="country-administrator/12-open-shelter-management-details.png" target="_blank" rel="noopener">Open shelter management details</a></figcaption>
+  </figure>
+<figure>
+    <a href="country-administrator/13-resources-dispatches.png" target="_blank" rel="noopener"><img src="country-administrator/13-resources-dispatches.png" loading="lazy" alt="Country Administrator workspace, Resources - Dispatches"></a>
+    <figcaption><span>13.</span> <a href="country-administrator/13-resources-dispatches.png" target="_blank" rel="noopener">Resources - Dispatches</a></figcaption>
+  </figure>
+<figure>
+    <a href="country-administrator/14-resources-transfers.png" target="_blank" rel="noopener"><img src="country-administrator/14-resources-transfers.png" loading="lazy" alt="Country Administrator workspace, Resources - Transfers"></a>
+    <figcaption><span>14.</span> <a href="country-administrator/14-resources-transfers.png" target="_blank" rel="noopener">Resources - Transfers</a></figcaption>
+  </figure>
+<figure>
+    <a href="country-administrator/15-resources-reservations.png" target="_blank" rel="noopener"><img src="country-administrator/15-resources-reservations.png" loading="lazy" alt="Country Administrator workspace, Resources - Reservations"></a>
+    <figcaption><span>15.</span> <a href="country-administrator/15-resources-reservations.png" target="_blank" rel="noopener">Resources - Reservations</a></figcaption>
+  </figure>
+<figure>
+    <a href="country-administrator/16-organisations-country-settings.png" target="_blank" rel="noopener"><img src="country-administrator/16-organisations-country-settings.png" loading="lazy" alt="Country Administrator workspace, Organisations - Country settings"></a>
+    <figcaption><span>16.</span> <a href="country-administrator/16-organisations-country-settings.png" target="_blank" rel="noopener">Organisations - Country settings</a></figcaption>
+  </figure>
+<figure>
+    <a href="country-administrator/17-open-the-country-crisis-creation-form.png" target="_blank" rel="noopener"><img src="country-administrator/17-open-the-country-crisis-creation-form.png" loading="lazy" alt="Country Administrator workspace, Open the country crisis creation form"></a>
+    <figcaption><span>17.</span> <a href="country-administrator/17-open-the-country-crisis-creation-form.png" target="_blank" rel="noopener">Open the country crisis creation form</a></figcaption>
+  </figure></div>
+  </section>
+</main>
+</html>
