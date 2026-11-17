@@ -1,3 +1,4 @@
+import { RecoveryPage } from './RecoveryPage';
 import React, { lazy, Suspense } from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter, Route, Routes, Navigate } from 'react-router-dom';
@@ -25,7 +26,7 @@ const NewRequest = lazy(() => import('./CitizenPages').then((m) => ({ default: m
 const NotificationsPage = lazy(() =>
   import('./CitizenPages').then((m) => ({ default: m.NotificationsPage })),
 );
-const ProfilePage = lazy(() => import('./CitizenPages').then((m) => ({ default: m.ProfilePage })));
+const ProfilePage = lazy(() => import('./ProfilePage'));
 const RequestTracking = lazy(() =>
   import('./CitizenPages').then((m) => ({ default: m.RequestTracking })),
 );
@@ -34,6 +35,7 @@ const CaseQueue = lazy(() => import('./StaffPages').then((m) => ({ default: m.Ca
 const ResourcesPage = lazy(() =>
   import('./StaffPages').then((m) => ({ default: m.ResourcesPage })),
 );
+const AdminLogistics = lazy(() => import('./AdminLogistics'));
 const ShelterManagement = lazy(() =>
   import('./StaffPages').then((m) => ({ default: m.ShelterManagement })),
 );
@@ -61,6 +63,8 @@ function App() {
     <Routes>
       <Route element={<PublicLayout />}>
         <Route index element={<HomePage />} />
+        <Route path="forgot-password" element={<RecoveryPage />} />
+        <Route path="reset-password" element={<RecoveryPage reset />} />
         <Route path="login" element={<AuthPage />} />
         <Route path="register" element={<AuthPage register />} />
         <Route path="alerts" element={<AlertsPage />} />
@@ -148,6 +152,9 @@ function App() {
         }
       >
         <Route index element={<AdminPage />} />
+        <Route path="crises" element={<CrisesPage compactEndedResponses />} />
+        <Route path="resources" element={<AdminLogistics />} />
+        <Route path="shelters" element={<ShelterManagement />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

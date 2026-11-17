@@ -42,7 +42,7 @@ The complete backend suite has passed 75 tests. Added coverage includes country-
 
 Frontend unit tests cover 28 existing and adapted behaviours, including localisation catalogue completeness. The isolated Edge Playwright journey covers country switching without stale contacts, region selection in crisis submission, optional country-appropriate alert fields and country-service settings. That regression uses mocked responses; the separate `international-live.spec.ts` acceptance passed against the real API and SQL Server, covering all three countries and the incident-management interface. This is not a full manual audit or every possible endpoint/payload combination.
 
-Global administrators can create international incidents and link/unlink national crises in the Organisations administration section. Incident links never grant access to another country. Crisis-only staff can select eligible resources/shelters and obtain allocation recommendations through an authorised case; national stock administration still requires a country-wide grant. The existing disabled sharing endpoint remains disabled and is tested as such.
+The 16 November administrator scope update retired the shared incident workflow. Each country manages its own crises, and the System Administrator can review every country. Historical links remain in the database. Crisis-only staff can select eligible resources and shelters and obtain allocation recommendations through an authorised case. National stock administration still requires a country-wide grant.
 
 ## Regional snapshot provenance
 

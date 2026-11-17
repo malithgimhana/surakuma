@@ -1,7 +1,9 @@
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Surakuma.Application;
 using Surakuma.Domain;
 using Surakuma.Infrastructure;
 
@@ -15,10 +17,12 @@ public sealed class ProviderTests
         {
             get; private set;
         }
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        public string? Body { get; private set; }
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Calls++;
-            return Task.FromResult(new HttpResponseMessage(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") });
+            Body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
+            return new HttpResponseMessage(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
         }
     }
     private sealed class CaptureMappingHandler : HttpMessageHandler
@@ -81,7 +85,38 @@ public sealed class ProviderTests
     {
         using var http = new HttpClient(new Handler(status, "{}"));
         var provider = new EmailProvider(http, Config());
-        var result = await provider.SendAsync("demo@example.test", "Synthetic message", Guid.NewGuid(), default);
+        var result = await provider.SendAsync("demo@example.test", new CitizenEmailUpdate("Synthetic message"), Guid.NewGuid(), default);
         Assert.Equal(state, result.State);
+    }
+
+    [Fact]
+    public async Task BrevoReceivesLocalizedStatusEmailWithRequestLinkAndWebsiteLogo()
+    {
+        var handler = new Handler(HttpStatusCode.Created, """{"messageId":"demo-id"}""");
+        using var http = new HttpClient(handler);
+        var config = Config();
+        config["Email:PortalBaseUrl"] = "https://surakuma.example.test";
+        var entry = new OutboxMessage
+        {
+            RequestId = Guid.NewGuid(),
+            Message = "SK-27B4E8A190: Your request has been approved for assistance.",
+            TamilMessage = "SK-27B4E8A190: அங்கீகரிக்கப்பட்டது."
+        };
+        var result = await new EmailProvider(http, config).SendAsync(
+            "demo@example.test", CitizenEmailUpdate.FromOutbox(entry, "ta"), entry.Id, default);
+
+        Assert.Equal(new DeliveryResult("Sent", "demo-id"), result);
+        using var json = JsonDocument.Parse(handler.Body!);
+        var payload = json.RootElement;
+        Assert.Equal("உங்கள் கோரிக்கை அங்கீகரிக்கப்பட்டது", payload.GetProperty("subject").GetString());
+        var text = payload.GetProperty("textContent").GetString();
+        var html = payload.GetProperty("htmlContent").GetString();
+        var requestUrl = $"https://surakuma.example.test/app/requests/{entry.RequestId:D}";
+        Assert.Contains(requestUrl, text);
+        Assert.Contains("குறிப்பு எண்: SK-27B4E8A190", text);
+        Assert.Contains($"href=\"{requestUrl}\"", html);
+        Assert.Contains("src=\"https://surakuma.example.test/surakuma-email-logo.png\"", html);
+        Assert.Contains("lang=\"ta\"", html);
+        Assert.Equal(entry.Id.ToString(), payload.GetProperty("headers").GetProperty("X-Surakuma-Event").GetString());
     }
 }

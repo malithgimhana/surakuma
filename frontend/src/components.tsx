@@ -40,12 +40,14 @@ export function Card({ children, className = '' }: { children: ReactNode; classN
 }
 export function Field({
   label,
+  labelAction,
   children,
   error,
   hint,
   endAdornment,
 }: {
   label: string;
+  labelAction?: ReactNode;
   children: ReactNode;
   error?: string;
   hint?: string;
@@ -63,7 +65,14 @@ export function Field({
     : children;
   return (
     <div className="field">
-      <label htmlFor={id}>{label}</label>
+      {labelAction ? (
+        <div className="field-label-row">
+          <label htmlFor={id}>{label}</label>
+          {labelAction}
+        </div>
+      ) : (
+        <label htmlFor={id}>{label}</label>
+      )}
       {endAdornment ? <div className="staff-password-input">{control}{endAdornment}</div> : control}
       {hint && (
         <small className="muted" id={`${id}-hint`}>

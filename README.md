@@ -55,7 +55,7 @@ Never include the development settings file or passwords in a submission ZIP or 
 
 ## Optional real integrations
 
-Without credentials, AI uses labelled deterministic rules, email is captured in SQL, maps display OpenStreetMap tiles, and route/search requests return an explicit unavailable response. No external result is fabricated.
+Without credentials, AI uses labelled deterministic rules, maps display OpenStreetMap tiles, and route/search requests return an explicit unavailable response. Citizen email uses Brevo and records a failure when sender credentials are missing. Set `Email__Provider=Capture` for local testing without email delivery. Internal users receive scoped in-app notifications.
 
 Set variables in the API terminal before starting it:
 
@@ -64,9 +64,10 @@ Set variables in the API terminal before starting it:
 | `ConnectionStrings__Default` | Override SQL Server connection |
 | `Ai__ApiKey` | Free Gemini API key |
 | `Ai__Model` | Configurable supported free-tier model; default in appsettings |
-| `Email__Provider` | `Capture` (default) or `Brevo` |
+| `Email__Provider` | `Brevo` (default), or `Capture` for local testing |
 | `Email__ApiKey` | Brevo key |
 | `Email__Sender` | Verified Brevo sender email |
+| `Email__PortalBaseUrl` | Citizen portal origin used for request links and the email logo. Use the public HTTPS origin for delivered emails. Development defaults to `http://localhost:5173`. |
 | `Mapping__ApiKey` | openrouteservice key for geocoding/routing |
 | `Jwt__Key` | Required strong signing key outside Development |
 
@@ -92,7 +93,7 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-The browser tests read the ignored local demo password themselves. They create synthetic requests in the demonstration database. They do not send real email.
+The browser tests read the ignored local demo password themselves and create synthetic requests in the demonstration database. Start the API with `Email__Provider=Capture` for browser testing.
 
 Create a source-only submission archive with `.\scripts\Package.ps1`. It excludes generated settings, evidence/runtime data, dependencies, build outputs, logs and test traces. Add the reviewed final report and demonstration link separately before institutional submission.
 
@@ -120,3 +121,5 @@ Create a source-only submission archive with `.\scripts\Package.ps1`. It exclude
 The local assessment materials are indexed in [docs/submission/README.md](docs/submission/README.md). `output/docx/Surakuma-technical-report.docx` and `output/pdf/Surakuma-technical-report.pdf` contain deliberately blank identity/contribution fields. `output/demo/index.html` plays the captioned local browser recording. Translation/UAT/contribution templates have blank approval fields. Rebuild the combined source/report/video archive with `./scripts/Package-Submission.ps1` after completing reviews and edits. From `frontend`, `npm run demo:record` records the synthetic walkthrough when both servers are available and the API uses explicit `-BrowserTests` mode; restart normally afterward.
 
 See `docs/implementation-plan.md`, `docs/architecture/decisions.md` and `docs/testing/results.md`. Human language review, participant UAT, live provider account checks, identity/contribution details and final student editorial review remain outstanding. A captioned local demonstration and an editable report/PDF are prepared. Optional donations, payments, forecasting and offline capture are excluded from the core release. Git history should reflect the actual solo build and subsequent testing/documentation contributions.
+
+International administration now connects country reports, staff lifecycle, partner verification, sensitive-change approvals, notification recovery and administrator alerts. See [administration workflows and operator setup](docs/administration-workflows.md) for permissions, metric definitions and migration instructions.

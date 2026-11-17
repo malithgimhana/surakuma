@@ -17,12 +17,6 @@ test('real three-country submission, scoped triage, allocation and delivery', as
   const headers = { Authorization: `Bearer ${(await login.json()).accessToken}` };
   const lookup = await (await request.get(api + '/public/lookups')).json();
   const organisationId = lookup.organisations[0].id;
-  const incident = await (
-    await request.post(api + '/incidents', {
-      headers,
-      data: { name: 'Three-country acceptance incident' },
-    })
-  ).json();
   const cases: { id: string; country: string }[] = [];
   for (const [countryCode, latitude, longitude] of [
     ['LK', 6.93, 79.88],
@@ -36,6 +30,7 @@ test('real three-country submission, scoped triage, allocation and delivery', as
         })
       ).ok(),
     ).toBeTruthy();
+    expect((await request.post(`${api}/admin/organisations/${organisationId}/countries/${countryCode}/verification`, { headers, data: { evidence: 'Synthetic partner registration checked', decision: 'Verified', reason: 'Acceptance verification' } })).ok()).toBeTruthy();
     const crisis = await (
       await request.post(api + '/crises', {
         headers,
@@ -56,9 +51,6 @@ test('real three-country submission, scoped triage, allocation and delivery', as
           data: { organisationId },
         })
       ).ok(),
-    ).toBeTruthy();
-    expect(
-      (await request.put(`${api}/incidents/${incident.id}/crises/${crisis.id}`, { headers })).ok(),
     ).toBeTruthy();
     const email = `scope-${countryCode.toLowerCase()}@acceptance.test`;
     expect(
@@ -201,29 +193,83 @@ test('real three-country submission, scoped triage, allocation and delivery', as
   }
   const adminContext = await browser.newContext({ ignoreHTTPSErrors: true });
   adminContext.setDefaultTimeout(15000);
-  await adminContext.addInitScript(() => localStorage.setItem('surakuma.country', 'IN'));
   const admin = await adminContext.newPage();
   await admin.goto('http://127.0.0.1:5192/login');
   await admin.getByLabel('Email address', { exact: true }).fill('admin@surakuma.test');
   await admin.locator('input[name=password]').fill(password);
   await admin.getByRole('button', { name: 'Log in', exact: true }).click();
   await admin.waitForURL('**/admin');
-  await admin.goto('http://127.0.0.1:5192/admin?section=organisations');
-  await admin.getByLabel('Incident name', { exact: true }).fill('Interface-created coordination');
-  await admin.getByRole('button', { name: 'Create incident', exact: true }).click();
-  await expect(
-    admin.getByRole('heading', { name: 'Interface-created coordination', exact: true }),
-  ).toBeVisible();
-  const indianLink = admin.locator('p').filter({ hasText: 'Acceptance IN' });
-  await indianLink.getByRole('button', { name: 'Unlink', exact: true }).click();
-  await expect(indianLink).toHaveCount(0);
-  await admin.getByLabel('International incident', { exact: true }).selectOption(incident.id);
-  await admin
-    .getByLabel('National crisis', { exact: true })
-    .selectOption({ label: 'Acceptance IN' });
-  await admin.getByRole('button', { name: 'Link crisis', exact: true }).click();
-  await expect(indianLink).toBeVisible();
+  await expect(admin.getByRole('heading', { name: 'Humanitarian response overview' })).toBeVisible();
+  await expect(admin.getByRole('combobox', { name: 'Country', exact: true })).toHaveValue('LK');
+  await expect(admin.getByRole('list', { name: 'Response figures' })).toBeVisible();
+  await admin.screenshot({ path: test.info().outputPath('administration-overview.png'), fullPage: true });
+  await admin.goto('http://127.0.0.1:5192/admin?section=reports');
+  await expect(admin.getByRole('heading', { name: 'Operational reports' })).toBeVisible();
+  await admin.screenshot({ path: test.info().outputPath('administration-reports.png'), fullPage: true });
+  const download = admin.waitForEvent('download'); await admin.getByRole('button', { name: 'Download CSV' }).click(); expect((await download).suggestedFilename()).toContain('.csv');
+  const pdf = admin.waitForEvent('download');
+  await admin.getByRole('button', { name: 'Export PDF' }).click();
+  expect((await pdf).suggestedFilename()).toBe('surakuma-operational-report.pdf');
+  await admin.getByLabel('Report scope').selectOption('all');
+  for (const country of ['Sri Lanka', 'Nepal', 'India']) {
+    await expect(admin.getByRole('rowheader', { name: country, exact: true }).first()).toBeVisible();
+  }
+  await admin.goto('http://127.0.0.1:5192/admin?section=users');
+  await expect(admin.getByRole('heading', { name: 'System Administrator access requests' })).toBeVisible();
+  await expect(admin.getByRole('link', { name: 'Approvals', exact: true })).toHaveCount(0);
+  await admin.goto('http://127.0.0.1:5192/admin?section=alerts'); await expect(admin.getByRole('heading', { name: 'Administrator alerts' })).toBeVisible();
+  await admin.setViewportSize({ width: 390, height: 844 });
+  expect(await admin.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
+  const adminAxe = await new AxeBuilder({ page: admin }).withTags(['wcag2a', 'wcag2aa']).analyze(); expect(adminAxe.violations.filter(v => v.impact === 'critical' || v.impact === 'serious')).toEqual([]);
+  await admin.setViewportSize({ width: 1280, height: 900 });
+  await admin.goto('http://127.0.0.1:5192/admin/crises');
+  await expect(admin.getByRole('heading', { name: 'Acceptance LK', exact: true })).toBeVisible();
+  await expect(admin.getByRole('heading', { name: 'Acceptance IN', exact: true })).toHaveCount(0);
+  await admin.getByLabel('Country', { exact: true }).selectOption('IN');
+  await expect(admin.getByRole('heading', { name: 'Acceptance IN', exact: true })).toBeVisible();
+  await expect(admin.getByRole('heading', { name: 'Acceptance LK', exact: true })).toHaveCount(0);
   await adminContext.close();
-  const linked = await (await request.get(api + '/incidents', { headers })).json();
-  expect(linked.find((i: { id: string }) => i.id === incident.id).crises).toHaveLength(3);
+});
+
+
+test('country administrator sees only authorised reporting and cannot verify partners', async ({ browser, request }) => {
+  const password = process.env.SURAKUMA_ACCEPTANCE_PASSWORD;
+  if (!password) throw new Error('Run only through the isolated acceptance script.');
+  const api = 'https://localhost:7143/api/v1';
+  const login = await request.post(api + '/auth/login', { data: { email: 'admin@surakuma.test', password } });
+  const headers = { Authorization: `Bearer ${(await login.json()).accessToken}` };
+  const lookup = await (await request.get(api + '/public/lookups?countryCode=LK')).json();
+  const organisationId = lookup.organisations[0].id;
+  expect((await request.post(api + '/admin/users', { headers, data: { name: 'Country administrator', email: 'national@acceptance.test', password, role: 'CountryAdministrator', countryCode: 'LK' } })).ok()).toBeTruthy();
+  expect((await request.put(`${api}/admin/organisations/${organisationId}/countries/NP`, { headers })).ok()).toBeTruthy();
+  const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 390, height: 844 } });
+  await context.addInitScript(() => localStorage.setItem('surakuma.country', 'NP'));
+  const page = await context.newPage();
+  await page.goto('http://127.0.0.1:5192/login');
+  await page.getByLabel('Email address', { exact: true }).fill('national@acceptance.test');
+  await page.locator('input[name=password]').fill(password);
+  await page.getByRole('button', { name: 'Log in', exact: true }).click();
+  await page.waitForURL('**/admin');
+  await expect(page.getByRole('combobox', { name: 'Country', exact: true })).toHaveCount(0);
+  await expect(page.locator('.workspace-country')).toHaveText('Country Sri Lanka');
+  await expect(page.getByRole('list', { name: 'Response figures' })).toBeVisible();
+  await page.goto('http://127.0.0.1:5192/admin?section=users');
+  await expect(page.getByRole('row', { name: /national@acceptance\.test/ })).toBeVisible();
+  await expect(page.getByRole('row', { name: /citizen@surakuma\.test/ })).toContainText('View only');
+  await page.goto('http://127.0.0.1:5192/admin?section=organisations');
+  const review = page.getByRole('button', { name: /^(View|Review) verification$/ });
+  await review.click();
+  await expect(page.getByRole('button', { name: 'Save evidence' }).first()).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Verify partner' })).toHaveCount(0);
+  await page.screenshot({ path: test.info().outputPath('country-partner-review-mobile.png'), fullPage: true });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
+  await page.getByRole('button', { name: 'Back to partner' }).click();
+  await page.getByRole('button', { name: 'Remove from Sri Lanka' }).click();
+  const removal = page.getByRole('dialog', { name: 'Remove from Sri Lanka?' });
+  await expect(removal.getByText(/directory.*open cases/)).toBeVisible();
+  await removal.getByRole('button', { name: 'Remove from Sri Lanka' }).click();
+  await expect(page.getByRole('status')).toContainText('was removed from Sri Lanka.');
+  const remaining = await (await request.get(api + '/admin/organisations?countryCode=NP', { headers })).json();
+  expect(remaining.some((organisation: { id: string }) => organisation.id === organisationId)).toBeTruthy();
+  await context.close();
 });

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useCountry } from './geography';
 import { isAxiosError } from 'axios';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -51,7 +52,6 @@ import type {
   Notification,
   Page,
   RequestDetail,
-  User,
 } from './types';
 
 export function AuthPage({ register = false }: { register?: boolean }) {
@@ -59,6 +59,7 @@ export function AuthPage({ register = false }: { register?: boolean }) {
     { signIn } = useAuth(),
     navigate = useNavigate(),
     location = useLocation();
+  const resetLabels: Record<string, string> = { en: 'Forgot password?', si: 'මුරපදය අමතකද?', ta: 'கடவுச்சொல் மறந்துவிட்டதா?', ne: 'पासवर्ड बिर्सनुभयो?', hi: 'पासवर्ड भूल गए?' };
   const [error, setError] = useState<'authError' | 'authThrottle' | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   useEffect(() => setShowPassword(false), [register]);
@@ -96,7 +97,7 @@ export function AuthPage({ register = false }: { register?: boolean }) {
       <Card className="auth-card">
         <IconTile icon={Heart} tone="coral" />
         <h1>{t(register ? 'register' : 'welcomeBack')}</h1>
-        <p className="muted">{t(register ? 'registerSubtitle' : 'loginSubtitle')}</p>
+        <p className="muted auth-subtitle">{t(register ? 'registerSubtitle' : 'loginSubtitle')}</p>
         <form onSubmit={handleSubmit(submit)} className="stack">
           {register && (
             <Field label={t('name')} error={errors.name ? t('checkFields') : undefined}>
@@ -108,6 +109,13 @@ export function AuthPage({ register = false }: { register?: boolean }) {
           </Field>
           <Field
             label={t('password')}
+            labelAction={
+              !register && (
+                <Link className="auth-recovery-link" to="/forgot-password">
+                  {resetLabels[i18n.resolvedLanguage || i18n.language] || resetLabels.en}
+                </Link>
+              )
+            }
             hint={register ? t('passwordHint') : undefined}
             error={errors.password ? t('checkFields') : undefined}
             endAdornment={
@@ -138,10 +146,12 @@ export function AuthPage({ register = false }: { register?: boolean }) {
             {t(register ? 'login' : 'register')}
           </Link>
         </p>
-        <div className="privacy-note">
-          <ShieldCheck size={17} />
-          {t('privacyText')}
-        </div>
+        {register && (
+          <div className="privacy-note">
+            <ShieldCheck size={17} />
+            {t('privacyText')}
+          </div>
+        )}
       </Card>
     </div>
   );
@@ -926,20 +936,60 @@ export function RequestTracking() {
   );
 }
 export function NotificationsPage() {
+  const { user } = useAuth();
+  const isAdministrator = !!user?.roles.some(role => ['Administrator', 'CountryAdministrator'].includes(role));
+  const country = useCountry();
+  const adminAlerts = useQuery({ queryKey: ['admin-alerts-bell', country], enabled: isAdministrator, queryFn: () => get<{ acknowledgedAt?: string; resolvedAt?: string }[]>(`/admin/alerts?countryCode=${country}`), refetchInterval: 60000 });
+  const attention = Array.isArray(adminAlerts.data) ? adminAlerts.data.filter(a => !a.acknowledgedAt && !a.resolvedAt).length : 0;
   const { t, i18n } = useTranslation(),
     client = useQueryClient();
+  const [showRead, setShowRead] = useState(false);
   const q = useQuery({
-    queryKey: ['notifications'],
-    queryFn: () => get<Notification[]>('/notifications'),
+    queryKey: ['notifications', country, showRead ? 'all' : 'unread'],
+    queryFn: () => get<Notification[]>(showRead ? '/notifications' : '/notifications?unreadOnly=true'),
     refetchInterval: 15000,
   });
+  const unread = useQuery({
+    queryKey: ['notifications', 'unread', country],
+    queryFn: () => get<{ count: number }>('/notifications/unread-count'),
+  });
+  const hasUnread = (unread.data?.count ?? 0) > 0 || q.data?.some((n) => !n.read);
   const mutation = useMutation({
-    mutationFn: (id: string) => api.post(`/notifications/${id}/read`),
-    onSuccess: () => void client.invalidateQueries({ queryKey: ['notifications'] }),
+    mutationFn: (id?: string) =>
+      api.post(id ? `/notifications/${id}/read` : '/notifications/read-all', undefined, {
+        params: { countryCode: country },
+      }),
+    onSuccess: (_, id) => {
+      if (id === undefined) setShowRead(false);
+      return client.invalidateQueries({ queryKey: ['notifications'] });
+    },
   });
   return (
     <>
-      <PageHeader title={t('notifications')} />
+      <PageHeader
+        title={t('notifications')}
+        action={
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => mutation.mutate(undefined)}
+            disabled={!hasUnread || mutation.isPending}
+            busy={mutation.isPending && mutation.variables === undefined}
+          >
+            {t('markAllRead')}
+          </Button>
+        }
+      />
+      {isAdministrator && <Card><h2>Administrator alerts</h2><p>{attention} operational issues need attention.</p><Link to="/admin?section=alerts">Review administrator alerts</Link></Card>}
+      <label className="checkbox-label">
+        <input
+          type="checkbox"
+          checked={showRead}
+          onChange={(event) => setShowRead(event.target.checked)}
+          disabled={mutation.isPending}
+        />
+        {t('showReadNotifications')}
+      </label>
       {q.isPending ? (
         <Loading />
       ) : q.error ? (
@@ -952,21 +1002,22 @@ export function NotificationsPage() {
               <div>
                 <p>
                   {i18n.language === 'si'
-                    ? n.sinhalaMessage
+                    ? n.sinhalaMessage || n.message
                     : i18n.language === 'ta'
-                      ? n.tamilMessage
+                      ? n.tamilMessage || n.message
                       : n.message}
                 </p>
                 <small className="muted">{formatDate(n.createdAt, i18n.language)}</small>
-                {n.requestId && (
-                  <NextLink to={`/app/requests/${n.requestId}`}>{t('viewRequest')}</NextLink>
+                {(n.taskId || n.requestId || n.crisisId) && (
+                  <NextLink to={n.taskId ? '/volunteer' : n.requestId ? `${n.isInternal ? '/staff/cases' : '/app/requests'}/${n.requestId}` : '/staff/crises'}>{t(n.taskId ? 'staffVolunteers' : n.requestId ? 'viewRequest' : 'staffCrises')}</NextLink>
                 )}
               </div>
               {!n.read && (
                 <Button
                   variant="ghost"
                   onClick={() => mutation.mutate(n.id)}
-                  busy={mutation.isPending}
+                  disabled={mutation.isPending}
+                  busy={mutation.isPending && mutation.variables === n.id}
                 >
                   {t('markRead')}
                 </Button>
@@ -975,84 +1026,9 @@ export function NotificationsPage() {
           ))}
         </div>
       ) : (
-        <Empty title={t('empty')} />
+        <Empty title={t(showRead ? 'empty' : 'noUnreadNotifications')} />
       )}
       {mutation.error && <ErrorState error={mutation.error} />}
     </>
-  );
-}
-export function ProfilePage() {
-  const { user, updateUser } = useAuth(),
-    { t, i18n } = useTranslation();
-  const [saved, setSaved] = useState(false);
-  const mutation = useMutation({
-    mutationFn: async (form: HTMLFormElement) => {
-      const f = new FormData(form);
-      return (
-        await api.put<User>('/auth/profile', {
-          name: f.get('name'),
-          language: f.get('language'),
-          householdSize: Number(f.get('householdSize')),
-          accessibilityNeeds: f.get('accessibilityNeeds'),
-        })
-      ).data;
-    },
-    onSuccess: (data) => {
-      updateUser(data);
-      void i18n.changeLanguage(data.language);
-      setSaved(true);
-    },
-  });
-  return (
-    <div className="form-page">
-      <PageHeader title={t('profile')} />
-      <Card>
-        <form
-          className="stack"
-          onSubmit={(e) => {
-            e.preventDefault();
-            mutation.mutate(e.currentTarget);
-          }}
-        >
-          <Field label={t('name')}>
-            <input name="name" defaultValue={user?.name} required maxLength={100} />
-          </Field>
-          <Field label={t('email')}>
-            <input value={user?.email || ''} readOnly />
-          </Field>
-          <Field label={t('language')}>
-            <select name="language" defaultValue={user?.language}>
-              <option value="en">English</option>
-              <option value="si">සිංහල</option>
-              <option value="ta">தமிழ்</option>
-            </select>
-          </Field>
-          <Field label={t('householdSize')}>
-            <input
-              type="number"
-              name="householdSize"
-              defaultValue={user?.householdSize}
-              min={1}
-              max={50}
-              required
-            />
-          </Field>
-          <Field label={t('accessibilityNeeds')}>
-            <input
-              name="accessibilityNeeds"
-              defaultValue={user?.accessibilityNeeds}
-              maxLength={500}
-            />
-          </Field>
-          <Button busy={mutation.isPending}>{t('save')}</Button>
-          {saved && (
-            <p role="status" className="success-text">
-              {t('saved')}
-            </p>
-          )}
-          {mutation.error && <ErrorState error={mutation.error} />}
-        </form>
-      </Card>
-    </div>
   );
 }

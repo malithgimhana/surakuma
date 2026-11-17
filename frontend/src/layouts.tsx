@@ -1,8 +1,12 @@
-import { CountrySelector, useCountry, useCountries } from './geography';
+import { CountryScope, CountrySelector, useCountry, useCountries } from './geography';
+import { countryAdminCode } from './countryScope';
 import { useEffect, useState } from 'react';
-import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { get } from './api';
+import { Link, matchPath, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
+  ArrowLeft,
   ArrowUpRight,
   Bell,
   Building2,
@@ -27,6 +31,7 @@ import {
 } from 'lucide-react';
 import { Brand, Button } from './components';
 import { landing, useAuth } from './auth';
+import { canViewAdminSection, getAdminSection } from './adminSections';
 function ThemeToggle() {
   const { t } = useTranslation();
   const [dark, setDark] = useState(() => document.documentElement.dataset.theme === 'dark');
@@ -148,6 +153,21 @@ const staffNav = [
   ['/staff/volunteers', 'staffVolunteers', Users],
   ['/staff/crises', 'staffCrises', Siren],
 ] as const;
+const adminSectionNav = [
+  ['overview', 'Overview', LayoutDashboard],
+  ['cases', 'Unassigned cases', Inbox],
+  ['users', 'Users & access', Users],
+  ['organisations', 'Organisations', Building2],
+  ['integrations', 'Integrations', Layers],
+  ['activity', 'Activity', Activity],
+  ['reports', 'Reports', Activity],
+  ['alerts', 'Alerts', Bell],
+] as const;
+const adminNav = [
+  ['/admin/crises', 'Crisis operations', Siren],
+  ['/admin/resources', 'Resources', Boxes],
+  ['/admin/shelters', 'Shelters', Tent],
+] as const;
 export function AppLayout({
   mode = 'citizen',
 }: {
@@ -157,9 +177,27 @@ export function AppLayout({
     { t } = useTranslation();
   const location = useLocation();
   const home = user ? landing(user) : '/app';
+  const navigate = useNavigate();
+  const hasPreviousPage = (window.history.state?.idx ?? 0) > 0;
+  const atWorkspaceHome = location.pathname === home && !location.search;
   const effectiveMode = mode === 'citizen' && ['/app/notifications', '/app/profile'].includes(location.pathname)
     ? home === '/staff' ? 'staff' : home === '/admin' ? 'admin' : home === '/volunteer' ? 'volunteer' : 'citizen'
     : mode;
+  const fixedCountry = effectiveMode === 'admin' ? countryAdminCode(user) : undefined;
+  const selectedCountry = useCountry();
+  const country = fixedCountry ?? selectedCountry;
+  const unread = useQuery({
+    queryKey: ['notifications', 'unread', country],
+    queryFn: () => get<{ count: number }>('/notifications/unread-count'),
+    enabled: !!user,
+    refetchInterval: 15000,
+  });
+  const globalAdmin = !!user?.roles.includes('Administrator');
+  const administrativeAlerts = useQuery({ queryKey: ['admin-alerts-bell', country], enabled: effectiveMode === 'admin', queryFn: () => get<{ id: string; acknowledgedAt?: string; resolvedAt?: string }[]>(`/admin/alerts?countryCode=${country}`), refetchInterval: 60000 });
+  const alertCount = Array.isArray(administrativeAlerts.data) ? administrativeAlerts.data.filter(a => !a.acknowledgedAt && !a.resolvedAt).length : 0;
+  const currentAdminSection = effectiveMode === 'admin' && matchPath('/admin', location.pathname)
+    ? getAdminSection(new URLSearchParams(location.search).get('section'), globalAdmin)
+    : null;
   const [open, setOpen] = useState(false),
     [logoutError, setLogoutError] = useState(false);
   const citizenNav = [
@@ -168,8 +206,8 @@ export function AppLayout({
     ['/app/notifications', t('notifications'), Bell],
     ['/shelters', t('shelters'), Tent],
     ['/alerts', t('alerts'), Siren],
-    ['/app/profile', t('profile'), Settings],
   ] as const;
+  const profileNav = ['/app/profile', t('profile'), Settings] as const;
   const nav =
     effectiveMode === 'staff'
       ? staffNav.filter(
@@ -185,14 +223,12 @@ export function AppLayout({
             (path.includes('crises') && user?.roles.includes('Coordinator')),
         ).map(([path, label, icon]) => [path, t(label), icon] as const)
       : effectiveMode === 'admin'
-        ? ([['/admin', 'Overview', LayoutDashboard], ['/admin?section=cases', 'Unassigned cases', Inbox], ['/admin?section=users', 'Users & access', Users], ['/admin?section=organisations', 'Organisations', Building2], ['/admin?section=integrations', 'Integrations', Layers], ['/admin?section=activity', 'Activity', Activity], ['/staff/crises', 'Crisis operations', Siren], ['/staff/resources', 'Resources', Boxes], ['/staff/shelters', 'Shelters', Tent]] as const).filter(([path]) => user?.roles.includes('Administrator') || !['/admin?section=activity','/admin?section=integrations'].includes(path))
+        ? adminNav
         : effectiveMode === 'volunteer'
-          ? ([
-              ['/volunteer', 'My assignments', Users],
-              ['/app/profile', t('profile'), Settings],
-            ] as const)
+          ? ([['/volunteer', 'My assignments', Users]] as const)
           : citizenNav;
   return (
+    <CountryScope.Provider value={fixedCountry}>
     <div className="workspace">
       <a href="#main" className="skip-link">{t('skipMain')}</a>
       <aside className={`sidebar ${open ? 'open' : ''}`}>
@@ -207,11 +243,20 @@ export function AppLayout({
                 : 'VOLUNTEER WORKSPACE'}
         </div>
         <nav aria-label="Workspace navigation">
-          {nav.map(([path, label, Icon]) => effectiveMode === 'admin' ? (
-            <Link key={path} to={path} className={location.pathname === '/admin' && (location.search || '') === (path.includes('?') ? '?' + path.split('?')[1] : '') ? 'active' : undefined} aria-current={location.pathname === '/admin' && (location.search || '') === (path.includes('?') ? '?' + path.split('?')[1] : '') ? 'page' : undefined} onClick={() => setOpen(false)}>
-              <Icon size={20} /><span>{label}</span>
-            </Link>
-          ) : (
+          {effectiveMode === 'admin' && adminSectionNav
+            .filter(([section]) => canViewAdminSection(section, globalAdmin))
+            .map(([section, label, Icon]) => (
+              <Link
+                key={section}
+                to={section === 'overview' ? '/admin' : `/admin?section=${section}`}
+                className={currentAdminSection === section ? 'active' : undefined}
+                aria-current={currentAdminSection === section ? 'page' : undefined}
+                onClick={() => setOpen(false)}
+              >
+                <Icon size={20} /><span>{label}</span>
+              </Link>
+            ))}
+          {[...nav, profileNav].map(([path, label, Icon]) => (
             <NavLink key={path} to={path} end onClick={() => setOpen(false)}>
               <Icon size={20} /><span>{label}</span>
             </NavLink>
@@ -237,9 +282,21 @@ export function AppLayout({
           <button className="mobile-menu" aria-label={t(open ? 'closeMenu' : 'menu')} aria-expanded={open} onClick={() => setOpen(!open)}>
             {open ? <X /> : <Menu />}
           </button>
-          <Link to="/" className="back-public">
-            ← {t('home')}
-          </Link>
+          <nav className="workspace-page-nav" aria-label="Page navigation">
+            <button
+              type="button"
+              disabled={!hasPreviousPage && atWorkspaceHome}
+              onClick={() => {
+                if (hasPreviousPage) navigate(-1);
+                else navigate(home, { replace: true });
+              }}
+            >
+              <ArrowLeft size={17} aria-hidden="true" /> {t('back')}
+            </button>
+            <Link to="/">
+              <House size={17} aria-hidden="true" /> {t('home')}
+            </Link>
+          </nav>
           <div className="header-actions">
             <ThemeToggle />
             <CountrySelector /><Language />
@@ -249,6 +306,7 @@ export function AppLayout({
               aria-label={t('notifications')}
             >
               <Bell size={21} />
+              {!!((unread.data?.count || 0) + alertCount) && <span className="notification-count">{(unread.data?.count || 0) + alertCount}</span>}
             </Link>
             <span className="avatar">{user?.name[0]}</span>
             <div className="user-meta">
@@ -265,6 +323,7 @@ export function AppLayout({
         <button className="sidebar-scrim" aria-label={t('closeMenu')} onClick={() => setOpen(false)} />
       )}
     </div>
+    </CountryScope.Provider>
   );
 }
 

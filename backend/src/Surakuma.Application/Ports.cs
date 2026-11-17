@@ -4,6 +4,7 @@ namespace Surakuma.Application;
 
 public interface IStore
 {
+    IQueryable<string> ActiveSystemAdministratorIds { get; }
     IQueryable<T> Query<T>() where T : Record;
     Task<List<T>> ListAsync<T>(IQueryable<T> query, CancellationToken ct = default);
     Task<T?> FindAsync<T>(Guid id, CancellationToken ct = default) where T : Record;
@@ -26,13 +27,16 @@ public sealed record Page<T>(List<T> Items, int Total, int PageNumber, int PageS
 
 public sealed class AccessService(IStore store, ICurrentActor actor)
 {
+    public async Task<bool> PartnerEligible(Guid id, string country, CancellationToken ct) => (await store.ListAsync(store.Query<OrganisationCountry>().Where(x => x.OrganisationId == id && x.CountryCode == country && (x.VerificationState == "Verified" || x.VerificationState == "LegacyActive")), ct)).Count > 0;
+    public async Task RequirePartner(Guid id, string country, CancellationToken ct) { if (!await PartnerEligible(id, country, ct)) throw new RuleException("This partner needs verification in this country before receiving new work."); }
     public string UserId => actor.Id;
     public string? SelectedCountry => actor.SelectedCountry;
     public Task<List<Membership>> Memberships(CancellationToken ct = default) => store.ListAsync(store.Query<Membership>().Where(x => x.UserId == actor.Id), ct);
-    public async Task<bool> IsAdmin(CancellationToken ct = default) => (await Memberships(ct)).Any(x => x.Role == Roles.Administrator);
+    public async Task<bool> IsAdmin(CancellationToken ct = default)
+        => (await store.ListAsync(store.ActiveSystemAdministratorIds.Where(id => id == actor.Id), ct)).Count > 0;
     public async Task RequireOrg(Guid organisationId, string[] roles, CancellationToken ct = default)
     {
-        if (!(await Memberships(ct)).Any(x => x.OrganisationId == organisationId && roles.Contains(x.Role)))
+        if (!await IsAdmin(ct) && !(await Memberships(ct)).Any(x => x.OrganisationId == organisationId && roles.Contains(x.Role)))
             throw new AccessDeniedException();
     }
     public async Task<bool> CountryAccess(string country, string[] roles, CancellationToken ct = default)

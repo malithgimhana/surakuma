@@ -12,6 +12,7 @@ test('administrator sees truthful integration modes and responsive queue status'
   await page.getByLabel('Password', { exact: true }).fill(settings.Seed.Password);
   await page.getByRole('button', { name: 'Log in', exact: true }).click();
   await page.waitForURL('/admin');
+  await page.getByRole('navigation', { name: 'Workspace navigation' }).getByRole('link', { name: 'Integrations' }).click();
   await expect(page.getByRole('heading', { name: 'Integration readiness' })).toBeVisible();
   await expect(page.getByRole('region', { name: 'AI recommendations' })).toContainText(
     'Deterministic fallback',

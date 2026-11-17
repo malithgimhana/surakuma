@@ -66,3 +66,18 @@ Frontend tests cover role-aware login redirects, status text, retry action, bloc
 ## Limits
 
 External services have no configured credentials, so live provider success is not verified. Provider failures are simulated; the UI and worker clearly distinguish fallback/capture from real AI/email. Automated axe checks cover their scanned pages and do not establish full WCAG conformance. Translation-key completeness is not native-speaker translation approval.
+
+## International administration implementation — 13 November 2026
+
+- Full backend suite: **102 passed** on isolated LocalDB databases. Final focused administration run: **7 passed**, including the additional provider/access-alert threshold and resolution regression (103 distinct backend tests now exist).
+- Frontend suite: **35 passed** across 17 files. Production frontend build passed. Release backend build passed without warnings; EF reports no pending model changes. Existing frontend dependency annotation/bundle-size warnings remain.
+- Browser acceptance: **2 passed** in 2.4 minutes. Covered citizen requests, scoped review/allocation/dispatch/delivery across Sri Lanka, Nepal and India, cross-country denial, global reports/CSV/approvals/alerts, and a country administrator's reporting and partner-review restrictions. The delivery journey passed with the shortened alert-worker transaction.
+- After screenshot review, fixed mobile partner form clipping, consolidated administrator alerts into the existing bell/inbox, and corrected report timestamp formatting to UTC. Rebuilt, reran all 35 frontend tests, and reran the focused country-administrator browser case: **1 passed**. Visually inspected its final 390-pixel screenshot; controls fit without horizontal overflow.
+- Browser acceptance included serious/critical axe checks and mobile overflow checks. These are targeted automated checks, not complete accessibility certification or participant UAT.
+- The operator bootstrap was tested only on a disposable rehearsal copy. It creates no account and is restricted to exactly one active global administrator. No live staff account was granted new access.
+- Live migration `20261113052857_AdministrationWorkflows` was applied after a fresh checksum-verified COPY_ONLY backup and successful rehearsal. Before restart, all original table row counts and original non-rowversion columns matched the baseline. Existing organisation-country operations were marked LegacyActive.
+- Final backup and comparison evidence: `tmp/administration-rollout/20261113-193638/`, including `Surakuma-before-administration.bak`, `verification.txt`, and `live-verification.txt`.
+- Restarted the local API on HTTPS 7043 / HTTP 5043. API readiness and frontend on port 5173 both returned HTTP 200. Authenticated workflows were verified on isolated test databases: the stored development password did not authenticate the existing live admin account, and its credentials were not reset.
+- Final broad acceptance database: `Surakuma_Acceptance_c708259f591c4db499ae449a5aa760d9`. Final mobile-check database: `Surakuma_Acceptance_6e4864c4286e4b41b7c37e482da92c5b`. These contain synthetic test records and used captured email only.
+- Logs: `tmp/admin-backend-tests.log`, `tmp/admin-final-focused-tests.log`, `tmp/admin-frontend-tests.log`, `tmp/admin-frontend-build.log`, `tmp/admin-browser-acceptance.log`, and `tmp/admin-mobile-acceptance.log`. Final mobile evidence: `tmp/administration-ui-evidence/country-partner-review-mobile.png`.
+- Live email/provider delivery, native-language review and participant UAT were not performed. The live database has one active global administrator; sensitive approvals intentionally await the second operator-designated administrator.

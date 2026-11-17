@@ -32,7 +32,7 @@ public static class IntegrationConfiguration
                     : "Credentials and sender are configured. Sender verification and an authorised test delivery still need verification.",
                 emailMode == "Brevo" ? emailMissing.ToArray() : emailMode == "Capture" ? [] : ["Email__Provider"]),
             new("mapping", "Location search & driving routes", "openrouteservice", mapKey ? "Configured" : "Unavailable",
-                mapKey ? "Credentials are configured. Live Sri Lankan search and route results still need verification. Routes require staff safety judgement."
+                mapKey ? "Credentials are configured. Live search and route results still need verification in the selected country. Routes require staff safety judgement."
                     : "Search and routing are unavailable. Manual location entry and online OpenStreetMap tiles remain available.",
                 mapKey ? [] : ["Mapping__ApiKey"])
         ];

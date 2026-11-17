@@ -1,3 +1,5 @@
+using System.Data;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -8,7 +10,7 @@ using Surakuma.Infrastructure;
 namespace Surakuma.Api.Controllers;
 
 [ApiController, Route("api/v1"), Authorize]
-public sealed class GeographyController(CrisisDbContext db, AccessService access, Operations operations) : ControllerBase
+public sealed class GeographyController(CrisisDbContext db, AccessService access, Operations operations, InternalNotifications notifications) : ControllerBase
 {
     [HttpPut("countries/{code}/services")]
     public async Task<IActionResult> Configure(string code, CountryServices input, CancellationToken ct)
@@ -20,12 +22,25 @@ public sealed class GeographyController(CrisisDbContext db, AccessService access
         var required = input.RequiredAlertLanguages.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).Distinct().ToArray();
         if (!languages.Contains("en") || !required.Contains("en") || required.Except(languages).Any() || languages.Any(x => !new[] { "en", "si", "ta", "ne", "hi" }.Contains(x))) throw new RuleException("Choose supported languages and include English as the fallback.");
         if (input.Contacts.Length > 20 || input.Contacts.Any(x => x == null || string.IsNullOrWhiteSpace(x.Number) || string.IsNullOrWhiteSpace(x.Label) || x.Label.Length > 100 || !System.Text.RegularExpressions.Regex.IsMatch(x.Number, @"^\+?[0-9 -]{2,25}$") || !Uri.TryCreate(x.SourceUrl, UriKind.Absolute, out var uri) || uri.Scheme != "https")) throw new RuleException("Provide a contact label, telephone number and HTTPS source URL.");
-        country.Languages = string.Join(',', languages);
-        country.RequiredAlertLanguages = string.Join(',', required);
-        var contactsJson = System.Text.Json.JsonSerializer.Serialize(input.Contacts, new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase });
-        if (contactsJson.Length > 4000) throw new RuleException("Contact configuration exceeds the supported size.");
+        var contactsJson = JsonSerializer.Serialize(input.Contacts, JsonSerializerOptions.Web);
+        if (contactsJson.Length > 4000) throw new RuleException("Configuration exceeds the supported size.");
+
+        var savedLanguages = string.Join(',', languages);
+        var savedRequired = string.Join(',', required);
+        var changes = new List<string>();
+        if (country.Languages != savedLanguages)
+            changes.Add($"Available languages changed from {country.Languages} to {savedLanguages}");
+        if (country.RequiredAlertLanguages != savedRequired)
+            changes.Add($"Required alert languages changed from {country.RequiredAlertLanguages} to {savedRequired}");
+        if (country.EmergencyContactsJson != contactsJson)
+            changes.Add("Emergency contacts updated");
+        if (changes.Count == 0) return NoContent();
+
+        country.Languages = savedLanguages;
+        country.RequiredAlertLanguages = savedRequired;
         country.EmergencyContactsJson = contactsJson;
-        operations.Audit("CountryServicesConfigured", country, code);
+        operations.Audit("CountryServicesConfigured", country, string.Join(". ", changes) + ".");
+        await notifications.CountryServicesChanged(country, access.UserId, ct);
         await db.SaveChangesAsync(ct);
         return NoContent();
     }
@@ -39,15 +54,25 @@ public sealed class GeographyController(CrisisDbContext db, AccessService access
     [HttpPut("admin/organisations/{id:guid}/countries/{code}")]
     public async Task<IActionResult> EnableCountry(Guid id, string code, CancellationToken ct)
     {
+        await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         if (!await access.IsAdmin(ct)) throw new AccessDeniedException();
-        if (!await db.Set<Country>().AnyAsync(x => x.Code == code, ct) || !await db.Set<Organisation>().AnyAsync(x => x.Id == id, ct)) throw new MissingException();
-        if (!await db.Set<OrganisationCountry>().AnyAsync(x => x.OrganisationId == id && x.CountryCode == code, ct))
+        if (!await db.Set<Country>().AnyAsync(x => x.Code == code, ct)
+            || !await db.Set<Organisation>().AnyAsync(x => x.Id == id && x.ArchivedAt == null, ct))
+            throw new MissingException();
+        var operation = await db.Set<OrganisationCountry>().IgnoreQueryFilters().SingleOrDefaultAsync(x => x.OrganisationId == id && x.CountryCode == code, ct);
+        if (operation is null)
         {
-            var operation = new OrganisationCountry { OrganisationId = id, CountryCode = code };
+            operation = new OrganisationCountry { OrganisationId = id, CountryCode = code };
             db.Add(operation);
-            operations.Audit("OrganisationCountryEnabled", operation, code);
-            await db.SaveChangesAsync(ct);
         }
+        else if (operation.ArchivedAt is null) return NoContent();
+        operation.ArchivedAt = null;
+        operation.VerificationState = "Pending";
+        operation.ReviewerUserId = null;
+        operation.ReviewedAt = null;
+        operations.Audit("OrganisationCountryEnabled", operation, code);
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
         return NoContent();
     }
 }

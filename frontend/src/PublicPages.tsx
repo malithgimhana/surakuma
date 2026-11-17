@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import {
   Accessibility,
+  Ambulance,
   ArrowRight,
   ArrowUpRight,
   Check,
@@ -14,6 +15,7 @@ import {
   House,
   LifeBuoy,
   MapPin,
+  Phone,
   Plus,
   Search,
   ShieldCheck,
@@ -203,20 +205,30 @@ export function HomePage() {
           <Empty title={t('noAlerts')} />
         )}
       </section>
-      <section className="how-section">
+      <section className="how-section" aria-labelledby="how-title">
         <div className="container">
-          <div className="center-heading">
+          <div className="how-heading">
             <span className="eyebrow">{t('communityTag')}</span>
-            <h2>{t('howTitle')}</h2>
+            <h2 id="how-title">{t('howTitle')}</h2>
           </div>
-          <div className="how-grid">
+          <ol className="how-grid" role="list">
             {[1, 2, 3].map((step) => (
-              <div key={step} className="how-step">
-                <span className={`step-circle step-${step}`}>0{step}</span>
+              <li key={step} className="how-step">
+                <span className={`step-circle step-${step}`} aria-hidden="true">
+                  0{step}
+                </span>
                 <h3>{t('how' + step)}</h3>
                 <p>{t('how' + step + 'desc')}</p>
-              </div>
+              </li>
             ))}
+          </ol>
+          <div className="how-actions">
+            <Link to="/app/requests/new" className="button primary">
+              {t('requestHelp')}
+            </Link>
+            <Link to="/app/requests" className="button secondary">
+              {t('checkMyRequest')}
+            </Link>
           </div>
         </div>
       </section>
@@ -462,25 +474,118 @@ export function ShelterDetails() {
     </div>
   );
 }
-export function InformationPage({ kind }: { kind: 'contact' | 'privacy' | 'guidance' }) {
-  const country = useCountry(), countries = useCountries();
-  const configuration = Array.isArray(countries.data) ? countries.data.find(c => c.code === country) : undefined;
-  const contacts: {label:string;number:string;sourceUrl:string}[] = JSON.parse(configuration?.emergencyContactsJson || '[]');
+type EmergencyContact = { label: string; number: string; sourceUrl: string };
+
+function readEmergencyContacts(json?: string): EmergencyContact[] {
+  try {
+    const contacts: unknown = JSON.parse(json || '[]');
+    if (!Array.isArray(contacts)) return [];
+    return contacts.filter(
+      (contact): contact is EmergencyContact =>
+        typeof contact?.label === 'string' &&
+        contact.label.trim() !== '' &&
+        typeof contact.number === 'string' &&
+        /^\+?\d{2,25}$/.test(contact.number.replace(/[ -]/g, '')) &&
+        typeof contact.sourceUrl === 'string' &&
+        /^https:\/\//i.test(contact.sourceUrl),
+    );
+  } catch {
+    return [];
+  }
+}
+
+function ContactPage() {
+  const country = useCountry();
+  const countries = useCountries();
   const { t } = useTranslation();
+  const configuration = Array.isArray(countries.data)
+    ? countries.data.find((item) => item.code === country)
+    : undefined;
+  const contacts = readEmergencyContacts(configuration?.emergencyContactsJson);
+
+  return (
+    <div className="container page contact-page">
+      <PageHeader title={t('contact')} description={t('contactIntro')} />
+      <section aria-labelledby="contact-emergency-title">
+        <h2 id="contact-emergency-title">
+          {configuration
+            ? t('emergencyContactsCountry', { country: configuration.name })
+            : t('emergencyContacts')}
+        </h2>
+        {countries.isPending ? (
+          <Loading />
+        ) : countries.isError && !configuration ? (
+          <ErrorState error={countries.error} retry={() => void countries.refetch()} />
+        ) : contacts.length ? (
+          <ul className="emergency-contact-grid" role="list">
+            {contacts.map((contact, index) => {
+              const ambulance = /\bambulance\b/i.test(contact.label);
+              return (
+                <li
+                  key={`${contact.label}-${contact.number}-${index}`}
+                  className="card emergency-contact-card"
+                >
+                  <IconTile icon={ambulance ? Ambulance : Phone} tone={ambulance ? 'coral' : 'green'} />
+                  <h3>{contact.label}</h3>
+                  <p className="emergency-contact-number">{contact.number}</p>
+                  <div className="contact-actions">
+                    <a
+                      className="button primary compact"
+                      href={`tel:${contact.number.replace(/[ -]/g, '')}`}
+                    >
+                      <Phone size={16} aria-hidden="true" />
+                      {t('callContact', { number: contact.number })}
+                    </a>
+                    <a className="text-link" href={contact.sourceUrl}>
+                      {t('officialSource')}
+                      <span className="sr-only"> · {contact.label}</span>
+                      <ArrowUpRight size={16} aria-hidden="true" />
+                    </a>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <Card>
+            <p className="muted contact-empty">{t('contactDescription')}</p>
+          </Card>
+        )}
+      </section>
+      <section className="contact-support" aria-labelledby="contact-support-title">
+        <h2 id="contact-support-title">{t('surakumaSupport')}</h2>
+        <Card className="contact-support-card">
+          <div className="contact-support-copy">
+            <IconTile icon={LifeBuoy} tone="green" />
+            <div>
+              <p className="muted">{t('surakumaSupportDescription')}</p>
+              <NextLink to="/guidance">{t('guidance')}</NextLink>
+            </div>
+          </div>
+          <div className="contact-actions">
+            <Link className="button primary compact" to="/app/requests/new">
+              {t('requestHelp')} <ArrowRight size={16} aria-hidden="true" />
+            </Link>
+            <Link className="button secondary compact" to="/app/requests">
+              {t('checkMyRequest')} <ArrowRight size={16} aria-hidden="true" />
+            </Link>
+          </div>
+        </Card>
+      </section>
+    </div>
+  );
+}
+
+export function InformationPage({ kind }: { kind: 'contact' | 'privacy' | 'guidance' }) {
+  const { t } = useTranslation();
+  if (kind === 'contact') return <ContactPage />;
   return (
     <div className="container page narrow">
-      <PageHeader title={t(kind === 'contact' ? 'contactTitle' : kind)} />
+      <PageHeader title={t(kind)} />
       <Card>
-        <IconTile icon={kind === 'contact' ? LifeBuoy : ShieldCheck} tone="green" />
-        <h2>{t(kind === 'contact' ? 'contact' : kind)}</h2>
-        {kind === 'contact' ? <div className="stack">
-          {contacts.map(c => <p key={c.number}><strong>{c.label}:</strong> <a className="text-link" href={`tel:${c.number}`}>{c.number}</a> · <a className="text-link" href={c.sourceUrl}>Official source</a></p>)}
-          {!contacts.length && <p>No verified contacts are configured for this country.</p>}
-        </div> : <p>
-          {t(
-            kind === 'privacy' ? 'privacyText' : 'guidanceText',
-          )}
-        </p>}
+        <IconTile icon={ShieldCheck} tone="green" />
+        <h2>{t(kind)}</h2>
+        <p>{t(kind === 'privacy' ? 'privacyText' : 'guidanceText')}</p>
         <NextLink to="/app/requests/new">{t('requestHelp')}</NextLink>
       </Card>
     </div>

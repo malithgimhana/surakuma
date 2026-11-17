@@ -7,7 +7,15 @@ public sealed record VolunteerRoster(List<VolunteerProfile> Profiles, List<Volun
 
 public sealed record RegisterInput([Required, EmailAddress] string Email, [Required, MinLength(10)] string Password, [Required, MaxLength(100)] string Name, string Language = "en");
 public sealed record LoginInput([Required, EmailAddress] string Email, [Required] string Password);
-public sealed record ProfileInput([Required, MaxLength(100)] string Name, string Language, [Range(1, 50)] int HouseholdSize, [MaxLength(500)] string AccessibilityNeeds);
+public sealed record VolunteerAvailabilityInput([Required(AllowEmptyStrings = true), MaxLength(500)] string Schedule, bool Available);
+public sealed record ProfileInput(
+    [Required, MaxLength(100)] string Name,
+    string Language,
+    [Range(1, 50)] int? HouseholdSize = null,
+    [MaxLength(500)] string? AccessibilityNeeds = null,
+    [MaxLength(40), RegularExpression(@"(?=.*[0-9])[+0-9(). -]+")] string? WorkPhone = null,
+    VolunteerAvailabilityInput? VolunteerAvailability = null,
+    Dictionary<Guid, bool>? CaseManagerAvailability = null);
 public sealed record CreateRequestInput(Guid CrisisId, Guid? OrganisationId, AidCategory Category, Priority Priority,
     [Required, MinLength(10), MaxLength(4000)] string Description, [Required, MaxLength(500)] string LocationText,
     double? Latitude, double? Longitude, [Range(1, 50)] int HouseholdSize, [MaxLength(500)] string AccessibilityNeeds,
@@ -15,7 +23,7 @@ public sealed record CreateRequestInput(Guid CrisisId, Guid? OrganisationId, Aid
     bool RequestedForSomeoneElse = false, [MaxLength(200)] string? RequesterRelationship = null, [MaxLength(500)] string? RequesterContact = null);
 public sealed record StatusInput(RequestStatus Status, [MaxLength(1000)] string Reason = "");
 public sealed record DecisionInput(Guid RecommendationId, string Action, Priority? FinalPriority, AidCategory? FinalCategory, [MaxLength(1000)] string Reason);
-public sealed record ResourceInput(Guid OrganisationId, [Required, MaxLength(100)] string Name, AidCategory Category, [Required] string Unit, [Range(typeof(decimal), "0", "10000000")] decimal Stock, string LocationText, [Range(-90d, 90d)] double Latitude, [Range(-180d, 180d)] double Longitude, string Suitability, bool TransportAvailable, string CountryCode = "LK", Guid? AdministrativeDivisionId = null);
+public sealed record ResourceInput(Guid OrganisationId, [Required, MaxLength(100)] string Name, AidCategory Category, [Required] string Unit, [Range(typeof(decimal), "0", "10000000")] decimal Stock, string LocationText, [Range(-90d, 90d)] double Latitude, [Range(-180d, 180d)] double Longitude, string Suitability, bool TransportAvailable, string CountryCode = "LK", Guid? AdministrativeDivisionId = null, Guid? DepotId = null, [MaxLength(40)] string? Code = null, [Range(typeof(decimal), "0", "10000000")] decimal? LowStockThreshold = null, Guid? OperationId = null);
 public sealed record AllocateInput(Guid RequestId, Guid ResourceId, [Range(typeof(decimal), "0.01", "100000")] decimal Quantity, Guid? RecommendedResourceId = null);
 public sealed record IgnoreAllocationRecommendationInput(Guid RecommendedResourceId);
 public sealed record MovementInput([Range(typeof(decimal), "0.01", "100000")] decimal Quantity, string Note);
@@ -29,7 +37,7 @@ public sealed record ShareInput(Guid OrganisationId);
 public sealed record CentreRoutingInput(Guid? OrganisationId);
 public sealed record AvailabilityInput(bool Available);
 public sealed record CaseManagerInput([Required] string UserId);
-public sealed record StaffInput([Required, EmailAddress] string Email, [Required, MinLength(10)] string Password, [Required] string Name, Guid OrganisationId, [Required] string Role, Guid? CrisisId, string CountryCode = "LK");
+public sealed record StaffInput([Required, EmailAddress] string Email, string? Password, string? Name, Guid? OrganisationId, [Required] string Role, Guid? CrisisId, string CountryCode = "LK");
 public sealed record ReverseGeocodeInput(double? Latitude, double? Longitude);
 public sealed record AiResult(AidCategory Category, Priority Priority, string Explanation, string Provider, string Model, bool Fallback);
 public interface IAiProvider
@@ -37,13 +45,29 @@ public interface IAiProvider
     Task<AiResult> RecommendAsync(AssistanceRequest request, CancellationToken ct);
 }
 public sealed record DeliveryResult(string State, string? Reference = null, string? Error = null);
+public sealed record CitizenEmailUpdate(string Message, string Language = "en", Guid RequestId = default,
+    string? Reference = null, RequestStatus? Status = null)
+{
+    public static CitizenEmailUpdate FromOutbox(OutboxMessage entry, string language)
+    {
+        var (reference, status) = CitizenMessages.ReadQueuedStatus(entry.Message);
+        var message = language switch
+        {
+            "si" when !string.IsNullOrWhiteSpace(entry.SinhalaMessage) => entry.SinhalaMessage,
+            "ta" when !string.IsNullOrWhiteSpace(entry.TamilMessage) => entry.TamilMessage,
+            _ => entry.Message
+        };
+        return new CitizenEmailUpdate(message, language, entry.RequestId, reference, status);
+    }
+}
+
 public interface IEmailProvider
 {
     string Name
     {
         get;
     }
-    Task<DeliveryResult> SendAsync(string email, string message, Guid eventId, CancellationToken ct, string language = "en");
+    Task<DeliveryResult> SendAsync(string email, CitizenEmailUpdate update, Guid eventId, CancellationToken ct);
 }
 public interface IMappingProvider
 {

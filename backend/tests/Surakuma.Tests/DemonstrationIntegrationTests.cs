@@ -52,7 +52,7 @@ public sealed partial class IntegrationTests
         using (var scope = fixture.Factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
-            orgId = await db.Set<Membership>().Where(x => x.Role == Roles.Logistics).Select(x => x.OrganisationId).SingleAsync();
+            orgId = await db.Set<Membership>().Where(x => x.Role == Roles.Logistics).Select(x => x.OrganisationId!.Value).SingleAsync();
             crisisId = await db.Set<Crisis>().Where(x => x.Name == "Kelani River flood response").Select(x => x.Id).SingleAsync();
             volunteerId = await db.Set<VolunteerProfile>().Select(x => x.Id).SingleAsync();
         }
@@ -153,6 +153,23 @@ public sealed partial class IntegrationTests
             await worker.ProcessOne(default);
         var notifications = await citizen.GetFromJsonAsync<JsonElement>("/api/v1/notifications");
         Assert.Contains(notifications.EnumerateArray(), x => x.GetProperty("requestId").GetGuid() == foodId);
+        Assert.All(notifications.EnumerateArray(), x => Assert.False(x.GetProperty("isInternal").GetBoolean()));
+        var citizenNotification = notifications.EnumerateArray().First();
+        var citizenNotificationId = citizenNotification.GetProperty("id").GetGuid();
+        Assert.Equal(HttpStatusCode.NotFound, (await manager.PostAsync($"/api/v1/notifications/{citizenNotificationId}/read", null)).StatusCode);
+        var beforeRead = await citizen.GetFromJsonAsync<JsonElement>("/api/v1/notifications/unread-count");
+        (await citizen.PostAsync($"/api/v1/notifications/{citizenNotificationId}/read", null)).EnsureSuccessStatusCode();
+        var afterRead = await citizen.GetFromJsonAsync<JsonElement>("/api/v1/notifications/unread-count");
+        Assert.Equal(beforeRead.GetProperty("count").GetInt32() - 1, afterRead.GetProperty("count").GetInt32());
+        var staffNotifications = await manager.GetFromJsonAsync<JsonElement>("/api/v1/notifications");
+        Assert.Contains(staffNotifications.EnumerateArray(), x => x.GetProperty("requestId").GetGuid() == foodId);
+        var taskNotifications = await volunteer.GetFromJsonAsync<JsonElement>("/api/v1/notifications");
+        var assigned = Assert.Single(taskNotifications.EnumerateArray(), x => x.GetProperty("taskId").GetGuid() == taskId);
+        var notificationId = assigned.GetProperty("id").GetGuid();
+        Assert.Equal(HttpStatusCode.NotFound, (await citizen.PostAsync($"/api/v1/notifications/{notificationId}/read", null)).StatusCode);
+        (await volunteer.PostAsync($"/api/v1/notifications/{notificationId}/read", null)).EnsureSuccessStatusCode();
+        var unread = await volunteer.GetFromJsonAsync<JsonElement>("/api/v1/notifications/unread-count");
+        Assert.Equal(0, unread.GetProperty("count").GetInt32());
         using var check = fixture.Factory.Services.CreateScope();
         var database = check.ServiceProvider.GetRequiredService<CrisisDbContext>();
         var final = await database.Set<AssistanceRequest>().FindAsync(foodId);

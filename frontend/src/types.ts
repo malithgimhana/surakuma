@@ -16,7 +16,7 @@ export interface Membership {
   countryCode?: string;
   crisisId?: string | null;
   id: string;
-  organisationId: string;
+  organisationId: string | null;
   role: string;
 }
 export interface User {
@@ -192,6 +192,9 @@ export interface Alert extends Entity {
   published: boolean;
 }
 export interface Notification extends Entity {
+  isInternal: boolean;
+  crisisId: string | null;
+  taskId: string | null;
   message: string;
   sinhalaMessage: string;
   tamilMessage: string;
@@ -222,6 +225,7 @@ export interface VolunteerData {
   names: Record<string, string>;
 }
 export interface Metrics {
+  stockByUnit?: { category: string; unit: string; stock: number; reserved: number }[];
   openCases: number;
   resolvedCases: number;
   overdueCases: number;

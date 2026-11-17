@@ -12,4 +12,11 @@ public static class QuantityUnits
         if (!IsMeasured(unit) && quantity != decimal.Truncate(quantity))
             throw new RuleException("Quantity for countable units must be a whole number.");
     }
+
+    public static void ValidateInventory(decimal quantity, string? unit)
+    {
+        if (quantity < 0 || quantity != decimal.Round(quantity, 2))
+            throw new RuleException("Enter a non-negative quantity with at most two decimal places.");
+        ValidateWhole(quantity, unit);
+    }
 }

@@ -1,4 +1,4 @@
-param([switch]$SkipBuild)
+param([switch]$SkipBuild, [string]$TestFilter = "")
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 $database = 'Surakuma_Acceptance_' + [Guid]::NewGuid().ToString('N')
@@ -36,7 +36,8 @@ try {
     if (!$ready) { throw 'Acceptance API did not become ready.' }
     Push-Location (Join-Path $repo 'frontend')
     try {
-        & npx playwright test --config playwright.live-international.config.ts
+        if ($TestFilter) { & npx playwright test --config playwright.live-international.config.ts --grep $TestFilter }
+        else { & npx playwright test --config playwright.live-international.config.ts }
         if ($LASTEXITCODE) { throw 'Live international acceptance failed.' }
     } finally { Pop-Location }
     Write-Output "Acceptance passed. Isolated database retained: $database"

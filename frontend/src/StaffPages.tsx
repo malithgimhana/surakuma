@@ -36,6 +36,7 @@ import {
   PageHeader,
 } from './components';
 import { MapView } from './MapView';
+import { isMeasuredUnit } from './quantity';
 import type {
   AidRequest,
   AllocationRecommendations,
@@ -186,7 +187,7 @@ export function StaffOverview() {
             <div>
               <dt>Stock reserved / physical</dt>
               <dd>
-                {m.resourceReserved} / {m.resourceStock}
+                {m.stockByUnit?.map((stock, i) => <div key={i}>{stock.category}: {stock.reserved} / {stock.stock} {stock.unit}</div>) ?? "See resource ledger"}
               </dd>
             </div>
             <div>
@@ -195,7 +196,7 @@ export function StaffOverview() {
             </div>
           </dl>
           <small className="muted">
-            Inventory totals combine different units; use the resource ledger for item-level
+            Stock is grouped by category and unit; use the resource ledger for item-level
             decisions.
           </small>
         </Card>
@@ -419,8 +420,6 @@ export function CaseQueue() {
     </>
   );
 }
-const isMeasuredUnit = (unit: string) => ['kg', 'kilogram', 'kilograms', 'l', 'liter', 'liters', 'litre', 'litres'].includes(unit.trim().toLowerCase());
-
 export function CaseDetails() {
   const { t } = useTranslation();
   const { id } = useParams(),
@@ -959,7 +958,8 @@ export function CaseDetails() {
 }
 
 export function ResourcesPage() {
-  const q = useQuery({ queryKey: ['resources'], queryFn: () => get<Resource[]>('/resources') }),
+  const country = useCountry();
+  const q = useQuery({ queryKey: ['resources', country], queryFn: () => get<Resource[]>('/resources') }),
     write = useWrite();
   const [unit, setUnit] = useState('packs'),
     [add, setAdd] = useState(false),
@@ -1146,14 +1146,16 @@ export function ResourcesPage() {
   );
 }
 export function ShelterManagement() {
+  const country = useCountry();
   const { t } = useTranslation();
-  const q = useQuery({ queryKey: ['staff-shelters'], queryFn: () => get<Shelter[]>('/staff/shelters') }),
+  const q = useQuery({ queryKey: ['staff-shelters', country], queryFn: () => get<Shelter[]>('/staff/shelters') }),
     write = useWrite(),
     { user } = useAuth();
   const [editing, setEditing] = useState<Shelter | null | undefined>(undefined);
-  const shelters = q.data?.filter((s) =>
-    user?.memberships.some((m) => m.organisationId === s.organisationId),
-  );
+  const isAdmin = user?.roles.some((role) => role === 'Administrator' || role === 'CountryAdministrator');
+  const shelters = isAdmin
+    ? q.data
+    : q.data?.filter((s) => user?.memberships.some((m) => m.organisationId === s.organisationId));
   return (
     <>
       <PageHeader

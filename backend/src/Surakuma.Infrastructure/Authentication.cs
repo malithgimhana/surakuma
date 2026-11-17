@@ -25,7 +25,7 @@ public sealed class AuthenticationService(UserManager<AppUser> users, CrisisDbCo
             user.Email,
             Name = user.DisplayName,
             user.Language,
-            Roles = await users.GetRolesAsync(user),
+            Roles = await EffectiveRoles(user, ct),
             Memberships = memberships,
             HouseholdSize = household?.Size ?? 1,
             AccessibilityNeeds = household?.AccessibilityNeeds ?? ""
@@ -51,7 +51,7 @@ public sealed class AuthenticationService(UserManager<AppUser> users, CrisisDbCo
     public async Task<AuthSession?> Login(LoginInput input, CancellationToken ct)
     {
         var user = await users.FindByEmailAsync(input.Email);
-        if (user is null || await users.IsLockedOutAsync(user))
+        if (user is null || user.Disabled || await users.IsLockedOutAsync(user))
             return null;
         if (!await users.CheckPasswordAsync(user, input.Password))
         {
@@ -67,8 +67,26 @@ public sealed class AuthenticationService(UserManager<AppUser> users, CrisisDbCo
     public async Task<AuthSession?> Refresh(string token, CancellationToken ct)
     {
         string hash = Hash(token);
+        for (int attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return await RotateSession(hash, ct);
+            }
+            catch (Exception ex) when (attempt < 2 && EfStore.IsDeadlock(ex))
+            {
+                db.ChangeTracker.Clear();
+                await Task.Delay(TimeSpan.FromMilliseconds(50 * (attempt + 1) + Random.Shared.Next(50)), ct);
+            }
+        }
+    }
+    private async Task<AuthSession?> RotateSession(string hash, CancellationToken ct)
+    {
         await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
-        var session = await db.Set<RefreshSession>().SingleOrDefaultAsync(x => x.TokenHash == hash, ct);
+        // Lock for update when reading, so concurrent rotations cannot both read the same active token.
+        var session = await db.Set<RefreshSession>()
+            .FromSql($"SELECT * FROM [RefreshSession] WITH (UPDLOCK) WHERE [TokenHash] = {hash}")
+            .SingleOrDefaultAsync(ct);
         if (session is null || session.ExpiresAt < DateTimeOffset.UtcNow)
             return null;
         if (session.Revoked)
@@ -80,7 +98,7 @@ public sealed class AuthenticationService(UserManager<AppUser> users, CrisisDbCo
             return null;
         }
         var user = await users.FindByIdAsync(session.UserId);
-        if (user is null)
+        if (user is null || user.Disabled)
             return null;
         session.Revoked = true;
         var next = await CreateSession(user, ct);
@@ -100,7 +118,7 @@ public sealed class AuthenticationService(UserManager<AppUser> users, CrisisDbCo
     }
     private async Task<AuthSession> CreateSession(AppUser user, CancellationToken ct)
     {
-        var roles = await users.GetRolesAsync(user);
+        var roles = await EffectiveRoles(user, ct);
         var claims = new List<Claim> { new(ClaimTypes.NameIdentifier, user.Id), new(ClaimTypes.Name, user.DisplayName), new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()), new("security_stamp", await users.GetSecurityStampAsync(user) ?? "") };
         claims.AddRange(roles.Select(r => new Claim(ClaimTypes.Role, r)));
         var credentials = new SigningCredentials(new SymmetricSecurityKey(Encoding.UTF8.GetBytes(config["Jwt:Key"]!)), SecurityAlgorithms.HmacSha256);
@@ -108,6 +126,14 @@ public sealed class AuthenticationService(UserManager<AppUser> users, CrisisDbCo
         string refresh = Convert.ToBase64String(RandomNumberGenerator.GetBytes(48));
         db.Add(new RefreshSession { UserId = user.Id, TokenHash = Hash(refresh), ExpiresAt = DateTimeOffset.UtcNow.AddDays(7) });
         return new(new JwtSecurityTokenHandler().WriteToken(jwt), await UserInfo(user, ct), refresh);
+    }
+    private async Task<string[]> EffectiveRoles(AppUser user, CancellationToken ct)
+    {
+        var identityRoles = await users.GetRolesAsync(user);
+        var active = await db.Set<Membership>().Where(m => m.UserId == user.Id).Select(m => m.Role).Distinct().ToListAsync(ct);
+        if (identityRoles.Contains(Roles.Citizen)) active.Add(Roles.Citizen);
+        if (user.IsSystemAdministrator) active.Add(Roles.Administrator);
+        return active.Distinct().ToArray();
     }
     private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
 }

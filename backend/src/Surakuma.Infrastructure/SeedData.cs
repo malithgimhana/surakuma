@@ -19,7 +19,7 @@ public static class SeedData
         var org = new Organisation { Name = "Surakuma Community Response (demo)" };
         var partner = new Organisation { Name = "Southern Relief Network (demo)" };
         db.AddRange(org, partner);
-        db.AddRange(new OrganisationCountry { OrganisationId = org.Id }, new OrganisationCountry { OrganisationId = partner.Id });
+        db.AddRange(new OrganisationCountry { VerificationState = "LegacyActive", OrganisationId = org.Id }, new OrganisationCountry { VerificationState = "LegacyActive", OrganisationId = partner.Id });
         await db.SaveChangesAsync();
         var crisis = new Crisis { Name = "Kelani River flood response", Type = "Flood", District = "Colombo", Latitude = 6.93, Longitude = 79.89, PrimaryOrganisationId = org.Id };
         var landslide = new Crisis { Name = "Hill country landslide response", Type = "Landslide", District = "Ratnapura", Latitude = 6.68, Longitude = 80.40, PrimaryOrganisationId = org.Id };
@@ -28,7 +28,7 @@ public static class SeedData
         var registered = new Dictionary<string, AppUser>();
         foreach (var account in accounts)
         {
-            var user = new AppUser { UserName = account.Email + "@surakuma.test", Email = account.Email + "@surakuma.test", DisplayName = account.Name, EmailConfirmed = true, LockoutEnabled = true };
+            var user = new AppUser { UserName = account.Email + "@surakuma.test", Email = account.Email + "@surakuma.test", DisplayName = account.Name, EmailConfirmed = true, LockoutEnabled = true, IsSystemAdministrator = account.Role == Roles.Administrator };
             var result = await users.CreateAsync(user, password);
             if (!result.Succeeded)
                 throw new InvalidOperationException(string.Join("; ", result.Errors.Select(x => x.Description)));
@@ -36,7 +36,7 @@ public static class SeedData
             registered[account.Email] = user;
             if (account.Role == Roles.Citizen)
                 db.Add(new Household { UserId = user.Id, Size = 4 });
-            else
+            else if (account.Role != Roles.Administrator)
                 db.Add(new Membership { UserId = user.Id, OrganisationId = org.Id, Role = account.Role, AvailableForAssignment = account.Role == Roles.CaseManager });
         }
         db.Add(new CrisisAssignment { CrisisId = crisis.Id, UserId = registered["coordinator"].Id });

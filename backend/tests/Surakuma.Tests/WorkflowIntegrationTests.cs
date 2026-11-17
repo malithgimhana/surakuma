@@ -31,6 +31,10 @@ public sealed partial class IntegrationTests
             var legacy = await admin.GetFromJsonAsync<JsonElement>($"/api/v1/admin/{path}?page=1&pageSize=10");
             Assert.Equal(JsonValueKind.Array, legacy.ValueKind);
             Assert.Equal(result.GetProperty("items").GetArrayLength(), legacy.GetArrayLength());
+            if (path == "audit")
+                Assert.Contains(legacy.EnumerateArray(), item =>
+                    item.GetProperty("action").GetString() == "Login" &&
+                    item.GetProperty("actorName").GetString() == "System Administrator");
         }
     }
     [Fact]
@@ -110,7 +114,7 @@ public sealed partial class IntegrationTests
         using var client = await fixture.Login("shelter");
         using var scope = fixture.Factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
-        Guid organisationId = await db.Set<Membership>().Where(x => x.Role == Roles.ShelterAdmin).Select(x => x.OrganisationId).FirstAsync();
+        Guid organisationId = await db.Set<Membership>().Where(x => x.Role == Roles.ShelterAdmin).Select(x => x.OrganisationId!.Value).FirstAsync();
         var result = await client.PostAsJsonAsync("/api/v1/shelters", new
         {
             organisationId,
@@ -370,7 +374,7 @@ public sealed partial class IntegrationTests
         Assert.Equal(1, await database.Set<NotificationDelivery>().CountAsync(x => x.EventId == eventId));
     }
     [Fact]
-    public async Task RefreshTokenRotationRejectsReplayAndRevokesTokenFamily()
+    public async Task ConcurrentRefreshTokenReplayRevokesTokenFamilyWithoutDeadlocking()
     {
         using var client = fixture.Factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost"), HandleCookies = false });
         var login = await client.PostAsJsonAsync("/api/v1/auth/login", new
@@ -381,9 +385,10 @@ public sealed partial class IntegrationTests
         login.EnsureSuccessStatusCode();
         string originalCookie = login.Headers.GetValues("Set-Cookie").First().Split(';')[0];
         client.DefaultRequestHeaders.Add("Cookie", originalCookie);
-        var first = await client.PostAsync("/api/v1/auth/refresh", null);
-        first.EnsureSuccessStatusCode();
-        string rotatedCookie = first.Headers.GetValues("Set-Cookie").First().Split(';')[0];
+        var refreshes = await Task.WhenAll(client.PostAsync("/api/v1/auth/refresh", null), client.PostAsync("/api/v1/auth/refresh", null));
+        var successful = Assert.Single(refreshes, response => response.StatusCode == HttpStatusCode.OK);
+        Assert.Single(refreshes, response => response.StatusCode == HttpStatusCode.Unauthorized);
+        string rotatedCookie = successful.Headers.GetValues("Set-Cookie").First().Split(';')[0];
         Assert.NotEqual(originalCookie, rotatedCookie);
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.PostAsync("/api/v1/auth/refresh", null)).StatusCode);
         client.DefaultRequestHeaders.Remove("Cookie");

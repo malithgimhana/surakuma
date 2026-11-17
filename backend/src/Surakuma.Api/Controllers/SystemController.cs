@@ -15,11 +15,11 @@ public sealed record SystemConfigurationStatus(bool DemonstrationMode, DateTimeO
 public sealed class SystemController(AccessService access, CrisisDbContext db, IConfiguration config, IWebHostEnvironment environment) : ControllerBase
 {
     [HttpGet, ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
-    public async Task<SystemConfigurationStatus> Get(CancellationToken ct)
+    public async Task<SystemConfigurationStatus> Get(CancellationToken ct, string? countryCode = null)
     {
         if (!await access.IsAdmin(ct))
             throw new AccessDeniedException();
-        var queue = await db.Set<OutboxMessage>().GroupBy(x => x.State).OrderBy(g => g.Key)
+        var queue = await db.DeliveriesInCountry(countryCode).GroupBy(x => x.State).OrderBy(g => g.Key)
             .Select(g => new DeliveryStateCount(g.Key, g.Count())).ToListAsync(ct);
         return new(environment.IsDevelopment(), DateTimeOffset.UtcNow, IntegrationConfiguration.Describe(config), queue);
     }

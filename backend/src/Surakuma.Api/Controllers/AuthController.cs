@@ -75,6 +75,34 @@ public sealed class AuthController(AuthenticationService auth, UserManager<AppUs
         return NoContent();
     }
     [Authorize, HttpGet("me")] public async Task<object> Me(CancellationToken ct) => await auth.UserInfo(await users.FindByIdAsync(User.FindFirstValue(ClaimTypes.NameIdentifier)!) ?? throw new AccessDeniedException(), ct);
+
+    [Authorize, HttpGet("profile")]
+    public async Task<object> ProfileDetails(CancellationToken ct)
+    {
+        var user = await users.FindByIdAsync(User.FindFirstValue(ClaimTypes.NameIdentifier)!) ?? throw new AccessDeniedException();
+        var assignments = await db.Set<Membership>()
+            .Where(m => m.UserId == user.Id && m.Role != Roles.Citizen)
+            .OrderBy(m => m.Role).ThenBy(m => m.CountryCode).ThenBy(m => m.Id)
+            .Select(m => new
+            {
+                m.Id,
+                m.Role,
+                Country = db.Set<Country>().Where(c => c.Code == m.CountryCode).Select(c => c.Name).FirstOrDefault() ?? m.CountryCode,
+                Organisation = db.Set<Organisation>().Where(o => o.Id == m.OrganisationId).Select(o => o.Name).FirstOrDefault(),
+                Crisis = db.Set<Crisis>().Where(c => c.Id == m.CrisisId && c.CountryCode == m.CountryCode).Select(c => c.Name).FirstOrDefault(),
+                m.AvailableForAssignment,
+                PartnerStatus = m.Role == Roles.Partner
+                    ? db.Set<OrganisationCountry>().Where(o => o.OrganisationId == m.OrganisationId && o.CountryCode == m.CountryCode)
+                        .Select(o => o.VerificationState).FirstOrDefault()
+                    : null
+            })
+            .ToListAsync(ct);
+        var volunteer = await OwnVolunteerProfile(user.Id)
+            .Select(v => new { v.Skills, v.Verified, v.Available, Schedule = v.Availability })
+            .SingleOrDefaultAsync(ct);
+        return new { Assignments = assignments, Volunteer = volunteer, WorkPhone = user.IsSystemAdministrator || assignments.Count > 0 ? user.PhoneNumber : null };
+    }
+
     [Authorize, HttpPut("profile")]
     public async Task<object> Profile(ProfileInput input, CancellationToken ct)
     {
@@ -83,16 +111,59 @@ public sealed class AuthController(AuthenticationService auth, UserManager<AppUs
         var user = await users.FindByIdAsync(User.FindFirstValue(ClaimTypes.NameIdentifier)!) ?? throw new AccessDeniedException();
         user.DisplayName = input.Name;
         user.Language = input.Language;
-        var home = await db.Set<Household>().SingleOrDefaultAsync(x => x.UserId == user.Id, ct);
-        if (home is null)
+
+        var memberships = await db.Set<Membership>().Where(m => m.UserId == user.Id).ToListAsync(ct);
+        if (input.HouseholdSize.HasValue || input.AccessibilityNeeds is not null)
         {
-            home = new Household { UserId = user.Id };
-            db.Add(home);
+            if (!memberships.Any(m => m.Role == Roles.Citizen) && !await users.IsInRoleAsync(user, Roles.Citizen))
+                throw new AccessDeniedException();
+            var home = await db.Set<Household>().SingleOrDefaultAsync(x => x.UserId == user.Id, ct);
+            if (home is null)
+            {
+                home = new Household { UserId = user.Id };
+                db.Add(home);
+            }
+            home.Size = input.HouseholdSize ?? home.Size;
+            home.AccessibilityNeeds = input.AccessibilityNeeds ?? home.AccessibilityNeeds;
         }
-        home.Size = input.HouseholdSize;
-        home.AccessibilityNeeds = input.AccessibilityNeeds;
+        if (input.WorkPhone is { } workPhone)
+        {
+            if (!user.IsSystemAdministrator && !memberships.Any(m => m.Role != Roles.Citizen))
+                throw new AccessDeniedException();
+            var number = string.IsNullOrWhiteSpace(workPhone) ? null : workPhone.Trim();
+            if (user.PhoneNumber != number)
+            {
+                user.PhoneNumber = number;
+                user.PhoneNumberConfirmed = false;
+            }
+        }
+        if (input.VolunteerAvailability is { } availability)
+        {
+            var volunteer = await OwnVolunteerProfile(user.Id).SingleOrDefaultAsync(ct) ?? throw new AccessDeniedException();
+            volunteer.Availability = availability.Schedule;
+            volunteer.Available = availability.Available;
+            db.Add(new AuditEvent { ActorId = user.Id, Action = "VolunteerSaved", EntityType = nameof(VolunteerProfile), EntityId = volunteer.Id, CountryCode = volunteer.CountryCode });
+        }
+        if (input.CaseManagerAvailability is { } caseAvailability)
+        {
+            var grants = memberships.Where(m => m.Role == Roles.CaseManager).ToDictionary(m => m.Id);
+            foreach (var (id, available) in caseAvailability)
+            {
+                if (!grants.TryGetValue(id, out var grant))
+                    throw new AccessDeniedException();
+                if (grant.AvailableForAssignment == available)
+                    continue;
+                grant.AvailableForAssignment = available;
+                db.Add(new AuditEvent { ActorId = user.Id, Action = "CaseManagerAvailabilityChanged", EntityType = nameof(Membership), EntityId = id, CountryCode = grant.CountryCode, Detail = available ? "Available" : "Unavailable" });
+            }
+        }
         db.Add(new AuditEvent { ActorId = user.Id, Action = "ProfileUpdated", EntityType = "User" });
         await db.SaveChangesAsync(ct);
         return await auth.UserInfo(user, ct);
     }
+
+    private IQueryable<VolunteerProfile> OwnVolunteerProfile(string userId) => db.Set<VolunteerProfile>()
+        .Where(v => v.UserId == userId && db.Set<Membership>().Any(m =>
+            m.UserId == userId && m.Role == Roles.Volunteer && m.CrisisId == null
+            && m.OrganisationId == v.OrganisationId && m.CountryCode == v.CountryCode));
 }

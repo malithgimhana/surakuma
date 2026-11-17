@@ -59,6 +59,12 @@ public sealed class AdministrativeDivision : Record
 }
 public sealed class OrganisationCountry : Record
 {
+    public DateTimeOffset? ArchivedAt { get; set; }
+    public string VerificationState { get; set; } = "Pending";
+    public string Evidence { get; set; } = "";
+    public string DecisionReason { get; set; } = "";
+    public string? ReviewerUserId { get; set; }
+    public DateTimeOffset? ReviewedAt { get; set; }
     public Guid OrganisationId { get; set; }
     public string CountryCode { get; set; } = "LK";
 }
@@ -70,12 +76,15 @@ public sealed class InternationalIncident : Record
 public sealed class Organisation : Record
 {
     public string Name { get; set; } = "";
+    public DateTimeOffset? ArchivedAt { get; set; }
 }
 public sealed class Membership : Record
 {
+    public bool Suspended { get; set; }
+    public string SuspensionReason { get; set; } = "";
     public string CountryCode { get; set; } = "LK";
     public Guid? CrisisId { get; set; }
-    public string UserId { get; set; } = ""; public Guid OrganisationId
+    public string UserId { get; set; } = ""; public Guid? OrganisationId
     {
         get; set;
     }
@@ -283,6 +292,9 @@ public sealed class PotentialDuplicate : Record
 public sealed class Resource : Record
 {
     public string CountryCode { get; set; } = "LK";
+    public Guid? DepotId { get; set; }
+    public string? Code { get; set; }
+    public decimal? LowStockThreshold { get; set; }
     public Guid? AdministrativeDivisionId { get; set; }
     public Guid OrganisationId
     {
@@ -310,6 +322,12 @@ public sealed class Resource : Record
     }
     public string Suitability { get; set; } = ""; public bool TransportAvailable { get; set; } = true;
     public decimal Available => Stock - Reserved;
+    public void ChangePhysical(decimal delta)
+    {
+        if (Stock + delta < Reserved || Stock + delta > 9999999999999999.99m)
+            throw new RuleException("Physical stock must cover all reservations and fit the supported inventory range.");
+        Stock += delta;
+    }
     public void Reserve(decimal quantity)
     {
         if (quantity <= 0 || quantity > Available)
@@ -352,6 +370,11 @@ public sealed class ResourceAllocation : Record
 }
 public sealed class StockMovement : Record
 {
+    public Guid? OperationId { get; set; }
+    public Guid? CrisisId { get; set; }
+    public Guid? RequestId { get; set; }
+    public string? Origin { get; set; }
+    public string? Destination { get; set; }
     public Guid ResourceId
     {
         get; set;
@@ -490,6 +513,9 @@ public sealed class PublicAlert : Record
 }
 public sealed class Notification : Record
 {
+    public bool IsInternal { get; set; }
+    public Guid? CrisisId { get; set; }
+    public Guid? TaskId { get; set; }
     public string UserId { get; set; } = ""; public Guid EventId
     {
         get; set;
@@ -505,6 +531,7 @@ public sealed class Notification : Record
 }
 public sealed class OutboxMessage : Record
 {
+    public int CycleAttempts { get; set; }
     public string UserId { get; set; } = ""; public Guid RequestId
     {
         get; set;
@@ -531,6 +558,7 @@ public sealed class NotificationDelivery : Record
 }
 public sealed class AuditEvent : Record
 {
+    public string? CountryCode { get; set; }
     public string ActorId { get; set; } = ""; public string Action { get; set; } = ""; public string EntityType { get; set; } = ""; public Guid EntityId
     {
         get; set;

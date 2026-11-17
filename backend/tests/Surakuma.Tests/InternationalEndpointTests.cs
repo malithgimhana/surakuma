@@ -11,28 +11,38 @@ namespace Surakuma.Tests;
 public sealed class InternationalEndpointTests(ApiFixture fixture) : IClassFixture<ApiFixture>
 {
     [Fact]
-    public async Task IncidentLinksDoNotExpandNationalAccessAndAreGlobalOnly()
+    public async Task CountryAdministratorsManageLocalCrisesAndSystemAdministratorSeesAllCountries()
     {
-        Guid lk, np;
-        using (var scope = fixture.Factory.Services.CreateScope())
-        {
-            var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
-            var a = new Crisis { Name = "Linked Sri Lanka", CountryCode = "LK" };
-            var b = new Crisis { Name = "Linked Nepal", CountryCode = "NP" };
-            db.AddRange(a, b); await db.SaveChangesAsync(); lk = a.Id; np = b.Id;
-        }
         using var admin = await fixture.Login("admin");
-        using var coordinator = await fixture.Login("coordinator");
-        var created = await admin.PostAsJsonAsync("/api/v1/incidents", new { name = "Regional flood" });
+        var appointment = await admin.PostAsJsonAsync("/api/v1/admin/users", new
+        {
+            email = "nepal-admin@surakuma.test", name = "Nepal administrator", password = fixture.Password,
+            role = Roles.CountryAdministrator, countryCode = "NP"
+        });
+        appointment.EnsureSuccessStatusCode();
+        using var country = await fixture.Login("nepal-admin");
+        var account = await country.GetFromJsonAsync<JsonElement>("/api/v1/auth/me");
+        Assert.Equal(JsonValueKind.Null, Assert.Single(account.GetProperty("memberships").EnumerateArray()).GetProperty("organisationId").ValueKind);
+        var local = new { name = "Nepal flood", countryCode = "NP" };
+        var foreign = new { name = "Sri Lanka flood", countryCode = "LK" };
+        var created = await country.PostAsJsonAsync("/api/v1/crises", local);
         created.EnsureSuccessStatusCode();
-        var incident = (await created.Content.ReadFromJsonAsync<InternationalIncident>())!;
-        foreach (var crisis in new[] { lk, np })
-            Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsync($"/api/v1/incidents/{incident.Id}/crises/{crisis}", null)).StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await coordinator.GetAsync("/api/v1/incidents")).StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await coordinator.PostAsJsonAsync("/api/v1/incidents", new { name = "Denied" })).StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await coordinator.DeleteAsync($"/api/v1/incidents/{incident.Id}/crises/{np}")).StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await coordinator.GetAsync($"/api/v1/crises/{np}/areas")).StatusCode);
-        Assert.Equal(HttpStatusCode.NoContent, (await admin.DeleteAsync($"/api/v1/incidents/{incident.Id}/crises/{np}")).StatusCode);
+        var nepal = (await created.Content.ReadFromJsonAsync<Crisis>())!;
+        Assert.Equal(HttpStatusCode.Forbidden, (await country.PostAsJsonAsync("/api/v1/crises", foreign)).StatusCode);
+        var other = await admin.PostAsJsonAsync("/api/v1/crises", foreign);
+        other.EnsureSuccessStatusCode();
+        var sriLanka = (await other.Content.ReadFromJsonAsync<Crisis>())!;
+        Assert.Equal(HttpStatusCode.Forbidden, (await country.PutAsJsonAsync($"/api/v1/crises/{sriLanka.Id}", foreign)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await country.PutAsJsonAsync($"/api/v1/crises/{nepal.Id}", local)).StatusCode);
+        Assert.All((await country.GetFromJsonAsync<List<Crisis>>("/api/v1/crises"))!, crisis => Assert.Equal("NP", crisis.CountryCode));
+        var all = (await admin.GetFromJsonAsync<List<Crisis>>("/api/v1/crises"))!;
+        Assert.Contains(all, crisis => crisis.Id == sriLanka.Id);
+        Assert.Contains(all, crisis => crisis.Id == nepal.Id);
+        Assert.Equal(HttpStatusCode.Forbidden, (await country.PostAsJsonAsync("/api/v1/admin/users", new
+        {
+            email = "second-nepal-admin@surakuma.test", role = Roles.CountryAdministrator, countryCode = "NP"
+        })).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await admin.PostAsJsonAsync("/api/v1/incidents", new { name = "Retired option" })).StatusCode);
     }
 
     [Fact]
@@ -50,6 +60,7 @@ public sealed class InternationalEndpointTests(ApiFixture fixture) : IClassFixtu
             var request = new AssistanceRequest { CrisisId = crisis.Id, CitizenId = citizen.Id, OrganisationId = organisationId, Status = RequestStatus.Approved, Category = AidCategory.FoodWater, Quantity = 1, SubmissionKey = Guid.NewGuid().ToString() };
             var other = new AssistanceRequest { CrisisId = foreign.Id, CitizenId = citizen.Id, OrganisationId = organisationId, SubmissionKey = Guid.NewGuid().ToString() };
             var resource = new Resource { CountryCode = "NP", OrganisationId = organisationId, Category = AidCategory.FoodWater, Name = "Scoped stock", Unit = "packs", Stock = 5 };
+            if (!await db.Set<OrganisationCountry>().AnyAsync(x => x.OrganisationId == organisationId && x.CountryCode == "NP")) db.Add(new OrganisationCountry { OrganisationId = organisationId, CountryCode = "NP", VerificationState = "Verified" });
             db.AddRange(crisis, foreign, request, other, resource);
             db.Add(new Membership { CountryCode = "NP", CrisisId = crisis.Id, OrganisationId = organisationId, UserId = user.Id, Role = Roles.Coordinator });
             await db.SaveChangesAsync(); requestId = request.Id; foreignRequestId = other.Id; resourceId = resource.Id;
@@ -73,12 +84,13 @@ public sealed class InternationalEndpointTests(ApiFixture fixture) : IClassFixtu
         using (var scope = fixture.Factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
-            organisationId = await db.Set<Membership>().Where(x => x.Role == Roles.Logistics).Select(x => x.OrganisationId).FirstAsync();
+            organisationId = await db.Set<Membership>().Where(x => x.Role == Roles.Logistics).Select(x => x.OrganisationId!.Value).FirstAsync();
             var nepal = new Crisis { Name = "Nepal grant journey", CountryCode = "NP" };
             var indian = new Crisis { Name = "India grant journey", CountryCode = "IN" };
             db.AddRange(nepal, indian); await db.SaveChangesAsync(); np = nepal.Id; india = indian.Id;
         }
         Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsync($"/api/v1/admin/organisations/{organisationId}/countries/NP", null)).StatusCode);
+        (await admin.PostAsJsonAsync($"/api/v1/admin/organisations/{organisationId}/countries/NP/verification", new { evidence = "Test registration reviewed", decision = "Verified", reason = "Acceptance fixture" })).EnsureSuccessStatusCode();
         var grant = await admin.PostAsJsonAsync("/api/v1/admin/users", new { email = "logistics@surakuma.test", password = fixture.Password, name = "Logistics", organisationId, role = "Coordinator", countryCode = "NP", crisisId = np });
         grant.EnsureSuccessStatusCode();
         using var staff = await fixture.Login("logistics");
@@ -88,7 +100,7 @@ public sealed class InternationalEndpointTests(ApiFixture fixture) : IClassFixtu
         Assert.Equal(HttpStatusCode.OK, alert.StatusCode);
         // English-only publication is valid under Nepal's default policy, without Sinhala/Tamil.
         var contacts = new[] { new { label = "Police emergency", number = "100", sourceUrl = "https://ncb.nepalpolice.gov.np/safety-and-security/" } };
-        (await admin.PutAsJsonAsync("/api/v1/countries/NP/services", new { languages = "en,ne", requiredAlertLanguages = "en,ne", contacts })).EnsureSuccessStatusCode();
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsJsonAsync("/api/v1/countries/NP/services", new { languages = "en,ne", requiredAlertLanguages = "en,ne", contacts })).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await staff.PostAsJsonAsync("/api/v1/alerts", new { crisisId = np, title = "Safety update", message = "Follow guidance", expiresAt = DateTimeOffset.UtcNow.AddDays(1), published = true })).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await staff.PostAsJsonAsync("/api/v1/alerts", new { crisisId = np, title = "Safety update", message = "Follow guidance", translationsJson = "{\"ne\":{\"title\":\"सूचना\",\"message\":\"सुरक्षित रहनुहोस्\"}}", expiresAt = DateTimeOffset.UtcNow.AddDays(1), published = true })).StatusCode);
         (await admin.PutAsJsonAsync("/api/v1/countries/NP/services", new { languages = "en,ne", requiredAlertLanguages = "en", contacts })).EnsureSuccessStatusCode();
@@ -174,10 +186,44 @@ public sealed class InternationalEndpointTests(ApiFixture fixture) : IClassFixtu
         Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsJsonAsync("/api/v1/countries/NP/services", policy)).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await admin.GetAsync("/api/v1/admin/users?countryCode=LK")).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await admin.GetAsync("/api/v1/admin/users?countryCode=NP")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await admin.GetAsync("/api/v1/admin/organisations?countryCode=LK")).StatusCode);
+        var partners = await admin.GetFromJsonAsync<JsonElement>("/api/v1/admin/organisations?countryCode=NP");
+        Assert.All(partners.EnumerateArray(), partner => Assert.True(partner.GetProperty("enabled").GetBoolean()));
         Assert.Equal(HttpStatusCode.Forbidden, (await admin.GetAsync("/api/v1/admin/audit")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await admin.GetAsync("/api/v1/admin/deliveries")).StatusCode);
         // Restore the country policy so other cases in this fixture remain independent.
         using var global = await fixture.Login("admin");
         Assert.Equal(HttpStatusCode.NoContent, (await global.PutAsJsonAsync("/api/v1/countries/NP/services", new { languages = "en,ne", requiredAlertLanguages = "en", contacts = new[] { new { label = "Police emergency", number = "100", sourceUrl = "https://ncb.nepalpolice.gov.np/safety-and-security/" } } })).StatusCode);
+    }
+
+    [Fact]
+    public async Task PartnerDirectoryReportsEnablementAndActivePrimaryCrisesByCountry()
+    {
+        using var admin = await fixture.Login("admin");
+        var created = await admin.PostAsJsonAsync("/api/v1/admin/organisations", new { name = "Directory test partner", countryCode = "LK" });
+        created.EnsureSuccessStatusCode();
+        var partner = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+
+        async Task<JsonElement> Entry(string country)
+        {
+            var directory = await admin.GetFromJsonAsync<JsonElement>($"/api/v1/admin/organisations?countryCode={country}");
+            return Assert.Single(directory.EnumerateArray(), x => x.GetProperty("id").GetGuid() == partner);
+        }
+
+        Assert.True((await Entry("LK")).GetProperty("enabled").GetBoolean());
+        var nepalBefore = await admin.GetFromJsonAsync<JsonElement>("/api/v1/admin/organisations?countryCode=NP");
+        Assert.DoesNotContain(nepalBefore.EnumerateArray(), x => x.GetProperty("id").GetGuid() == partner);
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsync($"/api/v1/admin/organisations/{partner}/countries/NP", null)).StatusCode);
+
+        using var scope = fixture.Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
+        var crisis = new Crisis { Name = "Directory routing test", CountryCode = "NP", Active = true, PrimaryOrganisationId = partner };
+        db.Add(crisis);
+        db.Add(new Crisis { Name = "Closed directory test", CountryCode = "NP", Active = false, PrimaryOrganisationId = partner });
+        await db.SaveChangesAsync();
+        var nepal = await Entry("NP");
+        Assert.True(nepal.GetProperty("enabled").GetBoolean());
+        Assert.Equal(crisis.Id, Assert.Single(nepal.GetProperty("primaryCrises").EnumerateArray()).GetProperty("id").GetGuid());
+        Assert.Empty((await Entry("LK")).GetProperty("primaryCrises").EnumerateArray());
     }
 }

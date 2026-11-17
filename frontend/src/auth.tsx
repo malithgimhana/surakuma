@@ -36,7 +36,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [client]);
   async function signIn(path: string, input: unknown) {
     const { data } = await api.post<{ accessToken: string; user: User }>(path, input);
-    setToken(data.accessToken);
+    setToken(data.accessToken, data.user);
     client.clear();
     setUser(data.user);
     return data.user;

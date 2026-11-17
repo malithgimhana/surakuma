@@ -1,0 +1,171 @@
+using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Surakuma.Application;
+using Surakuma.Domain;
+using Surakuma.Infrastructure;
+using Record = Surakuma.Domain.Record;
+
+namespace Surakuma.Tests;
+
+public sealed class NotificationRoutingTests
+{
+    [Fact]
+    public void CitizenEmailExcludesInternalMixedAndUnassignedAccounts()
+    {
+        Assert.True(NotificationChannels.ReceivesCitizenEmail([Roles.Citizen]));
+        Assert.False(NotificationChannels.ReceivesCitizenEmail([]));
+        foreach (var role in Roles.All.Where(role => role != Roles.Citizen))
+        {
+            Assert.False(NotificationChannels.ReceivesCitizenEmail([role]));
+            Assert.True(NotificationChannels.ReceivesCitizenEmail([Roles.Citizen, role]));
+        }
+    }
+    private sealed class Store : IStore
+    {
+        public List<Record> Rows { get; } = [];
+        public List<string> Administrators { get; } = [];
+        public IQueryable<string> ActiveSystemAdministratorIds => Administrators.AsQueryable();
+        public IQueryable<T> Query<T>() where T : Record => Rows.OfType<T>().AsQueryable();
+        public Task<List<T>> ListAsync<T>(IQueryable<T> query, CancellationToken ct = default) => Task.FromResult(query.ToList());
+        public Task<T?> FindAsync<T>(Guid id, CancellationToken ct = default) where T : Record => Task.FromResult(Query<T>().SingleOrDefault(x => x.Id == id));
+        public void Add<T>(T entity) where T : Record => Rows.Add(entity);
+        public Task SaveAsync(CancellationToken ct = default) => Task.CompletedTask;
+        public Task<T> TransactionAsync<T>(Func<Task<T>> operation, CancellationToken ct = default) => operation();
+        public Task<T> RoutingTransactionAsync<T>(Func<Task<T>> operation, CancellationToken ct = default) => operation();
+    }
+
+    [Fact]
+    public async Task CaseEventsNotifyAuthorizedInternalUsersOnceAndRespectRevokedAccess()
+    {
+        var store = new Store();
+        var crisis = new Crisis { CountryCode = "NP" };
+        var request = new AssistanceRequest { CrisisId = crisis.Id, OrganisationId = Guid.NewGuid(), CitizenId = "citizen" };
+        var local = new Membership { UserId = "local", Role = Roles.Logistics, CountryCode = "NP", OrganisationId = request.OrganisationId.Value };
+        store.Rows.AddRange([crisis, request, local,
+            new Membership { UserId = "local", Role = Roles.Partner, CountryCode = "NP", OrganisationId = local.OrganisationId },
+            new Membership { UserId = "foreign", Role = Roles.Logistics, CountryCode = "LK", OrganisationId = local.OrganisationId },
+            new Membership { UserId = "other-crisis", Role = Roles.Coordinator, CountryCode = "NP", CrisisId = Guid.NewGuid(), OrganisationId = local.OrganisationId },
+            new Membership { UserId = "citizen", Role = Roles.Citizen, CountryCode = "NP", OrganisationId = local.OrganisationId }]);
+        store.Administrators.Add("admin");
+        var notifications = new InternalNotifications(store);
+        await notifications.RequestChanged(request, "Assistance completed.", default);
+        Assert.Equal(new[] { "admin", "local" }, store.Query<Notification>().Select(n => n.UserId).Order().ToArray());
+        Assert.Empty(store.Query<OutboxMessage>());
+        Assert.Single(notifications.Visible("local", "NP"));
+        Assert.Empty(notifications.Visible("local", "LK"));
+        store.Rows.RemoveAll(r => r is Membership m && m.UserId == "local");
+        Assert.Empty(notifications.Visible("local", "NP"));
+        Assert.Single(notifications.Visible("admin", "NP"));
+    }
+
+    [Fact]
+    public void VolunteerAssignmentIsVisibleOnlyWithCurrentVolunteerGrant()
+    {
+        var store = new Store();
+        var crisis = new Crisis();
+        var request = new AssistanceRequest { CrisisId = crisis.Id };
+        var volunteer = new VolunteerProfile { UserId = "volunteer", OrganisationId = Guid.NewGuid() };
+        var task = new VolunteerTask { VolunteerId = volunteer.Id, RequestId = request.Id, Title = "Medical assistance" };
+        var grant = new Membership { UserId = volunteer.UserId, OrganisationId = volunteer.OrganisationId, Role = Roles.Volunteer };
+        store.Rows.AddRange([crisis, request, volunteer, task, grant,
+            new Notification { UserId = volunteer.UserId, RequestId = request.Id, Message = "Old citizen notification" }]);
+        var notifications = new InternalNotifications(store);
+        notifications.TaskAssigned(task, volunteer, request);
+        Assert.Equal(task.Id, Assert.Single(notifications.Visible(volunteer.UserId, "LK")).TaskId);
+        Assert.Empty(notifications.Visible("someone-else", "LK"));
+        store.Rows.Remove(grant);
+        Assert.Empty(notifications.Visible(volunteer.UserId, "LK"));
+    }
+
+    [Fact]
+    public async Task NewCrisesNotifyOnlyRelevantCoordinatorsAndAdministrators()
+    {
+        var store = new Store();
+        var crisis = new Crisis { CountryCode = "IN" };
+        store.Rows.AddRange([crisis,
+            new Membership { UserId = "india", CountryCode = "IN", Role = Roles.CountryAdministrator },
+            new Membership { UserId = "nepal", CountryCode = "NP", Role = Roles.CountryAdministrator },
+            new Membership { UserId = "coordinator", CountryCode = "IN", Role = Roles.Coordinator },
+            new Membership { UserId = "citizen", CountryCode = "IN", Role = Roles.Citizen }]);
+        var notifications = new InternalNotifications(store);
+        await notifications.CrisisCreated(crisis, default);
+        Assert.Equal(new[] { "coordinator", "india" }, store.Query<Notification>().Select(n => n.UserId).Order().ToArray());
+    }
+
+    [Fact]
+    public void ScopedInboxTranslatesToSqlWithoutExecutingDatabaseQueries()
+    {
+        using var db = new CrisisDbContext(new DbContextOptionsBuilder<CrisisDbContext>()
+            .UseSqlServer("Server=localhost;Database=Unused;Trusted_Connection=True;TrustServerCertificate=True").Options);
+        var sql = new InternalNotifications(new EfStore(db)).Visible("staff", "NP").ToQueryString();
+        Assert.Contains("IsInternal", sql);
+        Assert.Contains("Membership", sql);
+        Assert.Contains("VolunteerTask", sql);
+    }
+}
+
+public sealed class NotificationInboxIntegrationTests(ApiFixture fixture) : IClassFixture<ApiFixture>
+{
+    [Fact]
+    public async Task ReadAllClearsTheCurrentInboxBeyondTheListLimit()
+    {
+        using var scope = fixture.Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
+        var request = await db.Set<AssistanceRequest>().SingleAsync(r => r.SubmissionKey == "seed-food");
+        var nepal = new Crisis { CountryCode = "NP", Name = "Nepal test crisis" };
+        var nepalRequest = new AssistanceRequest { CitizenId = request.CitizenId, CrisisId = nepal.Id, SubmissionKey = "inbox-np" };
+        var adminId = await db.Users.Where(u => u.UserName == "admin@surakuma.test").Select(u => u.Id).SingleAsync();
+        db.AddRange(nepal, nepalRequest);
+        db.AddRange(Enumerable.Range(0, 101).Select(_ => new Notification
+        {
+            UserId = request.CitizenId,
+            RequestId = request.Id,
+            EventId = Guid.NewGuid()
+        }));
+        db.AddRange(
+            new Notification { UserId = request.CitizenId, RequestId = nepalRequest.Id, EventId = Guid.NewGuid() },
+            new Notification { UserId = adminId, IsInternal = true, CrisisId = request.CrisisId, EventId = Guid.NewGuid() });
+        await db.SaveChangesAsync();
+
+        const string readAll = "/api/v1/notifications/read-all?countryCode=LK";
+        using var anonymous = fixture.Client();
+        using var citizen = await fixture.Login("citizen");
+        using var admin = await fixture.Login("admin");
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.PostAsync(readAll, null)).StatusCode);
+        Assert.Equal(101, await UnreadCount(citizen, "LK"));
+        Assert.Equal(HttpStatusCode.NoContent, (await citizen.PostAsync(readAll, null)).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await citizen.PostAsync(readAll, null)).StatusCode);
+        Assert.Equal(0, await UnreadCount(citizen, "LK"));
+        const string inbox = "/api/v1/notifications?countryCode=LK";
+        Assert.Empty(await citizen.GetFromJsonAsync<Notification[]>(inbox + "&unreadOnly=true") ?? []);
+        var history = await citizen.GetFromJsonAsync<Notification[]>(inbox);
+        Assert.Equal(100, history!.Length);
+        Assert.All(history, item => Assert.True(item.Read));
+
+        var olderUnread = new Notification
+        {
+            UserId = request.CitizenId,
+            RequestId = request.Id,
+            EventId = Guid.NewGuid(),
+            CreatedAt = DateTimeOffset.UtcNow.AddDays(-1)
+        };
+        db.Add(olderUnread);
+        await db.SaveChangesAsync();
+        var unreadInbox = await citizen.GetFromJsonAsync<Notification[]>(inbox + "&unreadOnly=true");
+        Assert.Equal(olderUnread.Id, Assert.Single(unreadInbox!).Id);
+
+        Assert.Equal(1, await UnreadCount(citizen, "NP"));
+        Assert.Equal(1, await UnreadCount(admin, "LK"));
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.PostAsync(readAll, null)).StatusCode);
+        Assert.Equal(0, await UnreadCount(admin, "LK"));
+    }
+
+    private static async Task<int> UnreadCount(HttpClient client, string country)
+    {
+        var result = await client.GetFromJsonAsync<JsonElement>($"/api/v1/notifications/unread-count?countryCode={country}");
+        return result.GetProperty("count").GetInt32();
+    }
+}

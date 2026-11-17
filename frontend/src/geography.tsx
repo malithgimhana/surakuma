@@ -1,4 +1,4 @@
-import { useState, useSyncExternalStore } from 'react';
+import { createContext, useContext, useState, useSyncExternalStore } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { get } from './api';
 import { Field } from './components';
@@ -10,6 +10,14 @@ export interface Country {
   requiredAlertLanguages: string;
   emergencyContactsJson: string;
 }
+export const CountryScope = createContext<string | undefined>(undefined);
+
+const countryOptions = [
+  { code: 'LK', name: 'Sri Lanka' },
+  { code: 'NP', name: 'Nepal' },
+  { code: 'IN', name: 'India' },
+];
+
 export function selectedCountry() {
   try {
     return localStorage.getItem('surakuma.country') || 'LK';
@@ -18,10 +26,12 @@ export function selectedCountry() {
   }
 }
 export function useCountry() {
-  return useSyncExternalStore((fn) => {
+  const fixedCountry = useContext(CountryScope);
+  const savedCountry = useSyncExternalStore((fn) => {
     window.addEventListener('surakuma-country', fn);
     return () => window.removeEventListener('surakuma-country', fn);
   }, selectedCountry);
+  return fixedCountry ?? savedCountry;
 }
 export function useCountries() {
   return useQuery({ queryKey: ['countries'], queryFn: () => get<Country[]>('/countries') });
@@ -30,6 +40,12 @@ export function CountrySelector() {
   const country = useCountry(),
     client = useQueryClient(),
     countries = useCountries();
+  const fixedCountry = useContext(CountryScope);
+  const options = Array.isArray(countries.data) && countries.data.length ? countries.data : countryOptions;
+  if (fixedCountry) {
+    const name = options.find(option => option.code === fixedCountry)?.name ?? fixedCountry;
+    return <span className="workspace-country" title={name}><span className="sr-only">Country </span>{name}</span>;
+  }
   return (
     <label className="language country-selector">
       <span className="sr-only">Country</span>
@@ -43,14 +59,7 @@ export function CountrySelector() {
           window.dispatchEvent(new Event('surakuma-country'));
         }}
       >
-        {(Array.isArray(countries.data) && countries.data.length
-          ? countries.data
-          : [
-              { code: 'LK', name: 'Sri Lanka' },
-              { code: 'NP', name: 'Nepal' },
-              { code: 'IN', name: 'India' },
-            ]
-        ).map((c) => (
+        {options.map((c) => (
           <option key={c.code} value={c.code}>
             {c.name}
           </option>

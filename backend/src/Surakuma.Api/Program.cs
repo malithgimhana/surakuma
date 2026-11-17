@@ -58,25 +58,29 @@ o.Events = new JwtBearerEvents
         var userId = context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);
         var stamp = context.Principal?.FindFirstValue("security_stamp");
         var user = userId is null ? null : await users.FindByIdAsync(userId);
-        if (user is null || string.IsNullOrEmpty(stamp) || stamp != await users.GetSecurityStampAsync(user))
+        if (user is null || user.Disabled || string.IsNullOrEmpty(stamp) || stamp != await users.GetSecurityStampAsync(user))
             context.Fail("Session is no longer valid.");
     }
 };
 });
+builder.Services.Configure<DataProtectionTokenProviderOptions>(o => o.TokenLifespan = TimeSpan.FromHours(1));
+builder.Services.AddTransient<ProviderObservationHandler>();
 builder.Services.AddAuthorization();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<IStore, EfStore>();
 builder.Services.AddScoped<ICurrentActor, CurrentActor>();
 builder.Services.AddScoped<AccessService>();
 builder.Services.AddScoped<Operations>();
+builder.Services.AddScoped<InternalNotifications>();
 builder.Services.AddScoped<AuthenticationService>();
 builder.Services.AddScoped<IAllocationPolicy, ConstraintAllocationPolicy>();
 builder.Services.AddScoped<IAllocationStrategy, RankedAllocationStrategy>();
-builder.Services.AddHttpClient<IAiProvider, AiProvider>(c => c.Timeout = Timeout.InfiniteTimeSpan).AddSurakumaResilience();
-builder.Services.AddHttpClient<EmailProvider>(c => c.Timeout = Timeout.InfiniteTimeSpan).AddSurakumaResilience(email: true);
+builder.Services.AddHttpClient<IAiProvider, AiProvider>(c => c.Timeout = Timeout.InfiniteTimeSpan).AddHttpMessageHandler<ProviderObservationHandler>().AddSurakumaResilience();
+builder.Services.AddHttpClient<EmailProvider>(c => c.Timeout = Timeout.InfiniteTimeSpan).AddHttpMessageHandler<ProviderObservationHandler>().AddSurakumaResilience(email: true);
 builder.Services.AddScoped<IEmailProvider>(sp => EmailProviderFactory.Create(sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<EmailProvider>()));
-builder.Services.AddHttpClient<IMappingProvider, MappingProvider>(c => c.Timeout = Timeout.InfiniteTimeSpan).AddSurakumaResilience();
+builder.Services.AddHttpClient<IMappingProvider, MappingProvider>(c => c.Timeout = Timeout.InfiniteTimeSpan).AddHttpMessageHandler<ProviderObservationHandler>().AddSurakumaResilience();
 builder.Services.AddHostedService<NotificationWorker>();
+if (!builder.Environment.IsEnvironment("Testing")) { builder.Services.AddHostedService<AdministrationWorker>(); builder.Services.AddHostedService<SecurityEmailWorker>(); }
 builder.Services.AddMemoryCache();
 builder.Services.AddControllers().AddJsonOptions(o => o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter(null, false)));
 builder.Services.AddEndpointsApiExplorer();
@@ -128,7 +132,7 @@ app.Use(async (context, next) =>
             DbUpdateException => 409,
             _ => 500
         };
-        app.Logger.LogWarning("Request failed: {FailureType}, status {Status}, trace {TraceId}", ex.GetType().Name, status, context.TraceIdentifier);
+        app.Logger.LogWarning("Request failed: {FailureType}, SQL {SqlNumber}, status {Status}, trace {TraceId}", ex.GetType().Name, (root as SqlException)?.Number, status, context.TraceIdentifier);
         context.Response.StatusCode = status;
         await Results.Problem(statusCode: status, title: status switch
         {
@@ -144,6 +148,17 @@ app.UseHttpsRedirection();
 app.UseCors();
 app.UseRateLimiter();
 app.UseAuthentication();
+app.Use(async (context, next) => {
+    try { await next(); }
+    catch (AccessDeniedException) { context.Items["AdminDenied"] = true; throw; }
+    finally {
+        if ((context.Response.StatusCode == 403 || context.Items.ContainsKey("AdminDenied")) && context.Request.Path.StartsWithSegments("/api/v1/admin") && context.User.Identity?.IsAuthenticated == true) {
+            using var scope = app.Services.CreateScope(); var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
+            db.Add(new ServiceObservation { Service = "AdministrativeAccess", ActorId = context.User.FindFirstValue(ClaimTypes.NameIdentifier), Success = false });
+            await db.SaveChangesAsync();
+        }
+    }
+});
 app.UseAuthorization();
 if (app.Environment.IsDevelopment()) { app.UseSwagger(); app.UseSwaggerUI(); }
 app.MapGet("/api/v1/health", () => Results.Ok(new { status = "healthy", service = "Surakuma", demo = app.Environment.IsDevelopment() })).AllowAnonymous();

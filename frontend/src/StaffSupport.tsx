@@ -1,13 +1,15 @@
-import { IncidentManagement } from './IncidentManagement';
-import { CountryAdministration } from './CountryAdministration';
+import { AdministrationOverview, AdministratorAlerts, DeliveryRecovery, StaffLifecycle, SystemAdministratorRequests } from './AdministrationWorkflows';
+import { OperationalReports } from './OperationalReports';
+import { OrganisationsPage, usePartnerDirectory } from './OrganisationsPage';
 import { RegionField, useCountry, useCountries } from './geography';
 import { useEffect, useId, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Eye, EyeOff, MapPin, Plus, Users } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Building2, Eye, EyeOff, MapPin, Plus, Users } from 'lucide-react';
 import { api, get } from './api';
 import { useAuth, useOptionalAuth } from './auth';
 import { SystemReadiness } from './SystemReadiness';
+import { getAdminSection } from './adminSections';
 import {
   Badge,
   Button,
@@ -288,16 +290,27 @@ export function VolunteerPage({ self = false }: { self?: boolean }) {
     </>
   );
 }
-export function CrisesPage() {
+export function CrisesPage({ compactEndedResponses = false }: { compactEndedResponses?: boolean }) {
   const country = useCountry(), countries = useCountries();
+  const [searchParams] = useSearchParams();
+  const requestedCentre = searchParams.get('centre');
+  const [preparedCrisis, setPreparedCrisis] = useState<string | null>(null);
   const policy = Array.isArray(countries.data) ? countries.data.find(c => c.code === country) : undefined;
   const requiredLanguages = (policy?.requiredAlertLanguages || (country === "LK" ? "en,si,ta" : "en")).split(",");
-  const query = useQuery({ queryKey: ['crises'], queryFn: () => get<Crisis[]>('/crises') }),
-    alerts = useQuery({ queryKey: ['alerts'], queryFn: () => get<Alert[]>('/alerts') }),
-    lookups = useQuery({ queryKey: ['lookups'], queryFn: () => get<Lookups>('/public/lookups') }),
+  const query = useQuery({ queryKey: ['crises', country], queryFn: () => get<Crisis[]>('/crises') }),
+    alerts = useQuery({ queryKey: ['alerts', country], queryFn: () => get<Alert[]>('/alerts') }),
+    lookups = useQuery({ queryKey: ['lookups', country], queryFn: () => get<Lookups>('/public/lookups') }),
     write = useWrite();
+  const activeCrises = query.data?.filter((crisis) => crisis.active) ?? [];
+  const endedCrises = query.data?.filter((crisis) => !crisis.active) ?? [];
+  const crisisTiles = compactEndedResponses ? activeCrises : query.data ?? [];
+  const directory = usePartnerDirectory(country, !!requestedCentre);
+  const preferredCentre = directory.data?.find((organisation) => organisation.id === requestedCentre && organisation.enabled && ["Verified", "LegacyActive"].includes(organisation.verification?.verificationState || ""));
   const [create, setCreate] = useState(false),
     [areaCrisis, setAreaCrisis] = useState('');
+  const showAreas = compactEndedResponses
+    ? activeCrises.some((crisis) => crisis.id === areaCrisis)
+    : !!areaCrisis;
   const [latitude, setLatitude] = useState(''), [longitude, setLongitude] = useState('');
   const [locating, setLocating] = useState(false), [locationError, setLocationError] = useState('');
   const locationRequest = useRef(0);
@@ -330,11 +343,24 @@ export function CrisesPage() {
     setLocationError('');
     setValue(value);
   }
+  function setResponseActive(crisis: Crisis, active: boolean) {
+    write.mutate(
+      { path: `/crises/${crisis.id}`, method: 'put', data: { ...crisis, active } },
+      {
+        onSuccess: () => {
+          if (compactEndedResponses && !active) {
+            setAreaCrisis((selected) => (selected === crisis.id ? '' : selected));
+            setPreparedCrisis((selected) => (selected === crisis.id ? null : selected));
+          }
+        },
+      },
+    );
+  }
   const areas = useQuery({
     queryKey: ['areas', areaCrisis],
     queryFn: () =>
       get<{ id: string; name: string; geoJson: string }[]>(`/crises/${areaCrisis}/areas`),
-    enabled: !!areaCrisis,
+    enabled: showAreas,
   });
   return (
     <>
@@ -349,6 +375,7 @@ export function CrisesPage() {
         }
       />
       <Message mutation={write} />
+      {preferredCentre && <p className="muted">Choose an active crisis to set {preferredCentre.name} as its primary response centre. New requests will be routed there after you save.</p>}
       {create && (
         <Card>
           <h2>New crisis</h2>
@@ -427,9 +454,11 @@ export function CrisesPage() {
         <Loading />
       ) : query.error ? (
         <ErrorState error={query.error} />
+      ) : compactEndedResponses && activeCrises.length === 0 ? (
+        <p className="muted">No active crises.</p>
       ) : (
-        <div className="resource-grid">
-          {query.data?.map((c) => (
+        <div className="resource-grid section-small">
+          {crisisTiles.map((c) => (
             <Card key={c.id}>
               <Badge value={c.active ? 'Open' : 'Closed'} />
               <h3>{c.name}</h3>
@@ -442,23 +471,22 @@ export function CrisesPage() {
                 write.mutate({ path: `/crises/${c.id}/centre`, method: 'put', data: { organisationId: centre || null } });
               }}>
                 <Field label="Primary response centre">
-                  <select name="centre" defaultValue={c.primaryOrganisationId || ''} key={c.primaryOrganisationId || 'none'}>
+                  <select name="centre" defaultValue={(preparedCrisis === c.id && preferredCentre?.id) || c.primaryOrganisationId || ''}
+                    key={`${c.primaryOrganisationId ?? ''}:${preparedCrisis === c.id ? preferredCentre?.id ?? '' : ''}`}>
                     <option value="">No centre configured</option>
                     {lookups.data?.organisations.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
                   </select>
                 </Field>
+                {c.active && preferredCentre && c.primaryOrganisationId !== preferredCentre.id && (
+                  <Button type="button" variant="ghost" onClick={() => setPreparedCrisis(c.id)}>Choose {preferredCentre.name}</Button>
+                )}
                 <Button variant="secondary" busy={write.isPending}>Save response centre</Button>
               </form>
               <div className="button-row">
                 <Button
                   variant="secondary"
-                  onClick={() =>
-                    write.mutate({
-                      path: `/crises/${c.id}`,
-                      method: 'put',
-                      data: { ...c, active: !c.active },
-                    })
-                  }
+                  disabled={write.isPending}
+                  onClick={() => setResponseActive(c, !c.active)}
                 >
                   {c.active ? 'End response' : 'Reopen response'}
                 </Button>
@@ -470,7 +498,7 @@ export function CrisesPage() {
           ))}
         </div>
       )}
-      {areaCrisis && (
+      {showAreas && (
         <Card>
           <h2>Operational areas</h2>
           {areas.error && <ErrorState error={areas.error} />}
@@ -514,13 +542,11 @@ export function CrisesPage() {
         >
           <Field label="Crisis">
             <select name="crisisId" required>
-              {query.data
-                ?.filter((c) => c.active)
-                .map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
+              {activeCrises.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
             </select>
           </Field>
           <Field label="Severity">
@@ -585,14 +611,141 @@ export function CrisesPage() {
             </div>
           ))}
       </Card>
+      {compactEndedResponses && endedCrises.length > 0 && (
+        <Card>
+          <h2>Ended responses</h2>
+          <ul className="ended-response-list">
+            {endedCrises.map((crisis) => (
+              <li className="inline spread" key={crisis.id}>
+                <div>
+                  <strong>{crisis.name}</strong>
+                  <small className="muted">
+                    {[crisis.type, crisis.district].filter(Boolean).join(' · ')}
+                  </small>
+                </div>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={write.isPending}
+                  aria-label={`Reopen response for ${crisis.name}`}
+                  onClick={() => setResponseActive(crisis, true)}
+                >
+                  Reopen response
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
     </>
   );
 }
+const adminUsersPageSize = 10;
+const adminAccountDate = new Intl.DateTimeFormat('en-GB', {
+  day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Colombo',
+});
+
 interface AdminUser {
   id: string;
   name: string;
   email: string;
-  memberships: { id: string; role: string; organisationId: string; countryCode?: string; crisisId?: string }[];
+  createdAt?: string | null;
+  firstRecordedAt?: string | null;
+  disabled?: boolean;
+  isSystemAdministrator?: boolean;
+  memberships: { id: string; role: string; organisationId: string | null; countryCode?: string; crisisId?: string; suspended?: boolean; createdAt?: string }[];
+}
+function AccountStatus({ user }: { user: AdminUser }) {
+  const staffRoles = user.memberships.filter((membership) => membership.role !== 'Citizen');
+  const suspendedCount = staffRoles.filter((membership) => membership.suspended).length;
+  const status = user.disabled ? 'Disabled'
+    : suspendedCount === 0 ? 'Active'
+    : !user.isSystemAdministrator && suspendedCount === staffRoles.length ? 'Staff suspended'
+    : 'Some roles suspended';
+  const tone = user.disabled ? 'disabled' : suspendedCount ? 'suspended' : 'active';
+  return <span className={`account-status account-status-${tone}`}>{status}</span>;
+}
+
+function AccountRoleDetails({ memberships, isSystemAdministrator, lookups }: { memberships: AdminUser['memberships']; isSystemAdministrator?: boolean; lookups?: Lookups }) {
+  if (!memberships.length && !isSystemAdministrator) return <span className="muted">No staff roles</span>;
+
+  const groups = new Map<string, AdminUser['memberships']>();
+  for (const membership of memberships) {
+    // Only combine roles that share the same organisation and scope.
+    const key = JSON.stringify([membership.organisationId, membership.countryCode || 'LK', membership.crisisId || null, membership.role === 'Administrator']);
+    const group = groups.get(key);
+    if (group) group.push(membership);
+    else groups.set(key, [membership]);
+  }
+
+  return (
+    <div className="admin-role-groups">
+      {isSystemAdministrator && <div className="admin-role-group"><strong>System Administrator</strong><small className="admin-role-context">All countries</small></div>}
+      {[...groups].map(([key, roles]) => {
+        const [grant] = roles;
+        const organisation = lookups?.organisations.find((item) => item.id === grant.organisationId)?.name;
+        const crisis = lookups?.crises.find((item) => item.id === grant.crisisId)?.name;
+        const scope = grant.role === 'Administrator' ? 'Global access'
+          : grant.crisisId ? (crisis ? `Crisis: ${crisis}` : 'Crisis scope')
+          : 'Country scope';
+        return (
+          <div className="admin-role-group" key={key}>
+            <strong>
+              {roles.map((role, index) => (
+                <span key={role.id}>
+                  {index > 0 && ', '}
+                  {role.role.replace(/([a-z])([A-Z])/g, '$1 $2')}
+                  {role.suspended && <small className="admin-role-suspended"> (suspended)</small>}
+                </span>
+              ))}
+            </strong>
+            <small className="admin-role-context" title={scope === 'Country scope' ? 'This role applies across crises in this country, within its permissions.' : undefined}>
+              <Building2 size={16} aria-hidden="true" />
+              <span>{grant.organisationId && `${organisation || 'Organisation unavailable'} · `}{grant.role === 'Administrator' ? scope : `${grant.countryCode || 'LK'} · ${scope}`}</span>
+            </small>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function AdminAccountRow({ user, global, lookups }: { user: AdminUser; global: boolean; lookups?: Lookups }) {
+  const initials = user.name.trim().split(/\s+/).slice(0, 2).map((part) => [...part][0]).join('').toUpperCase();
+  const avatarTone = [...(initials || user.id)].reduce((sum, char) => sum + (char.codePointAt(0) ?? 0), 0) % 5;
+  const recordedAt = user.createdAt || user.firstRecordedAt;
+
+  return (
+    <tr>
+      <td>
+        <div className="admin-person">
+          <span className="admin-person-avatar" data-tone={avatarTone} aria-hidden="true">{initials || '?'}</span>
+          <div className="admin-person-info">
+            <div className="admin-person-heading">
+              <strong>{user.name}</strong>
+              <details className="admin-user-id"><summary>View user ID</summary><small>{user.id}</small></details>
+            </div>
+            {user.email && <div className="admin-person-email">{user.email}</div>}
+          </div>
+        </div>
+      </td>
+      <td><AccountRoleDetails memberships={user.memberships} isSystemAdministrator={user.isSystemAdministrator} lookups={lookups} /></td>
+      <td><AccountStatus user={user} /></td>
+      <td>
+        {recordedAt ? (
+          <>
+            <time dateTime={recordedAt} title={formatDate(recordedAt)}>{adminAccountDate.format(new Date(recordedAt))}</time>
+            {!user.createdAt && <small className="block muted">First recorded</small>}
+          </>
+        ) : <span className="muted">Unknown</span>}
+      </td>
+      <td>
+        {global || user.memberships.length > 0
+          ? <StaffLifecycle user={user} global={global} organisations={lookups?.organisations} />
+          : <span className="muted">View only</span>}
+      </td>
+    </tr>
+  );
 }
 function AdminTriageRequest({ request, organisations }: { request: AidRequest; organisations: Lookups['organisations'] }) {
   const write = useWrite();
@@ -639,105 +792,231 @@ function AdminTriageRequest({ request, organisations }: { request: AidRequest; o
     </div>
   );
 }
+const auditActionLabels = new Map([
+  ['Login', 'Successful sign-in'],
+  ['CitizenRegistered', 'Citizen account created'],
+  ['ProfileUpdated', 'Profile updated'],
+  ['CaseChanged', 'Case updated'],
+  ['RequestAssigned', 'Request assigned to a response centre'],
+  ['RequestReassigned', 'Request reassigned'],
+  ['RequestUnassigned', 'Request moved to the unassigned queue'],
+  ['CaseManagerAssigned', 'Case manager assigned'],
+  ['CaseManagerAvailabilityChanged', 'Case manager availability changed'],
+  ['EscalationResolved', 'Escalation resolved'],
+  ['AiGenerated', 'AI recommendation generated'],
+  ['AiDecision', 'AI recommendation reviewed'],
+  ['DuplicateReviewed', 'Potential duplicate reviewed'],
+  ['ResourceCreated', 'Resource added'],
+  ['StockReplenished', 'Stock replenished'],
+  ['ResourceReserved', 'Resource reserved'],
+  ['AllocationRecommendationAccepted', 'Allocation recommendation accepted'],
+  ['AllocationRecommendationIgnored', 'Allocation recommendation skipped'],
+  ['AllocationDispatch', 'Aid dispatched'],
+  ['AllocationDeliver', 'Aid delivered'],
+  ['AllocationCancel', 'Aid reservation cancelled'],
+  ['ShelterSaved', 'Shelter details saved'],
+  ['ShelterReserved', 'Shelter placement reserved'],
+  ['ShelterCheckIn', 'Household checked in to shelter'],
+  ['ShelterDepart', 'Household checked out of shelter'],
+  ['ShelterCancel', 'Shelter reservation cancelled'],
+  ['VolunteerSaved', 'Volunteer profile saved'],
+  ['VolunteerAssigned', 'Volunteer task assigned'],
+  ['VolunteerTaskAccept', 'Volunteer task accepted'],
+  ['VolunteerTaskDecline', 'Volunteer task declined'],
+  ['VolunteerTaskStart', 'Volunteer task started'],
+  ['VolunteerTaskComplete', 'Volunteer task submitted for verification'],
+  ['VolunteerTaskVerify', 'Volunteer task verified'],
+  ['FeedbackRecorded', 'Feedback recorded'],
+  ['CountryServicesConfigured', 'Country services updated'],
+  ['OrganisationCountryEnabled', 'Organisation enabled for a country'],
+  ['InternationalIncidentCreated', 'International incident created'],
+  ['InternationalIncidentDeleted', 'International incident deleted'],
+  ['CrisisLinkedToIncident', 'Crisis linked to an incident'],
+  ['CrisisUnlinkedFromIncident', 'Crisis unlinked from an incident'],
+  ['CrisisCentreChanged', 'Primary response centre changed'],
+  ['CrisisCreated', 'Crisis created'],
+  ['CrisisUpdated', 'Crisis updated'],
+  ['OperationalAreaCreated', 'Operational area added'],
+  ['PublicAlertCreated', 'Public alert created'],
+  ['PublicAlertUnpublished', 'Public alert unpublished'],
+  ['StaffAccessGranted', 'Staff access granted'],
+  ['StaffAccessRevoked', 'Staff access revoked'],
+  ['SystemAdministratorRevoked', 'System Administrator access revoked'],
+  ['OrganisationCountryRemoved', 'Organisation removed from country'],
+  ['OrganisationCreated', 'Organisation added'],
+  ['OrganisationDeleted', 'Organisation deleted'],
+  ['OrganisationArchived', 'Organisation removed from directory'],
+  ['EvidenceUploaded', 'Evidence uploaded'],
+]);
+
+function auditActionLabel(action: string) {
+  return auditActionLabels.get(action) ?? (action.replace(/([a-z0-9])([A-Z])/g, '$1 $2').trim() || 'Audit event');
+}
+
 export function AdminPage() {
   const countryCode = useCountry();
   const auth = useOptionalAuth();
   const globalAdmin = !auth || !!auth.user?.roles.includes("Administrator");
   const [showStaffPassword, setShowStaffPassword] = useState(false);
+  const [staffRole, setStaffRole] = useState('Coordinator');
+  const administratorRole = staffRole === 'Administrator' || staffRole === 'CountryAdministrator';
   const [searchParams] = useSearchParams();
-  const section = ['cases', 'users', 'organisations', 'integrations', 'activity'].includes(searchParams.get('section') || '') ? searchParams.get('section')! : 'overview';
-  const [showStaffForm, setShowStaffForm] = useState(false);
+  const section = getAdminSection(searchParams.get('section'), globalAdmin);
+  const requestedOrganisation = section === 'users' ? searchParams.get('organisation') : null;
+  const [showStaffForm, setShowStaffForm] = useState(!!requestedOrganisation);
+  useEffect(() => { if (requestedOrganisation) setShowStaffForm(true); }, [requestedOrganisation]);
   const [userSearch, setUserSearch] = useState('');
+  const [appliedUserSearch, setAppliedUserSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('');
+  const [userPage, setUserPage] = useState(1);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const term = userSearch.trim();
+      if (term === appliedUserSearch) return;
+      setAppliedUserSearch(term);
+      setUserPage(1);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [userSearch, appliedUserSearch]);
   const [auditPage, setAuditPage] = useState(1);
   const [deliveryPage, setDeliveryPage] = useState(1);
   const staffPasswordId = useId();
+  const userParams = new URLSearchParams({
+    includeTotal: 'true',
+    countryCode,
+    page: String(section === 'users' ? userPage : 1),
+    pageSize: String(adminUsersPageSize),
+  });
+  if (section === 'users' && appliedUserSearch) userParams.set('search', appliedUserSearch);
+  if (section === 'users' && roleFilter) userParams.set('role', roleFilter);
   const users = useQuery({
-      queryKey: ['admin-users'],
-      queryFn: () => get<AdminUser[]>('/admin/users'),
+      queryKey: ['admin-users', countryCode, userParams.toString()],
+      queryFn: async () => {
+        const result = await get<Page<AdminUser> | AdminUser[]>(`/admin/users?${userParams}`);
+        if (!Array.isArray(result)) return result;
+
+        // Older API processes return a capped array until they are restarted.
+        const term = userParams.get('search')?.toLowerCase();
+        const role = userParams.get('role');
+        const matches = result.filter(u =>
+          (!term || u.name.toLowerCase().includes(term) || u.email?.toLowerCase().includes(term)) &&
+          (!role || (role === 'NoStaffRoles' ? u.memberships.length === 0 : u.memberships.some(m => m.role === role))),
+        ).map(u => ({
+          ...u,
+          firstRecordedAt: u.firstRecordedAt ?? u.memberships.flatMap(m => m.createdAt ? [m.createdAt] : []).sort()[0],
+        })).sort((a, b) => {
+          const date = (u: AdminUser) => Date.parse(u.createdAt ?? u.firstRecordedAt ?? '') || 0;
+          return date(b) - date(a) || a.name.localeCompare(b.name);
+        });
+        const pageSize = adminUsersPageSize;
+        const pageNumber = Math.min(Number(userParams.get('page')), Math.max(1, Math.ceil(matches.length / pageSize)));
+        const start = (pageNumber - 1) * pageSize;
+        return { items: matches.slice(start, start + pageSize), total: matches.length, pageNumber, pageSize, legacy: true };
+      },
+      enabled: section === 'users' || section === 'overview',
     }),
-    lookups = useQuery({ queryKey: ['lookups'], queryFn: () => get<Lookups>('/public/lookups') }),
-    triage = useQuery({ queryKey: ['triage'], queryFn: () => get<AidRequest[]>('/requests/triage') }),
+    lookups = useQuery({ queryKey: ['lookups', countryCode], queryFn: () => get<Lookups>('/public/lookups'), enabled: ['overview', 'cases', 'users'].includes(section) }),
+    triage = useQuery({ queryKey: ['triage', countryCode], queryFn: () => get<AidRequest[]>('/requests/triage'), enabled: section === 'cases' }),
     audit = useQuery({
-      queryKey: ['audit', auditPage], enabled: globalAdmin,
+      queryKey: ['audit', countryCode, auditPage], enabled: globalAdmin && section === 'activity',
       queryFn: () =>
-        getHistoryPage<{ id: string; action: string; actorId: string; detail: string; createdAt: string }>(
-          `/admin/audit?page=${auditPage}&pageSize=10&includeTotal=true`,
+        getHistoryPage<{ id: string; action: string; actorId: string; actorName?: string | null; detail: string; createdAt: string }>(
+          `/admin/audit?page=${auditPage}&pageSize=10&includeTotal=true&countryCode=${countryCode}`,
         ),
     }),
     deliveries = useQuery({
-      queryKey: ['deliveries', deliveryPage], enabled: globalAdmin,
+      queryKey: ['deliveries', countryCode, deliveryPage], enabled: globalAdmin && section === 'activity',
       queryFn: () =>
         getHistoryPage<{ id: string; state: string; attempts: number; lastError: string | null; createdAt: string; eventMessage: string; recipientName: string | null; caseReference: string | null; provider: string | null }>(
-          `/admin/deliveries?page=${deliveryPage}&pageSize=10&includeTotal=true`,
+          `/admin/deliveries?page=${deliveryPage}&pageSize=10&includeTotal=true&countryCode=${countryCode}`,
         ),
     }),
     write = useWrite();
-  const filteredUsers = users.data?.filter((u) => {
-    const query = userSearch.trim().toLowerCase();
-    return (!query || `${u.name} ${u.email}`.toLowerCase().includes(query)) && (!roleFilter || u.memberships.some((m) => m.role === roleFilter));
-  });
-  const titles: Record<string, [string, string]> = {
-    overview: ['System administration', 'Manage access, organisations, audit records, and notification delivery.'],
+  const userList = users.data?.items ?? [];
+  const currentUserPage = users.data?.pageNumber ?? 1;
+  const userPageCount = Math.max(1, Math.ceil((users.data?.total ?? 0) / (users.data?.pageSize ?? adminUsersPageSize)));
+  const directory = usePartnerDirectory(countryCode, !!requestedOrganisation);
+  const preferredOrganisation = directory.data?.find((organisation) => organisation.id === requestedOrganisation && organisation.enabled && ["Verified", "LegacyActive"].includes(organisation.verification?.verificationState || ""))?.id;
+  if (section === 'integrations') return <SystemReadiness />;
+  const titles: Record<Exclude<typeof section, 'organisations' | 'integrations'>, [string, string]> = {
+    overview: globalAdmin
+      ? ['System administration', 'Monitor country responses and manage platform-wide access and settings.']
+      : ['Country administration', 'Manage your country’s crisis response, organisations and staff access.'],
     cases: ['Unassigned cases', 'Review requests waiting for a response centre or case manager.'],
     users: ['Users & access', 'Manage staff accounts, roles, and access to organisations.'],
-    organisations: ['Organisations', 'View and manage partner organisations.'],
-    integrations: ['Integrations', 'Review service configuration and notification readiness.'],
     activity: ['Activity', 'Review audit events and notification delivery.'],
+    reports: ['Reports', 'Country-level response statistics.'],
+    alerts: ['Alerts', 'Operational issues needing attention.'],
   };
+  if (section === 'reports') return <OperationalReports />;
+  if (section === 'alerts') return <AdministratorAlerts />;
+  if (section === 'organisations') {
+    return <div className="admin-workspace"><OrganisationsPage globalAdmin={globalAdmin} /></div>;
+  }
+
   return (
     <div className="admin-workspace">
       <PageHeader
         title={titles[section][0]}
         description={titles[section][1]}
       />
+      {section === 'overview' && <AdministrationOverview />}
+      {section === 'activity' && globalAdmin && <DeliveryRecovery />}
       {section === 'overview' && <div className="admin-overview-grid">
-        <Link className="card admin-overview-card" to="/admin?section=cases"><span>Unassigned cases</span><strong>{triage.data?.length ?? '—'}</strong><small>Review requests →</small></Link>
-        <Link className="card admin-overview-card" to="/admin?section=users"><span>Users & access</span><strong>{users.data?.length ?? '—'}</strong><small>Manage access →</small></Link>
+        <Link className="card admin-overview-card" to="/admin?section=users"><span>Users & access</span><strong>{users.data?.total ?? '—'}</strong><small>Manage access →</small></Link>
         <Link className="card admin-overview-card" to="/admin?section=organisations"><span>Organisations</span><strong>{lookups.data?.organisations.length ?? '—'}</strong><small>View organisations →</small></Link>
-        <Link className="card admin-overview-card" to="/admin?section=integrations"><span>Integrations</span><strong>Service status</strong><small>View readiness →</small></Link>
+        {globalAdmin && <Link className="card admin-overview-card" to="/admin?section=integrations"><span>Integrations</span><strong>Service status</strong><small>View readiness →</small></Link>}
       </div>}
-      {section === 'integrations' && <SystemReadiness />}
       <Message mutation={write} />
-      <div hidden={section !== 'overview' && section !== 'cases'}>
-      <Card>
-        <h2>Unassigned requests</h2>
-        {triage.isPending ? <Loading /> : triage.error ? <ErrorState error={triage.error} /> :
-          triage.data?.length ? triage.data.map((request) => <AdminTriageRequest key={request.id} request={request} organisations={lookups.data?.organisations || []} />) : <p>No requests are waiting for assignment.</p>}
-      </Card>
-      </div>
+      {section === 'cases' && (
+        <Card>
+          <h2>Unassigned requests</h2>
+          {triage.isPending ? <Loading /> : triage.error ? <ErrorState error={triage.error} /> :
+            triage.data?.length ? triage.data.map((request) => <AdminTriageRequest key={request.id} request={request} organisations={lookups.data?.organisations || []} />) : <p>No requests are waiting for assignment.</p>}
+        </Card>
+      )}
       <div hidden={section !== 'users'}>
         <Card className="admin-users-card">
           <div className="admin-users-toolbar">
-            <input aria-label="Search users" placeholder="Search users by name or email" value={userSearch} onChange={(e) => setUserSearch(e.target.value)} />
-            <select aria-label="Filter by role" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
+            <input type="search" aria-label="Search users" placeholder="Search by name or email" value={userSearch} onChange={(e) => setUserSearch(e.target.value)} />
+            <select aria-label="Filter by role" value={roleFilter} onChange={(e) => { setRoleFilter(e.target.value); setUserPage(1); }}>
               <option value="">All roles</option>
-              {['Coordinator', 'CaseManager', 'Logistics', 'ShelterAdmin', 'VolunteerCoordinator', 'Volunteer', 'Partner', 'Administrator'].map((role) => <option key={role} value={role}>{role.replace(/([a-z])([A-Z])/g, '$1 $2')}</option>)}
+              {['Coordinator', 'CaseManager', 'Logistics', 'ShelterAdmin', 'VolunteerCoordinator', 'Volunteer', 'Partner', 'CountryAdministrator', ...(globalAdmin ? ['Administrator'] : [])].map((role) => <option key={role} value={role}>{role.replace(/([a-z])([A-Z])/g, '$1 $2')}</option>)}
+              <option value="NoStaffRoles">No staff roles</option>
             </select>
             <Button type="button" aria-expanded={showStaffForm} onClick={() => setShowStaffForm(!showStaffForm)}><Plus size={18} />{showStaffForm ? 'Close form' : 'Create staff account'}</Button>
           </div>
           <div className="admin-staff-form" hidden={!showStaffForm}>
         <div>
           <h2>Create staff account or grant role</h2>
+          {globalAdmin && <p className="muted">Appoint a Country Administrator for the country selected above. Requests to grant System Administrator access require approval from a different System Administrator.</p>}
           <form
             className="stack"
-            onReset={() => setShowStaffPassword(false)}
+            onReset={() => { setShowStaffPassword(false); setStaffRole('Coordinator'); }}
             onSubmit={(e) => {
               e.preventDefault();
               const form = e.currentTarget;
               const f = values(form);
               write.mutate(
-                { path: '/admin/users', data: { ...f, countryCode, crisisId: f.crisisId || null } },
+                { path: '/admin/users', data: { ...f, countryCode, organisationId: f.organisationId || null, crisisId: f.crisisId || null } },
                 { onSuccess: () => form.reset() },
               );
             }}
           >
             <fieldset disabled={write.isPending} className="staff-access-fields">
-            <Field label="Full name">
-              <input name="name" required maxLength={100} />
-            </Field>
             <Field label="Email">
               <input name="email" type="email" required />
+            </Field>
+            <Field label="Role">
+              <select name="role" value={staffRole} onChange={(event) => setStaffRole(event.target.value)}>
+                {['Coordinator', 'CaseManager', 'Logistics', 'ShelterAdmin', 'VolunteerCoordinator', 'Volunteer', 'Partner',
+                  ...(globalAdmin ? ['CountryAdministrator', 'Administrator'] : []),
+                ].map((role) => <option value={role} key={role}>{role === 'Administrator' ? 'System Administrator' : role.replace(/([a-z])([A-Z])/g, '$1 $2')}</option>)}
+              </select>
+            </Field>
+            {staffRole !== 'Administrator' && <>
+            <Field label="Full name" hint="For new accounts only">
+              <input name="name" maxLength={100} />
             </Field>
             <div className="field">
               <label htmlFor={staffPasswordId}>Initial password (new accounts only)</label>
@@ -747,7 +1026,6 @@ export function AdminPage() {
                 name="password"
                 type={showStaffPassword ? 'text' : 'password'}
                 minLength={10}
-                required
                 autoComplete="new-password"
               />
               <button type="button" className="staff-password-toggle" aria-label={showStaffPassword ? 'Hide password' : 'Show password'} aria-pressed={showStaffPassword} onClick={() => setShowStaffPassword((shown) => !shown)}>
@@ -755,28 +1033,15 @@ export function AdminPage() {
               </button>
               </div>
             </div>
+            </>}
+            {!administratorRole && <>
             <Field label="Organisation">
-              <select name="organisationId" required>
+              <select name="organisationId" required key={preferredOrganisation || 'default'} defaultValue={preferredOrganisation}>
+                {requestedOrganisation && !preferredOrganisation && <option value="">Select an organisation</option>}
                 {lookups.data?.organisations.map((o) => (
                   <option key={o.id} value={o.id}>
                     {o.name}
                   </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Role">
-              <select name="role">
-                {[
-                  'Coordinator',
-                  'CaseManager',
-                  'Logistics',
-                  'ShelterAdmin',
-                  'VolunteerCoordinator',
-                  'Volunteer',
-                  'Partner',
-                  'Administrator', 'CountryAdministrator',
-                ].filter(r => globalAdmin || r !== 'Administrator').map((r) => (
-                  <option key={r}>{r}</option>
                 ))}
               </select>
             </Field>
@@ -790,65 +1055,74 @@ export function AdminPage() {
                 ))}
               </select>
             </Field>
-            <Button busy={write.isPending}>Grant staff access</Button>
+            </>}
+            <Button busy={write.isPending}>{staffRole === 'CountryAdministrator' ? 'Appoint Country Administrator' : staffRole === 'Administrator' ? 'Request System Administrator access' : 'Grant staff access'}</Button>
             <Button type="reset" variant="secondary">Reset form</Button>
             </fieldset>
           </form>
         </div>
           </div>
-          {users.isPending ? <Loading /> : users.error ? <ErrorState error={users.error} /> : <div className="table-wrap"><table className="admin-users-table">
-            <thead><tr><th>Name</th><th>Email</th><th>Role and organisation</th><th>Access</th></tr></thead>
-            <tbody>{filteredUsers?.map((u) => <tr key={u.id}>
-              <td><div className="admin-person"><span className="admin-person-avatar" aria-hidden="true">{u.name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase()}</span><div><strong>{u.name}</strong><details className="admin-user-id"><summary>View user ID</summary><small>{u.id}</small></details></div></div></td>
-              <td>{u.email}</td>
-              <td>{u.memberships.length ? u.memberships.map((m) => <div key={m.id} className="admin-membership"><Badge value={m.role} /><small>{lookups.data?.organisations.find((o) => o.id === m.organisationId)?.name || 'Organisation unavailable'} · {m.countryCode || 'LK'}{m.crisisId ? ' · crisis scope' : ' · country scope'}</small></div>) : <span className="muted">No staff roles</span>}</td>
-              <td>{u.memberships.map((m) => <Button key={m.id} type="button" variant="ghost" busy={write.isPending} onClick={() => { const organisation = lookups.data?.organisations.find((o) => o.id === m.organisationId)?.name || 'this organisation'; if (window.confirm(`Revoke ${m.role} access for ${u.name} at ${organisation}?`)) write.mutate({ path: `/admin/memberships/${m.id}`, method: 'delete' }); }}>Revoke {m.role.replace(/([a-z])([A-Z])/g, '$1 $2')}</Button>)}</td>
-            </tr>)}</tbody>
-          </table>{filteredUsers?.length === 0 && <p>No users match your search.</p>}</div>}
-          <p className="muted admin-users-count">Showing {filteredUsers?.length ?? 0} of {users.data?.length ?? 0} loaded users{users.data?.length === 100 ? ' (first 100)' : ''}</p>
+          {users.isPending ? <Loading /> : users.error ? <ErrorState error={users.error} /> : (
+            <div className="table-wrap" role="region" aria-label="User accounts" tabIndex={0}>
+              <table className="admin-users-table">
+                <colgroup>
+                  <col className="account-column" />
+                  <col className="roles-column" />
+                  <col className="status-column" />
+                  <col className="created-column" />
+                  <col className="access-column" />
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th scope="col">Account</th>
+                    <th scope="col">Roles &amp; organisations</th>
+                    <th scope="col">Status</th>
+                    <th scope="col" aria-sort="descending">Created</th>
+                    <th scope="col">Access</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {userList.map((user) => (
+                    <AdminAccountRow key={user.id} user={user} global={globalAdmin} lookups={lookups.data} />
+                  ))}
+                  {userList.length === 0 && <tr><td colSpan={5}>No users match your search.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {users.data && (
+            <div className="admin-users-footer">
+              <p className="muted admin-users-count" role="status">
+                Showing {userList.length} of {users.data.total} matching users
+              </p>
+              <div className="admin-pagination" role="group" aria-label="User pages">
+                <Button type="button" variant="secondary" disabled={currentUserPage <= 1 || users.isFetching} onClick={() => setUserPage(currentUserPage - 1)}>
+                  <ArrowLeft size={16} aria-hidden="true" /> Previous
+                </Button>
+                {userPageCount > 1 && <span>Page {currentUserPage} of {userPageCount}</span>}
+                <Button type="button" variant="secondary" disabled={currentUserPage >= userPageCount || users.isFetching} onClick={() => setUserPage(currentUserPage + 1)}>
+                  Next <ArrowRight size={16} aria-hidden="true" />
+                </Button>
+              </div>
+            </div>
+          )}
+          {users.data && 'legacy' in users.data && <p className="muted">Restart the backend to search the full directory and see recorded account creation dates.</p>}
         </Card>
       </div>
-      <div hidden={section !== 'organisations'}>
-        <CountryAdministration />
-        {globalAdmin && <IncidentManagement />}
-        <Card>
-          <h2>Partner organisations</h2>
-          {lookups.data?.organisations.map((o) => (
-            <p key={o.id}>
-              <strong>{o.name}</strong>
-              <small className="muted block">{o.id}</small>
-              {globalAdmin && <Button type="button" variant="secondary" busy={write.isPending} onClick={() => write.mutate({path:`/admin/organisations/${o.id}/countries/${countryCode}`,method:'put'})}>Enable in {countryCode}</Button>}
-            </p>
-          ))}
-          <form hidden={!globalAdmin}
-            className="stack"
-            onSubmit={(e) => {
-              e.preventDefault();
-              write.mutate({ path: '/admin/organisations', data: values(e.currentTarget) });
-            }}
-          >
-            <Field label="New organisation name">
-              <input name="name" required maxLength={150} />
-            </Field>
-            <Button variant="secondary" busy={write.isPending}>
-              Add organisation
-            </Button>
-          </form>
-        </Card>
-      </div>
+      {section === 'users' && globalAdmin && <SystemAdministratorRequests />}
       <div className="two-column" hidden={section !== 'activity'}>
         <Card>
-          <h2>Recent audit events</h2>
+          <h2>Recent Audit History</h2>
           {audit.isPending ? <Loading /> : audit.error ? (
             <ErrorState error={audit.error} />
           ) : (
             audit.data?.items.map((a) => (
               <div className="audit-entry" key={a.id}>
-                <strong>{a.action}</strong>
-                <p>{a.detail}</p>
-                <small>
-                  {formatDate(a.createdAt)} · actor {a.actorId.slice(0, 8)}
+                <strong>{auditActionLabel(a.action)}</strong>
+                <small className="block">
+                  {a.actorName?.trim() || (a.actorId ? `Account ${a.actorId.slice(0, 8)}` : 'Unknown actor')} · <time dateTime={a.createdAt}>{formatDate(a.createdAt)}</time>
                 </small>
+                {a.detail?.trim() && <p>{a.detail}</p>}
               </div>
             ))
           )}
@@ -857,7 +1131,7 @@ export function AdminPage() {
             <span aria-live="polite">Page {auditPage} of {Math.max(1, Math.ceil((audit.data?.total ?? 0) / 10))}</span>
             <Button type="button" variant="secondary" disabled={auditPage >= Math.max(1, Math.ceil((audit.data?.total ?? 0) / 10)) || audit.isFetching} onClick={() => setAuditPage((page) => page + 1)}>Next</Button>
           </div>}
-          {!audit.isPending && !audit.error && audit.data?.items.length === 0 && <p>No audit events on this page.</p>}
+          {!audit.isPending && !audit.error && audit.data?.items.length === 0 && <p>No audit events for this country on this page.</p>}
         </Card>
         <Card>
           <h2>Notification delivery</h2>
@@ -878,7 +1152,7 @@ export function AdminPage() {
               </div>
             ))
           )}
-          {!deliveries.isPending && !deliveries.error && deliveries.data?.items.length === 0 && <p>No delivery events on this page.</p>}
+          {!deliveries.isPending && !deliveries.error && deliveries.data?.items.length === 0 && <p>No delivery events for this country on this page.</p>}
           {!deliveries.isPending && !deliveries.error && <div className="admin-pagination" role="group" aria-label="Notification delivery pages">
             <Button type="button" variant="secondary" disabled={deliveryPage === 1 || deliveries.isFetching} onClick={() => setDeliveryPage((page) => page - 1)}>Previous</Button>
             <span aria-live="polite">Page {deliveryPage} of {Math.max(1, Math.ceil((deliveries.data?.total ?? 0) / 10))}</span>

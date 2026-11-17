@@ -23,7 +23,11 @@ Set `Ai__ApiKey`, restart, and generate a recommendation on an explicitly synthe
 
 ## Brevo
 
+Citizen-only accounts receive request submission and status updates through Brevo and their personal inbox. The background worker records each inbox entry before attempting email delivery, with one entry per event. Internal accounts, including accounts with both citizen and staff roles, receive operational notifications in the application. Capture mode remains available for development and automated tests. Apply the `InternalNotificationRouting` migration before starting the updated API. Existing citizen inbox rows are accessible to their request owner.
+
 Create a [Brevo free account](https://help.brevo.com/hc/en-us/articles/208589409-About-Brevo-s-pricing-plans), complete required account activation, and verify a sender. Configure `Email__Provider=Brevo`, `Email__ApiKey` and `Email__Sender` in the API terminal. Restart afterward. A configured sender string does not establish verification.
+
+Set `Email__PortalBaseUrl` to the public HTTPS origin of the citizen frontend. The email button opens the corresponding request after sign-in, and email clients load the logo from `/surakuma-email-logo.png` on that origin. Without a portal origin, the email shows the Surakuma wordmark and sign-in instructions. The development default points to `http://localhost:5173` for same-machine testing.
 
 Use a dedicated synthetic citizen account with an email inbox you control and authorise for testing. Trigger one case status update and inspect its outbox event, provider result and received message. Seed addresses ending `@surakuma.test` are placeholders for local capture, not delivery inboxes. Existing captured events are not automatically resent when switching provider. A `Review` result requires provider-side investigation before another attempt. Set `Email__Provider=Capture` and restart to return to local demonstration mode.
 

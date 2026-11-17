@@ -61,7 +61,7 @@ public sealed class AiProvider(HttpClient http, IConfiguration config, ILogger<A
 public sealed class EmailProvider(HttpClient http, IConfiguration config) : IEmailProvider
 {
     public string Name => config["Email:Provider"] == "Brevo" ? "Brevo" : "Development capture";
-    public async Task<DeliveryResult> SendAsync(string email, string message, Guid eventId, CancellationToken ct, string language = "en")
+    public async Task<DeliveryResult> SendAsync(string email, CitizenEmailUpdate update, Guid eventId, CancellationToken ct)
     {
         if (Name != "Brevo")
             return new("Captured", eventId.ToString());
@@ -73,7 +73,7 @@ public sealed class EmailProvider(HttpClient http, IConfiguration config) : IEma
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.brevo.com/v3/smtp/email");
             request.Headers.Add("api-key", key);
-            var content = CitizenEmailContent.Create(message, language);
+            var content = CitizenEmailContent.Create(update, config["Email:PortalBaseUrl"]);
             request.Content = JsonContent.Create(new
             {
                 sender = new
@@ -111,7 +111,7 @@ public sealed class EmailProvider(HttpClient http, IConfiguration config) : IEma
 public sealed class CaptureEmailProvider : IEmailProvider
 {
     public string Name => "Development capture";
-    public Task<DeliveryResult> SendAsync(string email, string message, Guid eventId, CancellationToken ct, string language = "en") => Task.FromResult(new DeliveryResult("Captured", eventId.ToString()));
+    public Task<DeliveryResult> SendAsync(string email, CitizenEmailUpdate update, Guid eventId, CancellationToken ct) => Task.FromResult(new DeliveryResult("Captured", eventId.ToString()));
 }
 public static class EmailProviderFactory
 {

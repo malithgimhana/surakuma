@@ -1,22 +1,27 @@
 import axios from 'axios';
 import type { AxiosError, InternalAxiosRequestConfig } from 'axios';
 import type { User } from './types';
+import { countryAdminCode, isAdminWorkspacePath } from './countryScope';
 export const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || '/api/v1',
   withCredentials: true,
   timeout: 25000,
 });
 let accessToken: string | null = null;
+let adminCountry: string | undefined;
 let refreshFlight: Promise<{ accessToken: string; user: User } | null> | null = null;
-export function setToken(value: string | null) {
+export function setToken(value: string | null, user?: User) {
   accessToken = value;
+  adminCountry = value ? countryAdminCode(user) : undefined;
 }
 export async function refreshSession() {
-  if (!refreshFlight)
-    refreshFlight = api
-      .post<{ accessToken: string; user: User }>('/auth/refresh')
+  if (!refreshFlight) {
+    const send = () => api.post<{ accessToken: string; user: User }>('/auth/refresh');
+    // Tabs share the refresh cookie, so wait for the previous tab to finish rotating it.
+    const response = navigator.locks ? navigator.locks.request('surakuma-auth-refresh', send) : send();
+    refreshFlight = Promise.resolve(response)
       .then((r) => {
-        setToken(r.data.accessToken);
+        setToken(r.data.accessToken, r.data.user);
         return r.data;
       })
       .catch(() => {
@@ -26,12 +31,15 @@ export async function refreshSession() {
       .finally(() => {
         refreshFlight = null;
       });
+  }
   return refreshFlight;
 }
 api.interceptors.request.use((config) => {
   let countryCode = 'LK';
   try { countryCode = localStorage.getItem('surakuma.country') || 'LK'; } catch { /* storage unavailable */ }
-  if (config.method === 'get') config.params = { countryCode, ...config.params };
+  if (adminCountry && isAdminWorkspacePath(window.location.pathname)) countryCode = adminCountry;
+  if (config.method === 'get' && !new URLSearchParams(config.url?.split('?')[1]).has('countryCode'))
+    config.params = { countryCode, ...config.params };
   if (config.data && typeof config.data === 'object' && !(config.data instanceof FormData)) {
     if (['/crises', '/resources', '/shelters', '/volunteers', '/admin/users', '/admin/organisations'].includes(config.url || '')) config.data = { countryCode, ...config.data };
     if (config.data.administrativeDivisionId === '') config.data.administrativeDivisionId = null;

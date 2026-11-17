@@ -2,6 +2,7 @@ using System.Net;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Surakuma.Application;
 using Surakuma.Domain;
 using Surakuma.Infrastructure;
 
@@ -43,17 +44,18 @@ public sealed class ResilienceTests
         var handler = new SimulatedHandler((_, _) => Task.FromResult(Response(HttpStatusCode.ServiceUnavailable)));
         using var services = Services(handler, true); using var http = services.GetRequiredService<IHttpClientFactory>().CreateClient("provider");
         var provider = new EmailProvider(http, Config());
-        for (int i = 0; i < 4; i++) Assert.Equal("Review", (await provider.SendAsync("test@example.test", "test", Guid.NewGuid(), default)).State);
-        Assert.Equal("Retry", (await provider.SendAsync("test@example.test", "test", Guid.NewGuid(), default)).State);
+        var update = new CitizenEmailUpdate("test");
+        for (int i = 0; i < 4; i++) Assert.Equal("Review", (await provider.SendAsync("test@example.test", update, Guid.NewGuid(), default)).State);
+        Assert.Equal("Retry", (await provider.SendAsync("test@example.test", update, Guid.NewGuid(), default)).State);
         Assert.Equal(4, handler.Calls);
-        Assert.Equal("Captured", (await new CaptureEmailProvider().SendAsync("test@example.test", "test", Guid.NewGuid(), default)).State);
+        Assert.Equal("Captured", (await new CaptureEmailProvider().SendAsync("test@example.test", update, Guid.NewGuid(), default)).State);
     }
     [Fact]
     public async Task EmailRateLimitIsRetriedWithBackoff()
     {
         var handler = new SimulatedHandler((n, _) => Task.FromResult(Response(n == 1 ? HttpStatusCode.TooManyRequests : HttpStatusCode.OK, "{\"messageId\":\"test\"}")));
         using var services = Services(handler, true); using var http = services.GetRequiredService<IHttpClientFactory>().CreateClient("provider");
-        Assert.Equal("Sent", (await new EmailProvider(http, Config()).SendAsync("test@example.test", "test", Guid.NewGuid(), default)).State);
+        Assert.Equal("Sent", (await new EmailProvider(http, Config()).SendAsync("test@example.test", new CitizenEmailUpdate("test"), Guid.NewGuid(), default)).State);
         Assert.Equal(2, handler.Calls);
     }
 }

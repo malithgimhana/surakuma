@@ -9,7 +9,7 @@ namespace Surakuma.Api.Controllers;
 [ApiController, Authorize, Route("api/v1/requests")]
 public sealed class RequestsController(Operations operations, AccessService access, CrisisDbContext db, IWebHostEnvironment environment) : ControllerBase
 {
-    [HttpPost]
+    [HttpPost, Authorize(Roles = Roles.Citizen)]
     public async Task<IActionResult> Submit(CreateRequestInput input, CancellationToken ct)
     {
         var r = await operations.Submit(input, ct);
@@ -94,7 +94,7 @@ public sealed class RequestsController(Operations operations, AccessService acce
             await using (var output = System.IO.File.Create(target))
                 await input.CopyToAsync(output, ct);
             db.Add(attachment);
-            operations.Audit("EvidenceUploaded", attachment);
+            operations.Audit("EvidenceUploaded", attachment, countryCode: await db.Set<Crisis>().Where(c => c.Id == r.CrisisId).Select(c => c.CountryCode).SingleAsync(ct));
             await db.SaveChangesAsync(ct);
         }
         catch { if (System.IO.File.Exists(target)) System.IO.File.Delete(target); throw; }

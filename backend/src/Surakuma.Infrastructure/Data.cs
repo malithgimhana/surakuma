@@ -7,11 +7,14 @@ using Microsoft.Data.SqlClient;
 using System.Security.Claims;
 using Surakuma.Application;
 using Surakuma.Domain;
+using StaffRoles = Surakuma.Domain.Roles;
 
 namespace Surakuma.Infrastructure;
 
 public sealed class AppUser : IdentityUser
 {
+    public bool Disabled { get; set; }
+    public bool IsSystemAdministrator { get; set; }
     public string DisplayName { get; set; } = ""; public string Language { get; set; } = "en";
 }
 public sealed class RefreshSession : Record
@@ -27,6 +30,8 @@ public sealed class RefreshSession : Record
 }
 public sealed class CrisisDbContext(DbContextOptions<CrisisDbContext> options) : IdentityDbContext<AppUser>(options)
 {
+    public IQueryable<AppUser> ActiveSystemAdministrators => Users.Where(u => u.IsSystemAdministrator && !u.Disabled);
+
     protected override void OnModelCreating(ModelBuilder b)
     {
         base.OnModelCreating(b);
@@ -48,9 +53,37 @@ public sealed class CrisisDbContext(DbContextOptions<CrisisDbContext> options) :
                     e.Property(p.Name).HasConversion<string>().HasMaxLength(50);
             }
         }
+        b.Entity<Membership>().HasQueryFilter(m => !m.Suspended && m.Role != StaffRoles.Administrator
+            && Users.Any(u => u.Id == m.UserId && !u.Disabled)
+            && (m.Role == StaffRoles.CountryAdministrator || !Set<OrganisationCountry>().IgnoreQueryFilters().Any(link =>
+                link.OrganisationId == m.OrganisationId && link.CountryCode == m.CountryCode && link.ArchivedAt != null))
+            && (m.Role == StaffRoles.CountryAdministrator || Set<Organisation>().Any(o => o.Id == m.OrganisationId && o.ArchivedAt == null)));
+        b.Entity<OrganisationCountry>().HasQueryFilter(link => link.ArchivedAt == null &&
+            Set<Organisation>().Any(o => o.Id == link.OrganisationId && o.ArchivedAt == null));
+        b.Entity<AuditEvent>().Property(x => x.CountryCode).HasMaxLength(2).IsUnicode(false);
+        b.Entity<AuditEvent>().HasIndex(x => new { x.CountryCode, x.CreatedAt, x.Id });
+        b.Entity<AdminAlert>().Property(x => x.ConditionKey).HasMaxLength(180);
+        b.Entity<AdminAlert>().HasIndex(x => x.ConditionKey).IsUnique().HasFilter("[ResolvedAt] IS NULL");
         b.Entity<Resource>().Ignore(x => x.Available);
         b.Entity<Country>().Property(x => x.Code).HasMaxLength(2).IsUnicode(false);
         b.Entity<Country>().HasAlternateKey(x => x.Code);
+        b.Entity<Depot>().Property(x => x.CountryCode).HasMaxLength(2).IsUnicode(false);
+        b.Entity<Depot>().Property(x => x.Name).HasMaxLength(120);
+        b.Entity<Depot>().HasIndex(x => new { x.CountryCode, x.OrganisationId, x.Name }).IsUnique();
+        b.Entity<Depot>().HasOne<Country>().WithMany().HasForeignKey(x => x.CountryCode).HasPrincipalKey(x => x.Code).OnDelete(DeleteBehavior.Restrict);
+        Fk<Depot, Organisation>(b, nameof(Depot.OrganisationId));
+        Fk<Resource, Depot>(b, nameof(Resource.DepotId));
+        b.Entity<Resource>().Property(x => x.Code).HasMaxLength(40);
+        b.Entity<Resource>().Property(x => x.LowStockThreshold).HasPrecision(18, 2);
+        b.Entity<Resource>().HasIndex(x => x.CountryCode);
+        b.Entity<Resource>().HasIndex(x => new { x.CountryCode, x.DepotId, x.Code }).IsUnique()
+            .HasFilter("[Code] IS NOT NULL");
+        Fk<LogisticsOrder, Resource>(b, nameof(LogisticsOrder.ResourceId));
+        Fk<LogisticsOrder, Resource>(b, nameof(LogisticsOrder.DestinationResourceId));
+        Fk<LogisticsOrder, Crisis>(b, nameof(LogisticsOrder.CrisisId));
+        Fk<LogisticsOrder, OperationalArea>(b, nameof(LogisticsOrder.OperationalAreaId));
+        b.Entity<LogisticsOrder>().ToTable(t => t.HasCheckConstraint("CK_LogisticsOrder_Quantity", "[Quantity] > 0"));
+        b.Entity<StockMovement>().HasIndex(x => x.OperationId);
         foreach (var entity in new[] { typeof(Crisis), typeof(Resource), typeof(Shelter), typeof(AdministrativeDivision), typeof(OrganisationCountry), typeof(Membership), typeof(VolunteerProfile) })
             b.Entity(entity).Property<string>("CountryCode").HasMaxLength(2).IsUnicode(false).HasDefaultValue("LK");
         b.Entity<OrganisationCountry>().HasIndex(x => new { x.OrganisationId, x.CountryCode }).IsUnique();
@@ -147,6 +180,7 @@ public sealed class CrisisDbContext(DbContextOptions<CrisisDbContext> options) :
 }
 public sealed class EfStore(CrisisDbContext db) : IStore
 {
+    public IQueryable<string> ActiveSystemAdministratorIds => db.ActiveSystemAdministrators.Select(u => u.Id);
     public IQueryable<T> Query<T>() where T : Record => db.Set<T>();
     public Task<List<T>> ListAsync<T>(IQueryable<T> query, CancellationToken ct = default) => query.ToListAsync(ct);
     public async Task<T?> FindAsync<T>(Guid id, CancellationToken ct = default) where T : Record => await db.Set<T>().FindAsync([id], ct);
@@ -182,7 +216,7 @@ public sealed class EfStore(CrisisDbContext db) : IStore
             }
         }
     }
-    private static bool IsDeadlock(Exception exception) => exception is SqlException { Number: 1205 } || (exception.InnerException is not null && IsDeadlock(exception.InnerException));
+    internal static bool IsDeadlock(Exception exception) => exception is SqlException { Number: 1205 } || (exception.InnerException is not null && IsDeadlock(exception.InnerException));
 }
 public sealed class CurrentActor(IHttpContextAccessor context) : ICurrentActor
 {

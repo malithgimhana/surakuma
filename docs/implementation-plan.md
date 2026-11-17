@@ -26,6 +26,15 @@
 - [x] Frontend validation/translation/accessibility tests and browser acceptance scripts.
 - [x] Reproducible setup scripts, README, architecture decisions, API contracts and editable UML/ER sources.
 
+## International administration
+
+- [x] Combined authorised-country overview and aggregate CSV reporting with consistent open/resolved definitions.
+- [x] Staff suspension/reactivation, whole-account disable, password recovery and session invalidation.
+- [x] Country-specific partner verification with legacy continuity and new-work eligibility checks.
+- [x] Separate-administrator approval for global access and public country service settings.
+- [x] Recorded email attempts, provider-checked recovery and purpose-based notification delivery.
+- [x] Persisted operational, provider and administrative-access alerts with acknowledgement and resolution.
+
 ## Validation and assessment preparation
 
 Executed results belong in `testing/results.md`; implementation checkboxes alone do not establish verification.

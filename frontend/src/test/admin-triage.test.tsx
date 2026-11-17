@@ -8,11 +8,39 @@ import { api } from '../api';
 
 afterEach(cleanup);
 
-vi.mock('../auth', () => ({ useOptionalAuth: () => ({user:{roles:['Administrator']}}), useAuth: () => ({ user: { id: 'admin', roles: ['Administrator'] } }) }));
+const authState = vi.hoisted(() => ({ id: 'admin', roles: ['Administrator'] }));
+afterEach(() => { authState.id = 'admin'; authState.roles = ['Administrator']; });
+vi.mock('../auth', () => ({ useOptionalAuth: () => ({ user: authState }), useAuth: () => ({ user: authState }) }));
 vi.mock('../SystemReadiness', () => ({ SystemReadiness: () => null }));
 vi.mock('../api', () => ({
-  get: vi.fn((path: string) => Promise.resolve(path === '/public/lookups' ? { crises: [], organisations: [{ id: 'centre', name: 'Response centre' }] } :
-    path === '/admin/users' ? [{ id: 'user1', name: 'Test Person', email: 'person@example.test', memberships: [{ id: 'membership1', role: 'CaseManager', organisationId: 'centre' }] }, { id: 'user2', name: 'Other User', email: 'other@example.test', memberships: [] }] :
+  get: vi.fn((path: string) => Promise.resolve(path.startsWith('/admin/reports') ? { generatedAt: '2026-11-13T00:00:00Z', countries: [], stock: [] } : path === '/public/lookups' ? { crises: [{ id: 'flood', name: 'Flood response' }], organisations: [{ id: 'centre', name: 'Response centre' }] } :
+    path.startsWith('/admin/users?') ? (() => {
+      const params = new URLSearchParams(path.split('?')[1]);
+      const users = [
+        { id: 'user2', name: 'Other User', email: 'other@example.test', disabled: true, memberships: [] },
+        ...Array.from({ length: 9 }, (_, i) => ({
+          id: `filler-${i}`, name: `Filler ${i}`, email: `filler-${i}@example.test`, memberships: [],
+        })),
+        {
+          id: 'user1', name: 'Test Person', email: 'person@example.test',
+          firstRecordedAt: '2026-11-13T00:00:00Z',
+          memberships: [
+            { id: 'membership1', role: 'CountryAdministrator', organisationId: 'centre', countryCode: 'LK' },
+            { id: 'membership2', role: 'Partner', organisationId: 'centre', countryCode: 'LK' },
+            { id: 'membership3', role: 'Coordinator', organisationId: 'centre', countryCode: 'NP', crisisId: 'flood', suspended: true },
+          ],
+        },
+      ];
+      const search = params.get('search') ?? '';
+      const role = params.get('role');
+      const matches = users.filter(user =>
+        `${user.name} ${user.email}`.toLowerCase().includes(search.toLowerCase())
+        && (!role || user.memberships.some(m => m.role === role)));
+      const pageSize = Number(params.get('pageSize') ?? 25);
+      const pageNumber = Number(params.get('page') ?? 1);
+      const start = (pageNumber - 1) * pageSize;
+      return { items: matches.slice(start, start + pageSize), total: matches.length, pageNumber, pageSize };
+    })() :
     path === '/requests/triage' ? [{ id: 'request', reference: 'SK-TEST', category: 'FoodWater', description: 'Synthetic request', locationText: 'Test location', organisationId: null, requestedForSomeoneElse: false }] : [])),
   api: { request: vi.fn().mockResolvedValue({ data: {} }) },
   errorMessage: () => 'Error',
@@ -20,7 +48,7 @@ vi.mock('../api', () => ({
 
 it('lets an administrator inspect and assign an unassigned request', async () => {
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-    <MemoryRouter><AdminPage /></MemoryRouter>
+    <MemoryRouter initialEntries={['/admin?section=cases']}><AdminPage /></MemoryRouter>
   </QueryClientProvider>);
   fireEvent.click(await screen.findByText(/SK-TEST/));
   expect(screen.getByText('Synthetic request')).toBeVisible();
@@ -74,17 +102,43 @@ it('resets the staff access form manually and after a successful grant, but keep
   expect(password).toHaveValue('');
 });
 
-it('filters users by name and role in the access workspace', async () => {
+it('shows ten users per page and searches and filters users from later pages', async () => {
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
     <MemoryRouter initialEntries={['/admin?section=users']}><AdminPage /></MemoryRouter>
   </QueryClientProvider>);
-  expect(await screen.findByText('Test Person')).toBeVisible();
-  expect(screen.getByText('Other User')).toBeVisible();
-  fireEvent.change(screen.getByLabelText('Search users'), { target: { value: 'other' } });
+  expect(await screen.findByText('Other User')).toBeVisible();
+  expect(within(screen.getByRole('row', { name: /Other User/ })).getByText('Disabled')).toBeVisible();
+  expect(screen.getAllByRole('row')).toHaveLength(11);
   expect(screen.queryByText('Test Person')).not.toBeInTheDocument();
-  expect(screen.getByText('Other User')).toBeVisible();
-  fireEvent.change(screen.getByLabelText('Search users'), { target: { value: '' } });
-  fireEvent.change(screen.getByLabelText('Filter by role'), { target: { value: 'CaseManager' } });
+  const pages = screen.getByRole('group', { name: 'User pages' });
+  expect(within(pages).getByText('Page 1 of 2')).toBeVisible();
+  fireEvent.click(within(pages).getByRole('button', { name: 'Next' }));
+  expect(await screen.findByText('Test Person')).toBeVisible();
+  const account = within(screen.getByRole('row', { name: /Test Person/ }));
+  expect(account.getByText('person@example.test')).toBeVisible();
+  expect(account.getByText('Some roles suspended')).toBeVisible();
+  expect(account.getByText('Response centre · LK · Country scope')).toBeVisible();
+  expect(account.getByText('Response centre · NP · Crisis: Flood response')).toBeVisible();
+  expect(account.getByText('First recorded')).toBeVisible();
+  expect(screen.getByText('Page 2 of 2')).toBeVisible();
+  fireEvent.change(screen.getByLabelText('Search users'), { target: { value: 'person@example.test' } });
+  expect(await screen.findByText(/Showing 1 of 1 matching users/)).toBeVisible();
   expect(screen.getByText('Test Person')).toBeVisible();
+  fireEvent.change(screen.getByLabelText('Search users'), { target: { value: '' } });
+  expect(await screen.findByText('Page 1 of 2')).toBeVisible();
+  fireEvent.change(screen.getByLabelText('Filter by role'), { target: { value: 'CountryAdministrator' } });
+  expect(await screen.findByText('Test Person')).toBeVisible();
   expect(screen.queryByText('Other User')).not.toBeInTheDocument();
+});
+
+it('does not show Revoke on the signed-in country administrator’s row', async () => {
+  authState.id = 'user1';
+  authState.roles = ['CountryAdministrator'];
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <MemoryRouter initialEntries={['/admin?section=users']}><AdminPage /></MemoryRouter>
+  </QueryClientProvider>);
+  fireEvent.change(screen.getByLabelText('Filter by role'), { target: { value: 'CountryAdministrator' } });
+  const row = await screen.findByRole('row', { name: /Test Person/ });
+  fireEvent.click(within(row).getByRole('button', { name: 'Actions for Test Person' }));
+  expect(screen.queryByRole('button', { name: /Revoke/ })).not.toBeInTheDocument();
 });
