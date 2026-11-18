@@ -57,7 +57,7 @@ public sealed class InternationalEndpointTests(ApiFixture fixture) : IClassFixtu
             organisationId = await db.Set<Organisation>().Select(x => x.Id).FirstAsync();
             var crisis = new Crisis { Name = "Crisis-only inventory", CountryCode = "NP" };
             var foreign = new Crisis { Name = "Other Nepal crisis", CountryCode = "NP" };
-            var request = new AssistanceRequest { CrisisId = crisis.Id, CitizenId = citizen.Id, OrganisationId = organisationId, Status = RequestStatus.Approved, Category = AidCategory.FoodWater, Quantity = 1, SubmissionKey = Guid.NewGuid().ToString() };
+            var request = new AssistanceRequest { CrisisId = crisis.Id, CitizenId = citizen.Id, OrganisationId = organisationId, Status = RequestStatus.Approved, Category = AidCategory.FoodWater, Quantity = 1, Unit = "packs", SubmissionKey = Guid.NewGuid().ToString() };
             var other = new AssistanceRequest { CrisisId = foreign.Id, CitizenId = citizen.Id, OrganisationId = organisationId, SubmissionKey = Guid.NewGuid().ToString() };
             var resource = new Resource { CountryCode = "NP", OrganisationId = organisationId, Category = AidCategory.FoodWater, Name = "Scoped stock", Unit = "packs", Stock = 5 };
             if (!await db.Set<OrganisationCountry>().AnyAsync(x => x.OrganisationId == organisationId && x.CountryCode == "NP")) db.Add(new OrganisationCountry { OrganisationId = organisationId, CountryCode = "NP", VerificationState = "Verified" });
@@ -167,7 +167,7 @@ public sealed class InternationalEndpointTests(ApiFixture fixture) : IClassFixtu
         var metrics = await coordinator.GetFromJsonAsync<JsonElement>("/api/v1/reports/metrics?countryCode=NP");
         Assert.Equal(0, metrics.GetProperty("openCases").GetInt32());
         using var citizen = await fixture.Login("citizen");
-        var submitted = await citizen.PostAsJsonAsync("/api/v1/requests", new { crisisId, category = "FoodWater", priority = "Normal", description = "A household needs clean drinking water", locationText = "Nepal community", householdSize = 2, accessibilityNeeds = "", quantity = 1, submissionKey = Guid.NewGuid().ToString() });
+        var submitted = await citizen.PostAsJsonAsync("/api/v1/requests", new { crisisId, category = "FoodWater", priority = "Normal", description = "A household needs clean drinking water", locationText = "Nepal community", householdSize = 2, accessibilityNeeds = "", unit = "l", quantity = 1, submissionKey = Guid.NewGuid().ToString() });
         Assert.Equal(HttpStatusCode.Created, submitted.StatusCode);
         using var publicClient = fixture.Client();
         Assert.DoesNotContain(await publicClient.GetFromJsonAsync<List<PublicAlert>>("/api/v1/alerts?countryCode=LK") ?? [], x => x.CrisisId == crisisId);

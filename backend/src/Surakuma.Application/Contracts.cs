@@ -20,12 +20,14 @@ public sealed record CreateRequestInput(Guid CrisisId, Guid? OrganisationId, Aid
     [Required, MinLength(10), MaxLength(4000)] string Description, [Required, MaxLength(500)] string LocationText,
     double? Latitude, double? Longitude, [Range(1, 50)] int HouseholdSize, [MaxLength(500)] string AccessibilityNeeds,
     [Range(typeof(decimal), "0.01", "100000")] decimal Quantity, [Required, MaxLength(100)] string SubmissionKey, bool Synthetic,
-    bool RequestedForSomeoneElse = false, [MaxLength(200)] string? RequesterRelationship = null, [MaxLength(500)] string? RequesterContact = null);
+    bool RequestedForSomeoneElse = false, [MaxLength(200)] string? RequesterRelationship = null, [MaxLength(500)] string? RequesterContact = null,
+    [MaxLength(32)] string? Unit = null, Guid? AdministrativeDivisionId = null);
+public sealed record ClarifyMeasurementInput([MaxLength(32)] string? Unit, Guid? AdministrativeDivisionId, [Required, MaxLength(1000)] string Reason);
 public sealed record StatusInput(RequestStatus Status, [MaxLength(1000)] string Reason = "");
 public sealed record ConsolidateCaseInput(Guid PrimaryRequestId, [Required, MaxLength(1000)] string Reason);
 public sealed record DecisionInput(Guid RecommendationId, string Action, Priority? FinalPriority, AidCategory? FinalCategory, [MaxLength(1000)] string Reason);
 public sealed record ResourceInput(Guid OrganisationId, [Required, MaxLength(100)] string Name, AidCategory Category, [Required] string Unit, [Range(typeof(decimal), "0", "10000000")] decimal Stock, string LocationText, [Range(-90d, 90d)] double Latitude, [Range(-180d, 180d)] double Longitude, string Suitability, bool TransportAvailable, string CountryCode = "LK", Guid? AdministrativeDivisionId = null, Guid? DepotId = null, [MaxLength(40)] string? Code = null, [Range(typeof(decimal), "0", "10000000")] decimal? LowStockThreshold = null, Guid? OperationId = null);
-public sealed record AllocateInput(Guid RequestId, Guid ResourceId, [Range(typeof(decimal), "0.01", "100000")] decimal Quantity, Guid? RecommendedResourceId = null);
+public sealed record AllocateInput(Guid RequestId, Guid ResourceId, [Range(typeof(decimal), "0.01", "100000000")] decimal Quantity, Guid? RecommendedResourceId = null);
 public sealed record IgnoreAllocationRecommendationInput(Guid RecommendedResourceId);
 public sealed record MovementInput([Range(typeof(decimal), "0.01", "100000")] decimal Quantity, string Note);
 public sealed record ShelterInput(Guid OrganisationId, [Required, MaxLength(150)] string Name, string Address, [Range(-90d, 90d)] double Latitude, [Range(-180d, 180d)] double Longitude, [Range(1, 100000)] int Capacity, bool Accessible, bool Open, string Facilities, string CountryCode = "LK", Guid? AdministrativeDivisionId = null);

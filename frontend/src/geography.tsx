@@ -90,7 +90,10 @@ export function useDivisions(country: string) {
   });
 }
 
-export function RegionField({ initialDivisionId }: { initialDivisionId?: string | null }) {
+export function RegionField({ initialDivisionId, onChange }: {
+  initialDivisionId?: string | null;
+  onChange?: (id: string | null) => void;
+}) {
   const country = useCountry();
   const regions = useDivisions(country);
   const [chosenPath, setPath] = useState<string[] | null>(null);
@@ -117,9 +120,11 @@ export function RegionField({ initialDivisionId }: { initialDivisionId?: string 
           >
             <select
               value={path[depth] || ''}
-              onChange={(e) =>
-                setPath([...path.slice(0, depth), ...(e.target.value ? [e.target.value] : [])])
-              }
+              onChange={(e) => {
+                const next = [...path.slice(0, depth), ...(e.target.value ? [e.target.value] : [])];
+                setPath(next);
+                onChange?.(next.at(-1) ?? null);
+              }}
             >
               <option value="">
                 {depth === 0 ? 'Select a region (optional)' : 'Keep the parent region'}

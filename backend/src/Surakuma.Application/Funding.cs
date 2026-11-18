@@ -22,14 +22,14 @@ public sealed record FundingWorkspace(bool CanManage, DonorProfile? Profile, Lis
     List<DonationView> Donations, List<FundingAllocationView> Allocations, List<FundingExpenseView> Expenses,
     List<DonationEvent> Events, List<FundingTotals> Reports, List<MaterialFundingTotals> MaterialReports, List<InvestigationFlag> Flags);
 public sealed record CampaignOption(Guid Id, string Name, Guid OrganisationId, Guid? CrisisId);
-public sealed record FundingCaseOption(Guid Id, string Reference, AidCategory Category);
+public sealed record FundingCaseOption(Guid Id, string Reference, AidCategory Category, string? Unit);
 public sealed record FundingInventoryOption(Guid Id, string Name, AidCategory Category, string Unit);
-public sealed record FundingDeliveryOption(Guid Id, Guid RequestId, Guid ResourceId, string Reference, decimal Quantity);
+public sealed record FundingDeliveryOption(Guid Id, Guid RequestId, Guid ResourceId, string Reference, decimal Quantity, string Unit);
 public sealed record FundingOptions(List<CampaignOption> CampaignScopes, List<FundingCaseOption> Cases,
     List<FundingInventoryOption> Resources, List<FundingDeliveryOption> Deliveries);
 
 public sealed class FundingService(IStore store, AccessService access, Operations operations, DecisionSupportService decisionSupport,
-    InternalNotifications notifications)
+    InternalNotifications notifications, ResourceUnitCatalog units)
 {
     private static readonly string[] Officers = [Roles.FundingOfficer];
 
@@ -50,9 +50,11 @@ public sealed class FundingService(IStore store, AccessService access, Operation
                 store.Query<DonationAllocation>().Where(a => a.DonationId == d.Id).Sum(a => (decimal?)a.Amount) ?? 0,
                 store.Query<DonationExpenditure>().Where(e => store.Query<DonationAllocation>().Any(a =>
                     a.Id == e.AllocationId && a.DonationId == d.Id)).Sum(e => (decimal?)e.Amount) ?? 0)), ct);
-        var materialReports = material.GroupBy(r => (r.CampaignId, r.Category, r.Unit))
+        var materialReports = material.GroupBy(r => (r.CampaignId, r.Category, Unit: QuantityUnits.BaseUnit(r.Unit)))
             .Select(g => new MaterialFundingTotals(g.Key.CampaignId, g.Key.Category, g.Key.Unit,
-                g.Sum(x => x.Received), g.Sum(x => x.Allocated), g.Sum(x => x.Distributed))).ToList();
+                g.Sum(x => QuantityUnits.Convert(x.Received, x.Unit, g.Key.Unit)),
+                g.Sum(x => QuantityUnits.Convert(x.Allocated, x.Unit, g.Key.Unit)),
+                g.Sum(x => QuantityUnits.Convert(x.Distributed, x.Unit, g.Key.Unit)))).ToList();
         if (!manage) query = query.Where(d => d.DonorId == (profile == null ? Guid.Empty : profile.Id));
         var donations = await store.ListAsync(query.OrderByDescending(d => d.CreatedAt).Select(d => new DonationView(
             d.Id, d.CampaignId, d.Kind, d.Category, d.Unit, d.Amount, d.State, manage ? d.ResourceId : null,
@@ -91,16 +93,17 @@ public sealed class FundingService(IStore store, AccessService access, Operation
         var cases = store.Query<AssistanceRequest>().Where(r => r.OrganisationId == campaign.OrganisationId && crises.Any(c => c.Id == r.CrisisId));
         var options = await store.ListAsync(cases.Where(r => r.Status == RequestStatus.Approved || r.Status == RequestStatus.InProgress ||
             r.Status == RequestStatus.PartiallyFulfilled || r.Status == RequestStatus.Fulfilled).OrderByDescending(r => r.CreatedAt)
-            .Take(100).Select(r => new FundingCaseOption(r.Id, r.Reference, r.Category)), ct);
+            .Take(100).Select(r => new FundingCaseOption(r.Id, r.Reference, r.Category, r.Unit)), ct);
         var resources = await store.ListAsync((await access.Located<Resource>(ct, campaign.CrisisId, [Roles.Logistics]))
             .Where(r => r.CountryCode == country && r.OrganisationId == campaign.OrganisationId)
             .OrderBy(r => r.Name).Select(r => new FundingInventoryOption(r.Id, r.Name, r.Category, r.Unit)), ct);
         var deliveries = await store.ListAsync(from receipt in store.Query<DeliveryConfirmation>()
             join shipment in store.Query<ResourceAllocation>() on receipt.AllocationId equals (Guid?)shipment.Id
+            join stock in store.Query<Resource>() on shipment.ResourceId equals stock.Id
             where receipt.ConfirmedQuantity > 0 && cases.Any(r => r.Id == shipment.RequestId)
                 && !store.Query<DonationExpenditure>().Any(e => e.DeliveryConfirmationId == receipt.Id)
             orderby receipt.CreatedAt descending
-            select new FundingDeliveryOption(receipt.Id, shipment.RequestId, shipment.ResourceId, receipt.Reference, receipt.ConfirmedQuantity), ct);
+            select new FundingDeliveryOption(receipt.Id, shipment.RequestId, shipment.ResourceId, receipt.Reference, receipt.ConfirmedQuantity, stock.Unit), ct);
         return new([], options, resources, deliveries);
     }
 
@@ -151,14 +154,14 @@ public sealed class FundingService(IStore store, AccessService access, Operation
         var donor = await Profile(ct) ?? throw new RuleException("Create your donor profile before recording a pledge.");
         var campaign = await ReadCampaign(input.CampaignId, country, ct);
         var amount = Amount(input.Amount);
-        var unit = input.Kind == DonationKind.Monetary ? campaign.Currency : Required(input.Unit).ToLowerInvariant();
+        var unit = input.Kind == DonationKind.Monetary ? campaign.Currency : units.Require(input.Unit);
         if (input.Kind == DonationKind.Material) QuantityUnits.ValidateInventory(amount, unit);
         var id = Operation(input.OperationId);
         if (await store.FindAsync<Donation>(id, ct) is { } existing)
         {
             if (existing.DonorId != donor.Id) throw new MissingException();
             if (existing.CampaignId != campaign.Id || existing.Amount != amount || existing.Kind != input.Kind ||
-                existing.Category != input.Category || existing.Unit != unit)
+                existing.Category != input.Category || (input.Kind == DonationKind.Monetary ? existing.Unit : QuantityUnits.Normalize(existing.Unit)) != unit)
                 throw new RuleException("This operation reference belongs to another pledge.");
             return OwnView(existing);
         }
@@ -203,12 +206,13 @@ public sealed class FundingService(IStore store, AccessService access, Operation
         {
             var resource = await store.FindAsync<Resource>(input.ResourceId ?? Guid.Empty, ct) ?? throw new MissingException();
             if (resource.CountryCode != country || resource.OrganisationId != campaign.OrganisationId ||
-                resource.Category != donation.Category || !SameUnit(resource.Unit, donation.Unit))
+                resource.Category != donation.Category || !QuantityUnits.Compatible(resource.Unit, donation.Unit))
                 throw new RuleException("Select inventory in the campaign organisation and country with matching category and unit.");
             await access.RequireLocation(resource.OrganisationId, country, [Roles.Logistics], ct, campaign.CrisisId);
-            resource.ChangePhysical(donation.Amount);
+            var stockAmount = QuantityUnits.ForInventory(donation.Amount, donation.Unit, resource.Unit);
+            resource.ChangePhysical(stockAmount);
             var movement = new StockMovement { ResourceId = resource.Id, OperationId = donation.Id, Kind = "DonationReceived",
-                CrisisId = campaign.CrisisId, Quantity = donation.Amount, ActorId = access.UserId, Note = reference, Destination = resource.LocationText };
+                CrisisId = campaign.CrisisId, Quantity = stockAmount, ActorId = access.UserId, Note = reference, Destination = resource.LocationText };
             store.Add(movement);
             donation.StockMovementId = movement.Id;
             donation.ResourceId = resource.Id;
@@ -244,9 +248,19 @@ public sealed class FundingService(IStore store, AccessService access, Operation
             throw new RuleException("Choose an approved case.");
         if (donation.Kind == DonationKind.Material)
         {
-            if (donation.Category != request.Category)
-                throw new RuleException("Material allocations must match the case category. Verify that the units suit the case.");
+            if (request.Category == AidCategory.Shelter || donation.Category != request.Category || !QuantityUnits.Compatible(donation.Unit, request.Unit))
+                throw new RuleException("Material allocations require the same case category and a compatible, confirmed request unit.");
             QuantityUnits.ValidateInventory(amount, donation.Unit);
+            var attributed = await store.ListAsync(
+                from a in store.Query<DonationAllocation>()
+                join d in store.Query<Donation>() on a.DonationId equals d.Id
+                where a.RequestId == request.Id && d.Kind == DonationKind.Material
+                select new { a.Amount, d.Unit }, ct);
+            if (attributed.Any(a => !QuantityUnits.Compatible(a.Unit, request.Unit)))
+                throw new RuleException("Reconcile historical material allocations before recording another.");
+            if (attributed.Sum(a => QuantityUnits.Convert(a.Amount, a.Unit, request.Unit)) +
+                QuantityUnits.Convert(amount, donation.Unit, request.Unit) > request.Quantity)
+                throw new RuleException("Material funding allocations would exceed the requested quantity.");
         }
         var allocated = (await store.ListAsync(store.Query<DonationAllocation>().Where(a => a.DonationId == id).Select(a => a.Amount), ct)).Sum();
         if (amount > donation.Amount - allocated) throw new RuleException("The allocation exceeds the confirmed unallocated balance.");
@@ -292,7 +306,9 @@ public sealed class FundingService(IStore store, AccessService access, Operation
             QuantityUnits.ValidateInventory(amount, donation.Unit);
             var receipt = await store.FindAsync<DeliveryConfirmation>(input.DeliveryConfirmationId ?? Guid.Empty, ct) ?? throw new MissingException();
             var shipment = await store.FindAsync<ResourceAllocation>(receipt.AllocationId ?? Guid.Empty, ct) ?? throw new MissingException();
-            if (shipment.RequestId != allocation.RequestId || shipment.ResourceId != donation.ResourceId || amount > receipt.ConfirmedQuantity)
+            var stock = await store.FindAsync<Resource>(shipment.ResourceId, ct) ?? throw new MissingException();
+            if (shipment.RequestId != allocation.RequestId || shipment.ResourceId != donation.ResourceId ||
+                QuantityUnits.Convert(amount, donation.Unit, stock.Unit) > receipt.ConfirmedQuantity)
                 throw new RuleException("Use the confirmed delivery receipt for this case and inventory item.");
             if ((await store.ListAsync(expenses.Where(e => e.DeliveryConfirmationId == receipt.Id).Take(1), ct)).Count > 0)
                 throw new RuleException("This delivery receipt is already attributed to a material donation.");
@@ -410,7 +426,6 @@ public sealed class FundingService(IStore store, AccessService access, Operation
     }
 
     private static Guid Operation(Guid value) => value != Guid.Empty ? value : throw new RuleException("An operation reference is required.");
-    private static bool SameUnit(string left, string right) => left.Trim().Equals(right.Trim(), StringComparison.OrdinalIgnoreCase);
     private static DonationView OwnView(Donation donation) => new(donation.Id, donation.CampaignId, donation.Kind, donation.Category,
         donation.Unit, donation.Amount, donation.State, null, null, null);
     private static string Required(string? value) => !string.IsNullOrWhiteSpace(value) ? value.Trim() : throw new RuleException("Complete the required fields.");

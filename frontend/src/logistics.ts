@@ -101,7 +101,8 @@ export function inventoryStatus(item: InventoryItem) {
 
 export function transferMatches(origin: InventoryItem, destination: InventoryItem) {
   return !!origin.depotId && !!destination.depotId && origin.depotId !== destination.depotId
-    && origin.category === destination.category && origin.unit.toLowerCase() === destination.unit.toLowerCase()
+    && origin.category === destination.category && compatibleUnits(origin.unit, destination.unit)
     && origin.name.toLowerCase() === destination.name.toLowerCase()
     && (!origin.code || !destination.code || origin.code.toLowerCase() === destination.code.toLowerCase());
 }
+import { compatibleUnits } from './quantity';

@@ -114,6 +114,9 @@ public sealed class CrisisDbContext(DbContextOptions<CrisisDbContext> options) :
         b.Entity<AssistanceRequest>().Property(x => x.CitizenId).HasMaxLength(450);
         b.Entity<AssistanceRequest>().Property(x => x.AssignedCaseManagerId).HasMaxLength(450);
         b.Entity<AssistanceRequest>().Property(x => x.Reference).HasMaxLength(30);
+        b.Entity<AssistanceRequest>().Property(x => x.Unit).HasMaxLength(32);
+        b.Entity<AssistanceRequest>().Property(x => x.DeliveredQuantity).HasPrecision(21, 5);
+        b.Entity<ResourceAllocation>().Property(x => x.RequestQuantity).HasPrecision(21, 5);
         b.Entity<AssistanceRequest>().HasIndex(x => new { x.CitizenId, x.SubmissionKey }).IsUnique();
         b.Entity<AssistanceRequest>().HasIndex(x => x.Reference).IsUnique();
         b.Entity<AssistanceRequest>().HasIndex(x => new { x.CrisisId, x.Status, x.Priority });
@@ -164,6 +167,7 @@ public sealed class CrisisDbContext(DbContextOptions<CrisisDbContext> options) :
         Fk<AssistanceRequest, AppUser>(b, nameof(AssistanceRequest.CitizenId));
         Fk<AssistanceRequest, AppUser>(b, nameof(AssistanceRequest.AssignedCaseManagerId));
         Fk<AssistanceRequest, Crisis>(b, nameof(AssistanceRequest.CrisisId));
+        Fk<AssistanceRequest, AdministrativeDivision>(b, nameof(AssistanceRequest.AdministrativeDivisionId));
         Fk<AssistanceRequest, Organisation>(b, nameof(AssistanceRequest.OrganisationId));
         Fk<CaseShare, AssistanceRequest>(b, nameof(CaseShare.RequestId));
         Fk<CaseShare, Organisation>(b, nameof(CaseShare.OrganisationId));

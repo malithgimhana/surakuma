@@ -43,7 +43,7 @@ public sealed class PartnerController(CrisisDbContext db, IStore store, AccessSe
                           orderby request.UpdatedAt descending
                           select new { share.OrganisationId, crisisId = crisis.Id, crisis = crisis.Name, request.Reference,
                               share.WorkTitle, share.WorkInstructions, request.Category, request.Status, request.Quantity,
-                              request.DeliveredQuantity, request.UpdatedAt })
+                              request.DeliveredQuantity, request.Unit, request.UpdatedAt })
             .ToListAsync(ct);
         var contributions = await db.Set<PartnerContribution>().Where(c => c.CountryCode == country && fullScope.Contains(c.OrganisationId))
             .OrderByDescending(c => c.UpdatedAt).ToListAsync(ct);
@@ -59,19 +59,21 @@ public sealed class PartnerController(CrisisDbContext db, IStore store, AccessSe
 
     [HttpPost("contributions")]
     [HttpPut("contributions/{id:guid}")]
-    public Task<PartnerContribution> SaveOffer(OfferInput input, CancellationToken ct, Guid? id = null) => store.TransactionAsync(async () =>
+    public Task<PartnerContribution> SaveOffer(OfferInput input, [FromServices] ResourceUnitCatalog units, CancellationToken ct, Guid? id = null) => store.TransactionAsync(async () =>
     {
         var country = RequireCountry();
         await RequirePartner(input.OrganisationId, country, ct);
         if (input.Kind is not ("Resource" or "Service")) throw new RuleException("Choose a resource or service offer.");
         var category = input.Kind == "Resource" ? input.Category : null;
-        QuantityUnits.ValidateInventory(input.Quantity, input.Unit);
+        var unit = input.Kind == "Resource" ? units.Require(input.Unit) : input.Unit.Trim();
+        QuantityUnits.ValidateInventory(input.Quantity, unit);
         if (input.Quantity is <= 0 or > 10000000) throw new RuleException("Enter an offer quantity from 0.01 to 10,000,000.");
         if (input.OperationId == Guid.Empty) throw new RuleException("Provide a unique offer reference.");
         if (id == null && input.OperationId is { } key && await store.FindAsync<PartnerContribution>(key, ct) is { } existing)
         {
             if (existing.OrganisationId != input.OrganisationId || existing.CountryCode != country) throw new AccessDeniedException();
-            if (existing.Title != input.Title.Trim() || existing.Kind != input.Kind || existing.Unit != input.Unit.Trim() ||
+            if (existing.Title != input.Title.Trim() || existing.Kind != input.Kind ||
+                (input.Kind == "Resource" ? QuantityUnits.Normalize(existing.Unit) : existing.Unit) != unit ||
                 existing.Quantity != input.Quantity || existing.Description != input.Description.Trim() ||
                 existing.Category != category || existing.SupportRequestId != input.SupportRequestId)
                 throw new RuleException("This offer reference has already been used.");
@@ -82,12 +84,12 @@ public sealed class PartnerController(CrisisDbContext db, IStore store, AccessSe
         if (contribution.OrganisationId != input.OrganisationId) throw new AccessDeniedException();
         if (contribution.Status != ContributionStatus.Offered) throw new RuleException("Only pending offers can be edited.");
         if (input.SupportRequestId is Guid supportId)
-            await supply.ValidateOffer(country, supportId, input.OrganisationId, input.Category, input.Kind, input.Unit, input.Quantity, ct);
+            await supply.ValidateOffer(country, supportId, input.OrganisationId, input.Category, input.Kind, unit, input.Quantity, ct);
         contribution.SupportRequestId = input.SupportRequestId;
         contribution.Category = category;
         contribution.Title = input.Title.Trim();
         contribution.Kind = input.Kind;
-        contribution.Unit = input.Unit.Trim();
+        contribution.Unit = unit;
         contribution.Quantity = input.Quantity;
         contribution.Description = input.Description.Trim();
         if (id == null) db.Add(contribution);
@@ -121,10 +123,12 @@ public sealed class PartnerController(CrisisDbContext db, IStore store, AccessSe
             {
                 var request = await supply.ValidateOffer(country, supportId, contribution.OrganisationId, contribution.Category,
                     contribution.Kind, contribution.Unit, contribution.Quantity, ct);
-                var committed = await db.Set<PartnerContribution>().Where(c => c.Id != id && c.SupportRequestId == supportId &&
+                var commitments = await db.Set<PartnerContribution>().Where(c => c.Id != id && c.SupportRequestId == supportId &&
                     (c.Status == ContributionStatus.Accepted || c.Status == ContributionStatus.InProgress || c.Status == ContributionStatus.Fulfilled))
-                    .SumAsync(c => c.Quantity, ct);
-                if (committed + contribution.Quantity > request.Quantity) throw new RuleException("This offer exceeds the remaining support commitment.");
+                    .Select(c => new { c.Quantity, c.Unit }).ToListAsync(ct);
+                var committed = commitments.Sum(c => QuantityUnits.Convert(c.Quantity, c.Unit, request.Unit));
+                if (committed + QuantityUnits.Convert(contribution.Quantity, contribution.Unit, request.Unit) > request.Quantity)
+                    throw new RuleException("This offer exceeds the remaining support commitment.");
             }
         }
         else await RequirePartner(contribution.OrganisationId, country, ct);

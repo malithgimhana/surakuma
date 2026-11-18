@@ -6,6 +6,8 @@ import { Badge, Button, Card, Empty, ErrorState, Field, formatDate, Loading, Pag
 import { ContributionReceipt } from './SupplySupport';
 import { countryPath, useCrisisOperationsWrite } from './crisisOperationsApi';
 import { useCountry } from './geography';
+import { ResourceUnitSelect } from './ResourceUnitSelect';
+import { isMeasuredUnit, unitSymbol } from './quantity';
 
 interface Contribution {
   id: string;
@@ -24,7 +26,7 @@ interface Workspace {
   organisations: { id: string; name: string; countryCode: string; verificationState: string; canOffer: boolean }[];
   memberships: { organisationId: string; countryCode: string; crisisId: string | null }[];
   work: { organisationId: string; reference: string; crisis: string; category: string; status: string; quantity: number; deliveredQuantity: number;
-    workTitle: string | null; workInstructions: string | null }[];
+    unit?: string | null; workTitle: string | null; workInstructions: string | null }[];
   contributions: Contribution[];
   history: { entityId: string; action: string; detail: string; createdAt: string }[];
   contact: { displayName: string; email: string };
@@ -39,6 +41,8 @@ export default function PartnerWorkspace() {
   });
   const [draft, setDraft] = useState<Contribution | 'new'>();
   const [operationId, setOperationId] = useState<string>();
+  const [offerKind, setOfferKind] = useState('Resource');
+  const [offerUnit, setOfferUnit] = useState('');
   const write = useCrisisOperationsWrite(country);
   if (query.isPending) return <Loading />;
   if (query.error) return <ErrorState error={query.error} retry={() => void query.refetch()} />;
@@ -70,7 +74,8 @@ export default function PartnerWorkspace() {
     {view === 'work' && (work.length ? <div className="resource-grid">{work.map((row) => (
       <Card key={`${row.organisationId}-${row.reference}`}>
         <h2>{row.workTitle || row.reference}</h2><p>{row.workTitle && `${row.reference} · `}{orgName(row.organisationId)} · {row.crisis}</p><Badge value={row.status} />
-        <p>{row.category} · {row.deliveredQuantity} of {row.quantity} fulfilled</p>
+        <p>{row.category} · {row.deliveredQuantity} of {row.quantity} {unitSymbol(row.unit)} fulfilled
+          {!row.unit && row.category !== 'Shelter' && ' · Unit requires clarification'}</p>
         <p>{['Fulfilled', 'Closed', 'Rejected', 'Cancelled'].includes(row.status) ? 'Case work has ended.' : row.workInstructions || 'Coordinate fulfilment with the assigned response team.'}</p>
       </Card>))}</div> : <Empty title="No work has been shared with your organisation" />)}
     {view === 'profile' && <div className="resource-grid">
@@ -82,7 +87,9 @@ export default function PartnerWorkspace() {
       </Card>)}
     </div>}
     {view === 'contributions' && <>
-      {!!offering.length && <div><Button onClick={() => { setOperationId(crypto.randomUUID()); setDraft('new'); write.reset(); }}>Record an offer</Button></div>}
+      {!!offering.length && <div><Button onClick={() => {
+        setOperationId(crypto.randomUUID()); setOfferKind('Resource'); setOfferUnit(''); setDraft('new'); write.reset();
+      }}>Record an offer</Button></div>}
       {draft && <Card><h2>{editing ? 'Edit offer' : 'New offer'}</h2>
         <form key={editing?.id ?? 'new'} className="form-grid" onSubmit={(event) => {
           event.preventDefault();
@@ -95,12 +102,15 @@ export default function PartnerWorkspace() {
         }}>
           {!editing && <Field label="Organisation"><select name="organisationId" required>{offering.map((org) => <option key={org.id} value={org.id}>{org.name}</option>)}</select></Field>}
           <Field label="Offer title"><input name="title" required maxLength={160} defaultValue={editing?.title} /></Field>
-          <Field label="Contribution type"><select name="kind" defaultValue={editing?.kind}><option>Resource</option><option>Service</option></select></Field>
+          <Field label="Contribution type"><select name="kind" value={offerKind} onChange={e => { setOfferKind(e.target.value); setOfferUnit(''); }}><option>Resource</option><option>Service</option></select></Field>
           <Field label="Category for inventory receipts"><select name="category" defaultValue={editing?.category ?? ''}>
             <option value="">No category selected</option>{categories.map(c => <option key={c}>{c}</option>)}
           </select></Field>
-          <Field label="Unit"><input name="unit" required maxLength={40} defaultValue={editing?.unit} /></Field>
-          <Field label="Offered quantity"><input name="quantity" type="number" min={0.01} step={0.01} max={10000000} required defaultValue={editing?.quantity} /></Field>
+          <Field label="Unit">{offerKind === 'Resource'
+            ? <ResourceUnitSelect name="unit" value={offerUnit} onChange={e => setOfferUnit(e.target.value)} required />
+            : <input name="unit" required maxLength={40} value={offerUnit} onChange={e => setOfferUnit(e.target.value)} />}</Field>
+          <Field label="Offered quantity"><input name="quantity" type="number" min={isMeasuredUnit(offerUnit) ? 0.01 : 1}
+            step={isMeasuredUnit(offerUnit) ? 0.01 : 1} max={10000000} required defaultValue={editing?.quantity} /></Field>
           <Field label="Offer description"><textarea name="description" required maxLength={2000} defaultValue={editing?.description} /></Field>
           <div className="button-row"><Button busy={write.isPending}>Save offer</Button><Button type="button" variant="secondary" onClick={() => setDraft(undefined)}>Cancel</Button></div>
         </form>
@@ -111,7 +121,9 @@ export default function PartnerWorkspace() {
           <p>{orgName(c.organisationId)} · {c.kind} · <Badge value={c.status} /></p>
           <p>{c.description}</p>
           <p>{c.fulfilledQuantity} of {c.quantity} {c.unit} recorded as fulfilled</p>
-          {c.status === 'Offered' && <Button variant="secondary" onClick={() => { setDraft(c); write.reset(); }}>Edit offer</Button>}
+          {c.status === 'Offered' && <Button variant="secondary" onClick={() => {
+            setOfferKind(c.kind); setOfferUnit(c.unit); setDraft(c); write.reset();
+          }}>Edit offer</Button>}
           {['Offered', 'Accepted', 'InProgress'].includes(c.status) && <ContributionForm contribution={c} country={country} />}
           <details><summary>Contribution history</summary><ul>{history.filter((event) => event.entityId === c.id).map((event, index) =>
             <li key={index}>{event.action.replace('Contribution', '')} · {formatDate(event.createdAt)}{event.detail && <p>{event.detail}</p>}</li>)}</ul></details>

@@ -168,6 +168,9 @@ public sealed class AssistanceRequest : Record
         get; set;
     }
     public int HouseholdSize { get; set; } = 1; public string AccessibilityNeeds { get; set; } = "";
+    public string? Unit { get; set; }
+    public Guid? AdministrativeDivisionId { get; set; }
+    public bool UnitRequiresClarification => Unit is null && Category != AidCategory.Shelter;
     public decimal Quantity { get; set; } = 1; public decimal DeliveredQuantity
     {
         get; set;
@@ -369,6 +372,7 @@ public sealed class ResourceAllocation : Record
     {
         get; set;
     }
+    public decimal? RequestQuantity { get; set; }
     public string ApprovedBy { get; set; } = "";
 }
 public sealed class StockMovement : Record

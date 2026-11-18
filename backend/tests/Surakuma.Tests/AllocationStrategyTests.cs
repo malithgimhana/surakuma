@@ -6,7 +6,7 @@ namespace Surakuma.Tests;
 public sealed class AllocationStrategyTests
 {
     private readonly RankedAllocationStrategy strategy = new();
-    private static AssistanceRequest Request(Guid org, Guid crisis, Priority priority, DateTimeOffset created) => new() { OrganisationId = org, CrisisId = crisis, Category = AidCategory.FoodWater, Status = RequestStatus.Approved, Priority = priority, Quantity = 10, Description = "family food packs", Latitude = 6.9, Longitude = 79.9, CreatedAt = created };
+    private static AssistanceRequest Request(Guid org, Guid crisis, Priority priority, DateTimeOffset created) => new() { OrganisationId = org, CrisisId = crisis, Category = AidCategory.FoodWater, Status = RequestStatus.Approved, Priority = priority, Quantity = 10, Unit = "packs", Description = "family food packs", Latitude = 6.9, Longitude = 79.9, CreatedAt = created };
     private static Resource Stock(Guid org, string name, decimal count, double longitude = 79.9) => new() { OrganisationId = org, Category = AidCategory.FoodWater, Name = name, Suitability = "family food packs", Unit = "packs", Stock = count, Latitude = 6.9, Longitude = longitude, TransportAvailable = true };
     [Fact]
     public void RankingUsesAvailabilitySuitabilityDistanceAndHardCategory()
@@ -22,7 +22,7 @@ public sealed class AllocationStrategyTests
     public void PartialStockIsRankedAndAlternativeIsReturnedWithoutReserving()
     {
         var org = Guid.NewGuid(); var req = Request(org, Guid.NewGuid(), Priority.Critical, DateTimeOffset.UtcNow);
-        var a = Stock(org, "first", 7); var b = Stock(org, "second", 4); var none = Stock(org, "empty", 0);
+        var a = Stock(org, "first", 7); var b = Stock(org, "second", 2); var none = Stock(org, "empty", 0);
         var result = strategy.Recommend(req, 0, [b, a, none], [new(req, 0, req.CreatedAt)]);
         Assert.Equal(new[] { a.Id, b.Id }, result.Candidates.Select(x => x.ResourceId));
         Assert.True(result.Candidates[0].ShortForRequest); Assert.True(result.Shortage);

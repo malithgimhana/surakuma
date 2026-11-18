@@ -112,6 +112,7 @@ test('real three-country submission, scoped triage, allocation and delivery', as
       .locator('textarea[name=description]')
       .fill(`Acceptance household needs food in ${countryCode}`);
     await page.locator('input[name=quantity]').fill('1');
+    await page.locator('select[name=unit]').selectOption('packs');
     await page.getByRole('button', { name: 'Continue', exact: true }).click();
     await page.locator('input[name=locationText]').fill('Acceptance community centre');
     await page.getByRole('button', { name: 'Continue', exact: true }).click();

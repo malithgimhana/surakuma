@@ -2,7 +2,7 @@
 
 Use synthetic records and the development credentials in README. Keep real credentials and the local settings file out of screenshots/recordings.
 
-1. **Public/citizen:** show the mobile homepage and all three languages. Browse shelters/alerts without login. Log in as citizen; submit a synthetic food/water request with a quantity of 10. Show the reference and timeline.
+1. **Public/citizen.** Show the mobile homepage, localized content and public shelters and alerts. Sign in as a citizen and submit a synthetic request for 10 packs. Select the case location's administrative region when known. Show the reference and timeline.
 2. **Case review:** log in as case manager. Open the new case, begin review and verify it. Generate a recommendation. Explain the labelled rules fallback when no key is configured; with an enabled free account, demonstrate a real synthetic external recommendation. Modify priority with a reason. Show the preserved original and human decision. Approve the case separately.
 3. **Logistics:** log in as logistics manager. Only six food packs are initially available. Reserve six, dispatch them, and confirm delivery. Show six delivered and four outstanding. Replenish four with a reason; reserve/dispatch/deliver the remainder.
 4. **Shelters:** use the seeded approved shelter request. Log in as shelter administrator, reserve a suitable accessible shelter for the entire household, show reserved versus checked-in counts, check in, then record departure.
@@ -26,6 +26,12 @@ Each request captures one aid category. The food and accessible-shelter requests
 8. Use India and Nepal in the country selector. Exercise a scoped case and shelter in each jurisdiction. Show an unauthorized account receiving a denial and compare the public alert locale policies.
 
 For reproducible browser recording, install the Playwright FFmpeg dependency with `npx playwright install ffmpeg` from `frontend`. In a fresh PowerShell process set `$env:SURAKUMA_DEMO_VIDEO='1'` and rerun the isolated script with `-TestFilter 'citizen submits|donor and funding administrator'`. The Playwright output includes the citizen/staff journey and donor and administrator views. Record only successful scenarios with synthetic accounts. Videos and traces are stored under `frontend/test-results/live-international`.
+
+### Measurement units
+
+Submit a new water request for 20 L. After review and approval, record 15 L of water in the appropriate organisation and country. The case allocation workspace shows 15 L available and 5 L remaining if the available stock is reserved. Reserve, dispatch and confirm the shipment, then check that the citizen sees 15 of 20 L delivered after reload. A separate scenario with 15,000 mL of stock has the same case balance. Enter the reservation and receipt in mL in that scenario.
+
+For an open request that displays **Unit requires clarification**, the Case Manager or Coordinator can open **Clarify requested unit or region**, confirm the measurement with the citizen or existing case records, and record the source. If historical allocations conflict, keep the request flagged until the supporting records have been reconciled. For shelters, continue to submit one household placement and enter the number of people separately. See the [measurement verification record](testing/resource-measurement-units.md).
 
 ## Presentation ownership
 

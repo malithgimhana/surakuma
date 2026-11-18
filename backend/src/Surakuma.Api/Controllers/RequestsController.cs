@@ -43,6 +43,7 @@ public sealed class RequestsController(Operations operations, AccessService acce
     [HttpPost("{id:guid}/consolidate")]
     public Task<CaseConsolidation> Consolidate(Guid id, ConsolidateCaseInput input, CancellationToken ct) => operations.Consolidate(id, input, ct);
     [HttpPatch("{id:guid}/status")] public Task<AssistanceRequest> Status(Guid id, StatusInput input, CancellationToken ct) => operations.ChangeStatus(id, input, ct);
+    [HttpPatch("{id:guid}/measurement")] public Task<AssistanceRequest> Measurement(Guid id, ClarifyMeasurementInput input, CancellationToken ct) => operations.ClarifyMeasurement(id, input, ct);
     [HttpPost("{id:guid}/escalate")]
     public async Task<IActionResult> Escalate(Guid id, TaskUpdateInput input, CancellationToken ct)
     {

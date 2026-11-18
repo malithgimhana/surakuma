@@ -26,9 +26,9 @@ interface Workspace {
 }
 interface Options {
   campaignScopes: { id: string; organisationId: string; name: string; crisisId?: string }[];
-  cases: { id: string; reference: string; category: Category }[];
+  cases: { id: string; reference: string; category: Category; unit?: string | null }[];
   resources: { id: string; name: string; category: Category; unit: string }[];
-  deliveries: { id: string; requestId: string; resourceId: string; reference: string; quantity: number }[];
+  deliveries: { id: string; requestId: string; resourceId: string; reference: string; quantity: number; unit: string }[];
 }
 type Write = { path: string; method?: 'put'; data?: unknown };
 const tabs = [
@@ -37,7 +37,7 @@ const tabs = [
   ['notifications', 'Notifications'], ['profile', 'Profile'], ['investigations', 'Investigations'],
 ] as const;
 const form = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); return new FormData(event.currentTarget); };
-const amountText = (amount: number, unit: string) => `${amount.toLocaleString()} ${unit}`;
+const amountText = (amount: number, unit: string) => `${amount.toLocaleString()} ${unitSymbol(unit)}`;
 
 export default function FundingWorkspace({ manage = false, admin = false }: { manage?: boolean; admin?: boolean }) {
   const base = admin ? '/admin/funding' : manage ? '/funding/manage' : '/funding';
@@ -200,6 +200,7 @@ function NumberInput({ max = 10000000, ...props }: ComponentProps<'input'>) {
 }
 function PledgeForm({ url, busy, submit, campaigns }: ActionProps & { campaigns: Campaign[] }) {
   const [kind, setKind] = useState('Monetary');
+  const [unit, setUnit] = useState('');
   const [operationId, setOperation] = useState(() => crypto.randomUUID());
   if (!campaigns.length) return null;
   return <Card><h2>Record a pledge</h2>
@@ -211,8 +212,8 @@ function PledgeForm({ url, busy, submit, campaigns }: ActionProps & { campaigns:
       <Field label="Campaign"><select name="campaign">{campaigns.map(c => <option key={c.id} value={c.id}>{c.name} ({c.currency})</option>)}</select></Field>
       <Field label="Donation type"><select value={kind} onChange={e => setKind(e.target.value)}><option>Monetary</option><option>Material</option></select></Field>
       <Field label="Aid category"><select name="category">{categories.map(c => <option key={c}>{c}</option>)}</select></Field>
-      <Field label="Amount"><NumberInput name="amount" /></Field>
-      {kind === 'Material' && <Field label="Inventory unit"><input name="unit" required maxLength={30} placeholder="e.g. packs" /></Field>}
+      {kind === 'Material' && <Field label="Inventory unit"><ResourceUnitSelect name="unit" value={unit} onChange={e => setUnit(e.target.value)} required /></Field>}
+      <Field label="Amount"><NumberInput name="amount" {...(kind === 'Material' && !isMeasuredUnit(unit) ? { step: 1, min: 1 } : {})} /></Field>
       <Button busy={busy}>Record pledge</Button>
     </form>
   </Card>;
@@ -226,8 +227,9 @@ function DonationAction({ url, busy, submit, action, donation, allocation }: Act
   const needsOptions = action === 'allocate' || material;
   if (needsOptions && options.isPending) return <Loading />;
   if (needsOptions && options.isError) return <ErrorState error={options.error} />;
-  const resources = options.data?.resources.filter(r => r.category === donation.category && r.unit.trim().toLowerCase() === donation.unit) ?? [];
-  const cases = options.data?.cases.filter(c => !material || c.category === donation.category) ?? [];
+  const resources = options.data?.resources.filter(r => r.category === donation.category && compatibleUnits(r.unit, donation.unit)) ?? [];
+  const cases = options.data?.cases.filter(c => !material || c.category !== 'Shelter' &&
+    c.category === donation.category && compatibleUnits(c.unit, donation.unit)) ?? [];
   const deliveries = options.data?.deliveries.filter(d => d.requestId === allocation?.requestId && d.resourceId === donation.resourceId) ?? [];
   const donationPath = url + '/donations/' + donation.id;
   if (action === 'confirm' && material && !resources.length) return <p>Material confirmation requires logistics access and a matching inventory item.</p>;
@@ -243,13 +245,15 @@ function DonationAction({ url, busy, submit, action, donation, allocation }: Act
   }}>
     {action !== 'allocate' && <Field label={action === 'confirm' ? 'Verified receipt reference' : 'Expense or fulfilment reference'}>
       <input name="reference" required maxLength={100} /></Field>}
-    {action !== 'confirm' && <Field label="Amount"><NumberInput name="amount" max={allocation?.amount ?? donation.amount} /></Field>}
+    {action !== 'confirm' && <Field label="Amount" hint={`Enter the amount in ${unitSymbol(donation.unit)}.`}>
+      <NumberInput name="amount" max={allocation?.amount ?? donation.amount} {...(material && !isMeasuredUnit(donation.unit) ? { step: 1, min: 1 } : {})} />
+    </Field>}
     {action === 'confirm' && material && <Field label="Inventory item"><select name="resource">{resources.map(r =>
       <option key={r.id} value={r.id}>{r.name} ({r.unit})</option>)}</select></Field>}
     {action === 'allocate' && <Field label="Approved case"><select name="request">{cases.map(r =>
-      <option key={r.id} value={r.id}>{r.reference} · {r.category}</option>)}</select></Field>}
+      <option key={r.id} value={r.id}>{r.reference} · {r.category} {unitSymbol(r.unit)}</option>)}</select></Field>}
     {action === 'expend' && material && <Field label="Confirmed delivery"><select name="delivery">{deliveries.map(d =>
-      <option key={d.id} value={d.id}>{d.reference} · {d.quantity}</option>)}</select></Field>}
+      <option key={d.id} value={d.id}>{d.reference} · {d.quantity} {unitSymbol(d.unit)}</option>)}</select></Field>}
     <Button busy={busy}>{action === 'confirm' ? 'Verify receipt' : action === 'allocate' ? 'Record allocation' : 'Record expenditure'}</Button>
   </form>;
 }
@@ -283,3 +287,5 @@ function ExpenditurePanel({ data, url, campaigns, busy, submit }: ActionProps & 
       <DonationAction key={allocation.id} action="expend" donation={donation} allocation={allocation} url={url} busy={busy} submit={submit} />}
   </Card>;
 }
+import { ResourceUnitSelect } from './ResourceUnitSelect';
+import { compatibleUnits, isMeasuredUnit, unitSymbol } from './quantity';

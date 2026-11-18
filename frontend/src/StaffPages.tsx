@@ -33,7 +33,8 @@ import {
   PageHeader,
 } from './components';
 import { MapView } from './MapView';
-import { isMeasuredUnit } from './quantity';
+import { isMeasuredUnit, unitSymbol } from './quantity';
+import { ResourceUnitSelect } from './ResourceUnitSelect';
 import { ShelterDashboard } from './ShelterDashboard';
 import { WorkspaceDialog } from './OrganisationDialog';
 import type {
@@ -256,7 +257,8 @@ export function CaseQueue() {
                       <td>
                         {t('category.' + r.category)}
                         <small>
-                          {r.householdSize} people · {r.quantity - r.deliveredQuantity} outstanding
+                          {r.householdSize} people · {Number((r.quantity - r.deliveredQuantity).toFixed(5))} {unitSymbol(r.unit)} outstanding
+                          {r.unitRequiresClarification && ' · Unit requires clarification'}
                         </small>
                       </td>
                       <td>
@@ -365,13 +367,14 @@ export function CaseDetails() {
     r = d.request;
   const sharedOrganisations = Array.isArray(shares.data) ? shares.data : [];
   const activeFulfilment = ['Approved', 'InProgress', 'PartiallyFulfilled'].includes(r.status);
-  const outstanding = Math.max(0, r.quantity - r.deliveredQuantity - d.allocations
-    .filter((a) => a.status === 'Reserved' || a.status === 'Dispatched')
-    .reduce((sum, a) => sum + a.quantity, 0));
-  const canReserveResources = activeFulfilment && outstanding > 0;
-  const suitableResources = resources.data?.filter((x) => x.category === r.category && x.available > 0 && x.transportAvailable !== false) ?? [];
+  const candidates = allocationRecommendations.data?.candidates ?? [];
+  const outstanding = allocationRecommendations.data?.outstanding ?? 0;
+  const canReserveResources = activeFulfilment && !r.unitRequiresClarification && outstanding > 0;
+  const suitableResources = resources.data?.filter((resource) =>
+    candidates.some(candidate => candidate.resourceId === resource.id && candidate.transportAvailable)) ?? [];
   const selectedResource = suitableResources.find((x) => x.id === resourceId) ?? suitableResources[0];
-  const maxReservation = Math.min(outstanding, selectedResource?.available ?? 0);
+  const selectedCandidate = candidates.find(candidate => candidate.resourceId === selectedResource?.id);
+  const maxReservation = selectedCandidate?.suggestedQuantity ?? 0;
   const delivery = d.allocations.find((a) => a.id === deliveryId && a.status === 'Dispatched');
   const canReserveShelter = ['Approved', 'InProgress'].includes(r.status) && r.quantity === 1 && r.deliveredQuantity === 0 &&
     !d.placements.some((p) => p.status === 'Reserved' || p.status === 'CheckedIn');
@@ -379,10 +382,12 @@ export function CaseDetails() {
   const suitableShelters = shelterRanking.data
     ? shelterRanking.data.flatMap(candidate => compatibleShelters.filter(s => s.id === candidate.id))
     : compatibleShelters;
-  const reservationStatus = ['Submitted', 'UnderReview', 'Verified'].includes(r.status)
+  const reservationStatus = r.unitRequiresClarification ? 'Confirm the requested unit before reserving resources.' :
+    ['Submitted', 'UnderReview', 'Verified'].includes(r.status)
     ? `Current status: ${r.status}. The case must be verified and approved before reserving.`
     : `Current status: ${r.status}. There is no eligible outstanding reservation for this case.`;
-  const recommended = allocationRecommendations.data?.candidates.find((candidate) => candidate.transportAvailable);
+  const recommended = candidates.find((candidate) => candidate.transportAvailable);
+  const openCase = !['Fulfilled', 'Closed', 'Rejected', 'Cancelled'].includes(r.status);
   const next = (
     {
       Submitted: 'UnderReview',
@@ -402,8 +407,8 @@ export function CaseDetails() {
         action={<Badge value={r.status} />}
       />
       <MutationMessage mutation={write} />
-      {canLogistics && activeFulfilment && r.organisationId && <Link to={`${adminCase ? '/admin' : '/staff'}/supply-support?${new URLSearchParams({
-        case: r.id, organisation: r.organisationId, category: r.category,
+      {canLogistics && activeFulfilment && r.organisationId && r.unit && r.category !== 'Shelter' && <Link to={`${adminCase ? '/admin' : '/staff'}/supply-support?${new URLSearchParams({
+        case: r.id, organisation: r.organisationId, category: r.category, unit: r.unit,
       })}`}>Request additional supplies for this case</Link>}
       {d.consolidations?.map(link => <p key={link.originalId}>{link.originalId === r.id ? 'Active case ' : 'Consolidated case '}
         <Link to={`${adminCase ? '/admin' : '/staff'}/cases/${link.originalId === r.id ? link.primaryId : link.originalId}`}>
@@ -434,11 +439,14 @@ export function CaseDetails() {
             <dl className="review-grid">
               <dt>Location</dt>
               <dd>{r.locationText}</dd>
+              <dt>Administrative region</dt>
+              <dd>{d.administrativeRegion || 'Region unrecorded'}</dd>
               <dt>Accessibility needs</dt>
               <dd>{r.accessibilityNeeds || 'None reported'}</dd>
               <dt>Delivered / requested</dt>
               <dd>
-                {r.deliveredQuantity} / {r.quantity}
+                {r.deliveredQuantity} / {r.quantity} {unitSymbol(r.unit)}
+                {r.unitRequiresClarification && ' · Unit requires clarification'}
               </dd>
               <dt>Organisation</dt>
               <dd>{lookup.data?.organisations.find((o) => o.id === r.organisationId)?.name || 'Awaiting assignment'}</dd>
@@ -449,6 +457,26 @@ export function CaseDetails() {
                 <dt>Requester contact</dt><dd>{r.requesterContact || 'Not provided'}</dd>
               </>}
             </dl>
+            {canCase && openCase && (r.unitRequiresClarification || !r.administrativeDivisionId) && (
+              <details>
+                <summary>{r.unitRequiresClarification ? 'Clarify requested unit or region' : 'Record administrative region'}</summary>
+                <form className="stack" onSubmit={event => {
+                  event.preventDefault();
+                  const fields = new FormData(event.currentTarget);
+                  write.mutate({ path: countryPath(`/requests/${id}/measurement`, country), method: 'patch', data: {
+                    unit: fields.get('unit') || null, administrativeDivisionId: fields.get('administrativeDivisionId') || null,
+                    reason: fields.get('reason'),
+                  } });
+                }}>
+                  {r.unitRequiresClarification && <Field label="Confirmed request unit" hint="Confirm with the citizen or supporting case records.">
+                    <ResourceUnitSelect name="unit" />
+                  </Field>}
+                  <RegionField key={country} initialDivisionId={r.administrativeDivisionId} />
+                  <Field label="Source and reason"><textarea name="reason" maxLength={1000} required /></Field>
+                  <Button busy={write.isPending}>Save measurement clarification</Button>
+                </form>
+              </details>
+            )}
             {!r.organisationId && !['Closed', 'Rejected', 'Cancelled'].includes(r.status) && canAssign && (
               <form onSubmit={(event) => {
                 event.preventDefault();
@@ -700,7 +728,7 @@ export function CaseDetails() {
             <Card>
               <h2>Resource allocation</h2>
               <p className="muted">
-                Stock, category, transport and outstanding quantity are checked before reservation.
+                Stock, category, unit, transport and outstanding quantity are checked before reservation.
                 Staff must verify suitability and location.
               </p>
               {allocationRecommendations.error && <ErrorState error={allocationRecommendations.error} />}
@@ -710,18 +738,19 @@ export function CaseDetails() {
                   <p>Recommendations only; staff confirm suitability and reserve manually.</p>
                   <p>{allocationRecommendations.data.shortageExplanation}</p>
                   {allocationRecommendations.data.shortage && <p className="field-error">Potential shortage: escalate for coordinator review. Queue position: {allocationRecommendations.data.queuePosition || 'not eligible'} of {allocationRecommendations.data.competingRequests}.</p>}
-                  {allocationRecommendations.data.candidates.length === 0 && <p>No matching resource with available stock was found.</p>}
+                  {allocationRecommendations.data.candidates.length === 0 && !r.unitRequiresClarification && <p>No matching resource with available stock was found.</p>}
                   {allocationRecommendations.data.candidates.map((candidate, index) => (
                     <div key={candidate.resourceId}>
                       <strong>{index === 0 ? 'Preferred' : index === 1 ? 'Next-best alternative' : 'Alternative'}: {candidate.name} · score {candidate.score}</strong>
                       <p>{candidate.reason}</p>
-                      {candidate.shortForRequest && <p>Only {candidate.suggestedQuantity} {candidate.unit} can be suggested from this resource.</p>}
+                      {candidate.shortForRequest && <p>{candidate.remainingAfterReservation} {unitSymbol(r.unit)} would remain after reserving {candidate.suggestedQuantity} {unitSymbol(candidate.unit)}.</p>}
                       <Button type="button" variant="secondary" onClick={() => setResourceId(candidate.resourceId)}>Choose for review</Button>
                     </div>
                   ))}
                   {recommended && !ignoredRecommendation && <Button type="button" variant="ghost" busy={write.isPending} onClick={() => write.mutate({ path: `/requests/${id}/allocation-recommendations/ignore`, data: { recommendedResourceId: recommended.resourceId } }, { onSuccess: () => setIgnoredRecommendation(true) })}>Ignore suggestion</Button>}
                 </section>
               )}
+              {canReserveResources && <p>{outstanding} {unitSymbol(r.unit)} outstanding after existing commitments.</p>}
               {!canReserveResources && <p className="muted">{reservationStatus}</p>}
               {canReserveResources && !selectedResource && !resources.isPending && <p className="muted">No suitable stock is currently available.</p>}
               {resources.error && <ErrorState error={resources.error} />}
@@ -746,15 +775,15 @@ export function CaseDetails() {
                       ))}
                   </select>
                 </Field>
-                <Field label="Quantity">
+                <Field label="Quantity" hint={`Enter the quantity in ${unitSymbol(selectedResource.unit)}.`}>
                   <input
                     type="number"
                     name="quantity"
-                    key={selectedResource.id}
+                    key={`${selectedResource.id}:${maxReservation}`}
                     min={isMeasuredUnit(selectedResource.unit) ? 0.01 : 1}
                     step={isMeasuredUnit(selectedResource.unit) ? 0.01 : 1}
                     max={maxReservation}
-                    defaultValue={isMeasuredUnit(selectedResource.unit) ? maxReservation : Math.floor(maxReservation)}
+                    defaultValue={maxReservation}
                     required
                   />
                 </Field>
@@ -762,12 +791,12 @@ export function CaseDetails() {
               </form>}
               {d.allocations.map((a) => (
                 <div className="allocation-row" key={a.id}>
-                  <strong>{a.quantity} units</strong>
+                  <strong>{a.quantity} {unitSymbol(a.unit)}</strong>
                   <Badge value={a.status} />
                   {a.status === 'Reserved' && <strong>Next: Dispatch</strong>}
                   {a.status === 'Dispatched' && <strong>Next: Deliver</strong>}
                   {a.status === 'Reserved' &&
-                    ['Dispatch', 'Cancel'].map((action) => (
+                    (r.unitRequiresClarification ? ['Cancel'] : ['Dispatch', 'Cancel']).map((action) => (
                       <Button
                         key={action}
                         variant="secondary"
@@ -777,7 +806,7 @@ export function CaseDetails() {
                         {action}
                       </Button>
                     ))}
-                  {a.status === 'Dispatched' && (
+                  {a.status === 'Dispatched' && !r.unitRequiresClarification && (
                     <Button
                       busy={write.isPending}
                       onClick={() => { write.reset(); setDeliveryId(a.id); }}
@@ -793,8 +822,8 @@ export function CaseDetails() {
                   write.mutate({ path: `/allocations/${delivery.id}/Deliver`, data: deliveryInput(new FormData(event.currentTarget)) },
                     { onSuccess: () => setDeliveryId(undefined) });
                 }}>
-                  <p>Dispatched quantity · {delivery.quantity}</p>
-                  <DeliveryFields quantity={delivery.quantity} unit={resources.data?.find((resource) => resource.id === delivery.resourceId)?.unit} />
+                  <p>Dispatched quantity · {delivery.quantity} {unitSymbol(delivery.unit)}</p>
+                  <DeliveryFields quantity={delivery.quantity} unit={delivery.unit ?? undefined} />
                   {write.error && <ErrorState error={write.error} />}
                   <Button busy={write.isPending}>Record receipt</Button>
                 </form>
@@ -1007,10 +1036,10 @@ export function ResourcesPage() {
               </select>
             </Field>
             <Field label="Unit">
-              <input name="unit" value={unit} onChange={(e) => setUnit(e.target.value)} required />
+              <ResourceUnitSelect name="unit" value={unit} onChange={(e) => setUnit(e.target.value)} required />
             </Field>
             <Field label="Opening stock">
-              <input name="stock" type="number" min={0} step={isMeasuredUnit(unit) ? 0.1 : 1} required />
+              <input name="stock" type="number" min={0} step={isMeasuredUnit(unit) ? 0.01 : 1} required />
             </Field>
             <Field label="Location">
               <input name="locationText" required />

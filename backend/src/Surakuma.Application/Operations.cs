@@ -3,7 +3,8 @@ using VolunteerTaskStatus = Surakuma.Domain.TaskStatus;
 
 namespace Surakuma.Application;
 
-public sealed class Operations(IStore store, AccessService access, IAiProvider ai, IAllocationPolicy allocationPolicy, IAllocationStrategy allocationStrategy)
+public sealed class Operations(IStore store, AccessService access, IAiProvider ai, IAllocationPolicy allocationPolicy, IAllocationStrategy allocationStrategy,
+    ResourceUnitCatalog units)
 {
     private static readonly string[] CaseRoles = [Roles.CaseManager, Roles.Coordinator];
     private static readonly string[] LogisticsRoles = [Roles.Logistics, Roles.Coordinator];
@@ -63,9 +64,6 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
     }
     public Task<AssistanceRequest> Submit(CreateRequestInput input, CancellationToken ct) => store.RoutingTransactionAsync(async () =>
     {
-        QuantityUnits.ValidateWhole(input.Quantity, "items");
-        if (input.Category == AidCategory.Shelter && input.Quantity != 1)
-            throw new RuleException("A shelter request covers one household placement. Submit a separate request for another household.");
         if (!Enum.IsDefined(input.Category) || !Enum.IsDefined(input.Priority))
             throw new RuleException("Invalid category or priority.");
         if (input.Latitude is < -90 or > 90 || input.Longitude is < -180 or > 180 || input.Latitude.HasValue != input.Longitude.HasValue)
@@ -76,6 +74,12 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
         var existing = await store.ListAsync(store.Query<AssistanceRequest>().Where(x => x.CitizenId == access.UserId && x.SubmissionKey == input.SubmissionKey), ct);
         if (existing.Count > 0)
             return existing[0];
+        var unit = input.Category == AidCategory.Shelter ? QuantityUnits.Household : units.Require(input.Unit);
+        if (input.Category == AidCategory.Shelter && (input.Quantity != 1 ||
+            input.Unit != null && QuantityUnits.Normalize(input.Unit) != QuantityUnits.Household))
+            throw new RuleException("A shelter request covers one household placement. Submit a separate request for another household.");
+        QuantityUnits.ValidateInventory(input.Quantity, unit);
+        await ValidateRequestRegion(input.AdministrativeDivisionId, crisis.CountryCode, ct);
         var centre = crisis.PrimaryOrganisationId;
         if (centre.HasValue && !await access.PartnerEligible(centre.Value, crisis.CountryCode, ct)) centre = null;
         var r = new AssistanceRequest
@@ -97,6 +101,8 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
             HouseholdSize = input.HouseholdSize,
             AccessibilityNeeds = input.AccessibilityNeeds,
             Quantity = input.Quantity,
+            Unit = unit,
+            AdministrativeDivisionId = input.AdministrativeDivisionId,
             SubmissionKey = input.SubmissionKey,
             Synthetic = input.Synthetic
         };
@@ -105,6 +111,62 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
             Audit("RequestAssigned", r, $"Automatic centre {r.OrganisationId.Value}; case manager {r.AssignedCaseManagerId ?? "unassigned"}", crisis.CountryCode);
         await RecordChange(r, "Request received. A staff member will review it.", ct);
         return r;
+    }, ct);
+
+    private async Task ValidateRequestRegion(Guid? divisionId, string country, CancellationToken ct)
+    {
+        if (divisionId.HasValue && (await store.FindAsync<AdministrativeDivision>(divisionId.Value, ct))?.CountryCode != country)
+            throw new RuleException("Choose an administrative region in the crisis country.");
+    }
+
+    public Task<AssistanceRequest> ClarifyMeasurement(Guid id, ClarifyMeasurementInput input, CancellationToken ct) => store.TransactionAsync(async () =>
+    {
+        var request = await access.Request(id, CaseRoles, ct);
+        if (CaseReporting.Ended.Contains(request.Status))
+            throw new RuleException("Measurement clarification is only available for open cases.");
+        var reason = input.Reason.Trim();
+        if (reason.Length == 0) throw new RuleException("Record the source of the clarification.");
+        if (input.Unit == null && input.AdministrativeDivisionId == null)
+            throw new RuleException("Choose a unit or an administrative region to clarify.");
+        var country = await CrisisCountry(request.CrisisId, ct);
+        await ValidateRequestRegion(input.AdministrativeDivisionId, country, ct);
+        var changes = new List<string>();
+        if (input.Unit != null)
+        {
+            var unit = units.Require(input.Unit);
+            if (request.Category == AidCategory.Shelter || request.Unit != null && request.Unit != unit)
+                throw new RuleException("An established request unit cannot be changed through clarification.");
+            if (request.Unit == null)
+            {
+                QuantityUnits.ValidateInventory(request.Quantity, unit);
+                QuantityUnits.ValidateInventory(request.DeliveredQuantity, unit);
+                var previous = await store.ListAsync(
+                    from allocation in store.Query<ResourceAllocation>()
+                    join resource in store.Query<Resource>() on allocation.ResourceId equals resource.Id
+                    where allocation.RequestId == id && allocation.Status != AllocationStatus.Cancelled
+                    select new { Allocation = allocation, resource.Unit }, ct);
+                if (previous.Any(a => QuantityUnits.Normalize(a.Unit) != unit))
+                    throw new RuleException("Historical allocations use a different unit. Reconcile their evidence before clarifying this request.");
+                var committed = previous.Where(a => a.Allocation.Status is AllocationStatus.Reserved or AllocationStatus.Dispatched).Sum(a => a.Allocation.Quantity);
+                if (committed + request.DeliveredQuantity > request.Quantity)
+                    throw new RuleException("Historical commitments exceed the request. Reconcile them before clarifying the unit.");
+                request.Unit = unit;
+                foreach (var row in previous) row.Allocation.RequestQuantity = row.Allocation.Quantity;
+                changes.Add($"Unit confirmed as {unit}");
+            }
+        }
+        if (input.AdministrativeDivisionId is Guid divisionId && request.AdministrativeDivisionId != divisionId)
+        {
+            changes.Add($"Administrative region changed from {request.AdministrativeDivisionId?.ToString() ?? "unrecorded"} to {divisionId}");
+            request.AdministrativeDivisionId = divisionId;
+        }
+        if (changes.Count > 0)
+        {
+            var note = string.Join(". ", changes) + $". {reason}";
+            await RecordChange(request, note, ct, request.Status);
+            Audit("RequestMeasurementClarified", request, note, country);
+        }
+        return request;
     }, ct);
     private async Task<string?> ChooseCaseManager(Guid organisationId, Guid crisisId, CancellationToken ct)
     {
@@ -160,14 +222,38 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
     public IQueryable<AssistanceRequest> ShortageCases(IQueryable<AssistanceRequest> cases)
     {
         var allocations = store.Query<ResourceAllocation>().Where(a => a.Status == AllocationStatus.Reserved || a.Status == AllocationStatus.Dispatched);
-        var resources = store.Query<Resource>().Where(s => s.TransportAvailable);
+        var resources = store.Query<Resource>().Where(s => s.TransportAvailable && s.Stock > s.Reserved &&
+            store.Query<OrganisationCountry>().Any(o => o.OrganisationId == s.OrganisationId && o.CountryCode == s.CountryCode &&
+                (o.VerificationState == "Verified" || o.VerificationState == "LegacyActive")));
+        var mass = QuantityUnits.Kilograms.Concat(QuantityUnits.Grams).ToArray();
+        var volume = QuantityUnits.Litres.Concat(QuantityUnits.Millilitres).ToArray();
+        var large = QuantityUnits.Kilograms.Concat(QuantityUnits.Litres).ToArray();
         return from request in cases
                join crisis in store.Query<Crisis>() on request.CrisisId equals crisis.Id
                let uncommitted = request.Quantity - request.DeliveredQuantity -
-                   (allocations.Where(a => a.RequestId == request.Id).Sum(a => (decimal?)a.Quantity) ?? 0)
-               where ActiveFulfilment.Contains(request.Status) && request.Category != AidCategory.Shelter &&
-                   uncommitted > 0 && !resources.Any(s => s.CountryCode == crisis.CountryCode && s.OrganisationId == request.OrganisationId &&
-                       s.Category == request.Category && s.Stock - s.Reserved >= uncommitted)
+                   (allocations.Where(a => a.RequestId == request.Id).Sum(a => a.RequestQuantity) ?? 0)
+               let compatibleStock = (from resource in resources
+                   let unit = resource.Unit.Trim().ToLower()
+                   where resource.CountryCode == crisis.CountryCode && resource.OrganisationId == request.OrganisationId &&
+                       resource.Category == request.Category &&
+                       (unit == request.Unit ||
+                           (request.Unit == "pieces" && QuantityUnits.Pieces.Contains(unit)) ||
+                           (request.Unit == "packs" && QuantityUnits.Packs.Contains(unit)) ||
+                           (request.Unit == "persons" && QuantityUnits.Persons.Contains(unit)) ||
+                           (mass.Contains(request.Unit!) && mass.Contains(unit)) ||
+                           (volume.Contains(request.Unit!) && volume.Contains(unit)))
+                   select (decimal?)((resource.Stock - resource.Reserved) * (large.Contains(unit) ? 1000 : 1))).Sum() ?? 0
+               let requiredBase = uncommitted * (large.Contains(request.Unit!) ? 1000 : 1)
+               let fineStock = (from resource in resources
+                   let unit = resource.Unit.Trim().ToLower()
+                   where resource.CountryCode == crisis.CountryCode && resource.OrganisationId == request.OrganisationId &&
+                       resource.Category == request.Category &&
+                       ((mass.Contains(request.Unit!) && QuantityUnits.Grams.Contains(unit)) ||
+                        (volume.Contains(request.Unit!) && QuantityUnits.Millilitres.Contains(unit)))
+                   select (decimal?)(resource.Stock - resource.Reserved)).Sum() ?? 0
+               where ActiveFulfilment.Contains(request.Status) && request.Category != AidCategory.Shelter && request.Unit != null &&
+                   uncommitted > 0 && (compatibleStock < requiredBase ||
+                       ((mass.Contains(request.Unit) || volume.Contains(request.Unit)) && fineStock < requiredBase % 10m))
                select request;
     }
     public async Task<List<AssistanceRequest>> Triage(CancellationToken ct, Guid? crisisId = null)
@@ -219,11 +305,14 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
     public async Task<object> Detail(Guid id, CancellationToken ct)
     {
         var r = await access.Request(id, ct: ct);
+        var region = r.AdministrativeDivisionId is Guid divisionId
+            ? await store.FindAsync<AdministrativeDivision>(divisionId, ct) : null;
         var histories = await store.ListAsync(store.Query<RequestHistory>().Where(x => x.RequestId == id).OrderBy(x => x.CreatedAt), ct);
         var attachments = await store.ListAsync(store.Query<Attachment>().Where(x => x.RequestId == id).Select(x => new { x.Id, x.OriginalName, x.ContentType, x.Size }), ct);
         var allocations = await store.ListAsync(store.Query<ResourceAllocation>().Where(x => x.RequestId == id).Select(a => new
         {
-            a.Id, a.RequestId, a.ResourceId, a.Quantity, a.Status, a.ApprovedBy, a.CreatedAt, a.UpdatedAt, a.Version,
+            a.Id, a.RequestId, a.ResourceId, a.Quantity, a.RequestQuantity, a.Status, a.ApprovedBy, a.CreatedAt, a.UpdatedAt, a.Version,
+            Unit = store.Query<Resource>().Where(stock => stock.Id == a.ResourceId).Select(stock => stock.Unit).FirstOrDefault(),
             ConfirmedQuantity = store.Query<DeliveryConfirmation>().Where(d => d.AllocationId == a.Id)
                 .Select(d => (decimal?)d.ConfirmedQuantity).FirstOrDefault(),
         }), ct);
@@ -240,6 +329,7 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
         return new
         {
             Request = r,
+            AdministrativeRegion = region?.Name,
             History = histories.Select(h => new { h.Id, h.CreatedAt, h.Status, Note = r.CitizenId == access.UserId ? CitizenHistoryNote(r.Reference, h.Status) : h.Note, ActorId = r.CitizenId == access.UserId ? "" : h.ActorId }),
             Attachments = attachments,
             Allocations = allocations,
@@ -256,7 +346,7 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
         var reason = input.Reason.Trim();
         if (reason.Length == 0) throw new RuleException("Record why these cases represent the same request.");
         if (primary.Id == original.Id || original.CrisisId != primary.CrisisId || original.OrganisationId != primary.OrganisationId ||
-            original.CitizenId != primary.CitizenId || original.Category != primary.Category || original.Quantity != primary.Quantity ||
+            original.CitizenId != primary.CitizenId || original.Category != primary.Category || !EqualRequestMeasurement(original, primary) ||
             original.HouseholdSize != primary.HouseholdSize || original.RequestedForSomeoneElse || primary.RequestedForSomeoneElse)
             throw new RuleException("Consolidate only equivalent requests by the same citizen within the same crisis and response organisation. Cases filed for another person require separate review.");
         var links = store.Query<CaseConsolidation>();
@@ -281,6 +371,13 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
         Audit("CasesConsolidated", link, $"{original.Reference} → {primary.Reference}", await CrisisCountry(original.CrisisId, ct));
         return link;
     }, ct);
+
+    private static bool EqualRequestMeasurement(AssistanceRequest first, AssistanceRequest second)
+    {
+        if (first.Category == AidCategory.Shelter) return first.Quantity == 1 && second.Quantity == 1;
+        return QuantityUnits.Compatible(first.Unit, second.Unit) &&
+            QuantityUnits.Convert(first.Quantity, first.Unit, second.Unit) == second.Quantity;
+    }
     private static string CitizenHistoryNote(string reference, string status) =>
         Enum.TryParse<RequestStatus>(status, out var state) && Enum.IsDefined(state)
             ? CitizenMessages.Status(reference, state, "en")
@@ -391,8 +488,8 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
         {
             r.Priority = input.Action == "Modify" ? input.FinalPriority ?? throw new RuleException("Choose a final priority.") : recommendation.Priority;
             var category = input.Action == "Modify" ? input.FinalCategory ?? r.Category : recommendation.Category;
-            if (category == AidCategory.Shelter && r.Quantity != 1)
-                throw new RuleException("A shelter request must represent one household placement. Create a separate shelter request instead.");
+            if (category != r.Category && (category == AidCategory.Shelter || r.Category == AidCategory.Shelter))
+                throw new RuleException("A household placement needs a separate shelter request.");
             if (category != r.Category && r.Status is RequestStatus.InProgress or RequestStatus.PartiallyFulfilled)
                 throw new RuleException("Do not reclassify a case after allocation or delivery has begun. Review its existing commitments first.");
             r.Category = category;
@@ -437,8 +534,8 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
             throw new RuleException("Choose an administrative division in the resource country.");
         if (string.IsNullOrWhiteSpace(input.LocationText)) throw new RuleException("Enter a resource location.");
         var name = input.Name.Trim();
-        var unit = input.Unit.Trim();
-        if (name.Length == 0 || unit.Length == 0 || unit.Length > 40) throw new RuleException("Enter a resource name and unit.");
+        var unit = units.Require(input.Unit);
+        if (name.Length == 0) throw new RuleException("Enter a resource name.");
         QuantityUnits.ValidateInventory(input.Stock, unit);
         if (input.LowStockThreshold is { } threshold) QuantityUnits.ValidateInventory(threshold, unit);
         if (input.DepotId is { } depotId)
@@ -454,7 +551,7 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
         {
             if (existing.CountryCode != input.CountryCode || existing.OrganisationId != input.OrganisationId) throw new AccessDeniedException();
             if (existing.DepotId != input.DepotId || existing.Name != name || existing.Code != code ||
-                existing.Unit != unit || existing.Category != input.Category)
+                QuantityUnits.Normalize(existing.Unit) != unit || existing.Category != input.Category)
                 throw new RuleException("This resource registration reference has already been used.");
             return existing;
         }
@@ -486,7 +583,9 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
     {
         var request = await access.Request(requestId, LogisticsRoles, ct);
         var crisis = await store.FindAsync<Crisis>(request.CrisisId, ct) ?? throw new MissingException();
-        return await store.ListAsync((await access.Located<Resource>(ct, request.CrisisId, LogisticsRoles)).Where(x => x.CountryCode == crisis.CountryCode && x.Category == request.Category && store.Query<OrganisationCountry>().Any(o => o.OrganisationId == x.OrganisationId && o.CountryCode == x.CountryCode && (o.VerificationState == "Verified" || o.VerificationState == "LegacyActive"))), ct);
+        if (request.UnitRequiresClarification || request.Category == AidCategory.Shelter) return [];
+        var resources = await store.ListAsync((await access.Located<Resource>(ct, request.CrisisId, LogisticsRoles)).Where(x => x.CountryCode == crisis.CountryCode && x.Category == request.Category && store.Query<OrganisationCountry>().Any(o => o.OrganisationId == x.OrganisationId && o.CountryCode == x.CountryCode && (o.VerificationState == "Verified" || o.VerificationState == "LegacyActive"))), ct);
+        return resources.Where(x => QuantityUnits.Compatible(x.Unit, request.Unit)).ToList();
     }
     public async Task<List<Shelter>> CaseShelters(Guid requestId, CancellationToken ct)
     {
@@ -516,15 +615,14 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
     {
         var request = await access.Request(requestId, LogisticsRoles, ct);
         var crisis = await store.FindAsync<Crisis>(request.CrisisId, ct) ?? throw new MissingException();
-        var orgs = (await access.Memberships(ct)).Where(x => LogisticsRoles.Contains(x.Role)).Select(x => x.OrganisationId).Distinct().ToArray();
-        var resources = await store.ListAsync((await access.Located<Resource>(ct, request.CrisisId, LogisticsRoles)).Where(x => x.Category == request.Category && x.CountryCode == crisis.CountryCode && store.Query<OrganisationCountry>().Any(o => o.OrganisationId == x.OrganisationId && o.CountryCode == x.CountryCode && (o.VerificationState == "Verified" || o.VerificationState == "LegacyActive"))), ct);
+        var resources = await CaseResources(requestId, ct);
         var cases = await store.ListAsync((await access.Visible(ct)).Where(x => x.OrganisationId == request.OrganisationId && x.CrisisId == request.CrisisId && x.Category == request.Category && (x.Status == RequestStatus.Approved || x.Status == RequestStatus.InProgress || x.Status == RequestStatus.PartiallyFulfilled)), ct);
         if (!cases.Any(x => x.Id == request.Id)) cases.Add(request);
         var ids = cases.Select(x => x.Id).ToArray();
         var commitments = await store.ListAsync(store.Query<ResourceAllocation>().Where(x => ids.Contains(x.RequestId) &&
             (x.Status == AllocationStatus.Reserved || x.Status == AllocationStatus.Dispatched)), ct);
         var approvals = await store.ListAsync(store.Query<RequestHistory>().Where(x => ids.Contains(x.RequestId) && x.Status == "Approved"), ct);
-        var demand = cases.Select(x => new AllocationDemand(x, commitments.Where(a => a.RequestId == x.Id).Sum(a => a.Quantity), approvals.Where(h => h.RequestId == x.Id).Select(h => (DateTimeOffset?)h.CreatedAt).Min() ?? x.CreatedAt)).ToList();
+        var demand = cases.Select(x => new AllocationDemand(x, commitments.Where(a => a.RequestId == x.Id).Sum(a => a.RequestQuantity ?? 0), approvals.Where(h => h.RequestId == x.Id).Select(h => (DateTimeOffset?)h.CreatedAt).Min() ?? x.CreatedAt)).ToList();
         return allocationStrategy.Recommend(request, demand.Single(x => x.Request.Id == request.Id).Committed, resources, demand);
     }
     public async Task IgnoreAllocationRecommendation(Guid requestId, Guid resourceId, CancellationToken ct)
@@ -546,19 +644,19 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
         if (r.Status is not (RequestStatus.Approved or RequestStatus.InProgress or RequestStatus.PartiallyFulfilled))
             throw new RuleException("Verify and approve this case before allocating aid.");
         var committed = (await store.ListAsync(store.Query<ResourceAllocation>().Where(x => x.RequestId == r.Id &&
-            (x.Status == AllocationStatus.Reserved || x.Status == AllocationStatus.Dispatched)), ct)).Sum(x => x.Quantity);
+            (x.Status == AllocationStatus.Reserved || x.Status == AllocationStatus.Dispatched)), ct)).Sum(x => x.RequestQuantity ?? 0);
         if (input.RecommendedResourceId.HasValue)
         {
             var current = await AllocationRecommendations(r.Id, ct);
             if (current.Candidates.FirstOrDefault(x => x.TransportAvailable)?.ResourceId != input.RecommendedResourceId.Value)
                 throw new RuleException("The recommendation has changed; refresh it before reserving.");
         }
-        QuantityUnits.ValidateWhole(input.Quantity, resource.Unit);
         await access.RequirePartner(resource.OrganisationId, resource.CountryCode, ct);
         allocationPolicy.Validate(r, resource, input.Quantity, committed);
         resource.Reserve(input.Quantity);
         var previousStatus = r.Status;
-        var allocation = new ResourceAllocation { RequestId = r.Id, ResourceId = resource.Id, Quantity = input.Quantity, ApprovedBy = access.UserId };
+        var allocation = new ResourceAllocation { RequestId = r.Id, ResourceId = resource.Id, Quantity = input.Quantity,
+            RequestQuantity = QuantityUnits.Convert(input.Quantity, resource.Unit, r.Unit), ApprovedBy = access.UserId };
         store.Add(allocation);
         store.Add(new StockMovement { ResourceId = resource.Id, OperationId = allocation.Id, RequestId = r.Id, CrisisId = r.CrisisId, Quantity = input.Quantity, Kind = "Reserved", ActorId = access.UserId, Origin = resource.LocationText, Destination = r.Reference, Note = "Reserved for the authorised request." });
         if (r.Status == RequestStatus.Approved)
@@ -586,6 +684,8 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
         if (reason != null && (action, a.Status) is ("Dispatch", AllocationStatus.Dispatched) or
             ("Cancel", AllocationStatus.Cancelled))
             return a;
+        if (action is "Dispatch" or "Deliver" && (r.UnitRequiresClarification || a.RequestQuantity == null))
+            throw new RuleException("Confirm the historical request unit before dispatching or confirming delivery.");
         var previousStatus = r.Status;
         var quantity = a.Quantity;
         DeliveryConfirmation? receipt = null;
@@ -599,7 +699,7 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
             receipt = DeliveryReceipts.Create(delivery, a.Quantity, resource.Unit, a.UpdatedAt, access.UserId);
             receipt.AllocationId = a.Id;
             quantity = receipt.ConfirmedQuantity;
-            if (quantity > 0) r.Deliver(quantity);
+            if (quantity > 0) r.Deliver(QuantityUnits.Convert(quantity, resource.Unit, r.Unit));
             store.Add(receipt);
             a.Status = quantity > 0 ? AllocationStatus.Delivered : AllocationStatus.DeliveryException;
         }
@@ -948,8 +1048,12 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
             Overdue = g.Count(x => x.CreatedAt < cutoff && x.Status != RequestStatus.Closed && x.Status != RequestStatus.Fulfilled && x.Status != RequestStatus.Cancelled && x.Status != RequestStatus.Rejected)
         }), ct)).SingleOrDefault();
         var shelterTotals = (await store.ListAsync((await access.Located<Shelter>(ct)).GroupBy(x => 1).Select(g => new { Occupancy = g.Sum(x => x.Occupancy), Reserved = g.Sum(x => x.Reserved), Capacity = g.Sum(x => x.Capacity) }), ct)).SingleOrDefault();
-        var resourceTotals = (await store.ListAsync((await access.Located<Resource>(ct)).GroupBy(x => 1).Select(g => new { Reserved = g.Sum(x => x.Reserved), Stock = g.Sum(x => x.Stock) }), ct)).SingleOrDefault();
-        var stockByUnit = await store.ListAsync((await access.Located<Resource>(ct)).GroupBy(x => new { x.Category, x.Unit }).Select(g => new { g.Key.Category, g.Key.Unit, Stock = g.Sum(x => x.Stock), Reserved = g.Sum(x => x.Reserved) }), ct);
+        var stock = await store.ListAsync((await access.Located<Resource>(ct)).GroupBy(x => new { x.Category, x.Unit })
+            .Select(g => new { g.Key.Category, g.Key.Unit, Stock = g.Sum(x => x.Stock), Reserved = g.Sum(x => x.Reserved) }), ct);
+        var stockByUnit = stock.Where(r => !string.IsNullOrWhiteSpace(r.Unit)).GroupBy(r => (r.Category, Unit: QuantityUnits.BaseUnit(r.Unit)))
+            .Select(g => new { g.Key.Category, g.Key.Unit, Stock = g.Sum(r => QuantityUnits.Convert(r.Stock, r.Unit, g.Key.Unit)),
+                Reserved = g.Sum(r => QuantityUnits.Convert(r.Reserved, r.Unit, g.Key.Unit)) }).ToList();
+        var singleStockUnit = stockByUnit.Select(r => r.Unit).Distinct().Take(2).Count() <= 1;
         var decisionCounts = await store.ListAsync(store.Query<HumanDecision>().Where(x => ids.Contains(x.RequestId)).GroupBy(x => x.Action).Select(g => new { Action = g.Key, Count = g.Count() }), ct);
         int decisions = decisionCounts.Sum(x => x.Count);
         int approved = decisionCounts.Where(x => x.Action == "Approve").Sum(x => x.Count);
@@ -963,7 +1067,10 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
             where history.Status == "UnderReview"
             group history by new { request.Id, request.CreatedAt } into reviews
             select new { reviews.Key.CreatedAt, FirstReview = reviews.Min(x => x.CreatedAt) }, ct);
-        var shortages = await store.ListAsync(cases.Where(x => x.Status == RequestStatus.Approved || x.Status == RequestStatus.PartiallyFulfilled).Select(x => new { x.Id, x.Reference, x.Priority, Outstanding = x.Quantity - x.DeliveredQuantity, x.Category }), ct);
+        var reservations = store.Query<ResourceAllocation>().Where(a => a.Status == AllocationStatus.Reserved || a.Status == AllocationStatus.Dispatched);
+        var shortages = await store.ListAsync(ShortageCases(cases).Select(x => new { x.Id, x.Reference, x.Priority,
+            Outstanding = x.Quantity - x.DeliveredQuantity - (reservations.Where(a => a.RequestId == x.Id).Sum(a => a.RequestQuantity) ?? 0),
+            x.Category, x.Unit }), ct);
         return new
         {
             OpenCases = statuses.Where(x => x.Status is not (RequestStatus.Closed or RequestStatus.Fulfilled or RequestStatus.Rejected or RequestStatus.Cancelled)).Sum(x => x.Count),
@@ -975,8 +1082,9 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
             ShelterReserved = shelterTotals?.Reserved ?? 0,
             ShelterCapacity = shelterTotals?.Capacity ?? 0,
             StockByUnit = stockByUnit,
-            ResourceReserved = resourceTotals?.Reserved ?? 0,
-            ResourceStock = resourceTotals?.Stock ?? 0,
+            ResourceReserved = singleStockUnit ? stockByUnit.Sum(r => r.Reserved) : (decimal?)null,
+            ResourceStock = singleStockUnit ? stockByUnit.Sum(r => r.Stock) : (decimal?)null,
+            ResourceUnit = singleStockUnit ? stockByUnit.FirstOrDefault()?.Unit : null,
             AiOverrideFrequency = AiDecisionMetrics.OverrideFrequency(modified, rejected, decisions),
             AiApprovedCount = approved, AiModifiedCount = modified, AiRejectedCount = rejected, AiDeferredCount = deferred,
             ByStatus = statuses.Select(x => new { Status = x.Status.ToString(), x.Count }),

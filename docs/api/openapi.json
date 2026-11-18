@@ -2774,6 +2774,44 @@
         }
       }
     },
+    "/api/v1/public/resource-units": {
+      "get": {
+        "tags": [
+          "Operations"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ResourceUnit"
+                  }
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ResourceUnit"
+                  }
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ResourceUnit"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/shelters": {
       "get": {
         "tags": [
@@ -6235,6 +6273,65 @@
         }
       }
     },
+    "/api/v1/requests/{id}/measurement": {
+      "patch": {
+        "tags": [
+          "Requests"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClarifyMeasurementInput"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClarifyMeasurementInput"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClarifyMeasurementInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssistanceRequest"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssistanceRequest"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssistanceRequest"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/requests/{id}/escalate": {
       "post": {
         "tags": [
@@ -7179,6 +7276,13 @@
           "shortageExplanation": {
             "type": "string",
             "nullable": true
+          },
+          "unit": {
+            "type": "string",
+            "nullable": true
+          },
+          "unitRequiresClarification": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false
@@ -7271,6 +7375,19 @@
           "accessibilityNeeds": {
             "type": "string",
             "nullable": true
+          },
+          "unit": {
+            "type": "string",
+            "nullable": true
+          },
+          "administrativeDivisionId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "unitRequiresClarification": {
+            "type": "boolean",
+            "readOnly": true
           },
           "quantity": {
             "type": "number",
@@ -7431,7 +7548,12 @@
           },
           "outstandingQuantity": {
             "type": "number",
-            "format": "double"
+            "format": "double",
+            "nullable": true
+          },
+          "unit": {
+            "type": "string",
+            "nullable": true
           }
         },
         "additionalProperties": false
@@ -7562,6 +7684,25 @@
           "organisationId": {
             "type": "string",
             "format": "uuid",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClarifyMeasurementInput": {
+        "type": "object",
+        "properties": {
+          "unit": {
+            "type": "string",
+            "nullable": true
+          },
+          "administrativeDivisionId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "reason": {
+            "type": "string",
             "nullable": true
           }
         },
@@ -7720,6 +7861,15 @@
           },
           "requesterContact": {
             "type": "string",
+            "nullable": true
+          },
+          "unit": {
+            "type": "string",
+            "nullable": true
+          },
+          "administrativeDivisionId": {
+            "type": "string",
+            "format": "uuid",
             "nullable": true
           }
         },
@@ -8116,6 +8266,37 @@
         },
         "additionalProperties": false
       },
+      "DemandGroup": {
+        "type": "object",
+        "properties": {
+          "regionId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "region": {
+            "type": "string",
+            "nullable": true
+          },
+          "unit": {
+            "type": "string",
+            "nullable": true
+          },
+          "weeks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DemandWeek"
+            },
+            "nullable": true
+          },
+          "weeklyEstimate": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
       "DemandWeek": {
         "type": "object",
         "properties": {
@@ -8129,11 +8310,13 @@
           },
           "requested": {
             "type": "number",
-            "format": "double"
+            "format": "double",
+            "nullable": true
           },
           "fulfilled": {
             "type": "number",
-            "format": "double"
+            "format": "double",
+            "nullable": true
           }
         },
         "additionalProperties": false
@@ -8527,6 +8710,17 @@
           "limitations": {
             "type": "string",
             "nullable": true
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DemandGroup"
+            },
+            "nullable": true
+          },
+          "unknownUnitRequests": {
+            "type": "integer",
+            "format": "int32"
           }
         },
         "additionalProperties": false
@@ -8661,6 +8855,10 @@
           },
           "category": {
             "$ref": "#/components/schemas/AidCategory"
+          },
+          "unit": {
+            "type": "string",
+            "nullable": true
           }
         },
         "additionalProperties": false
@@ -8687,6 +8885,10 @@
           "quantity": {
             "type": "number",
             "format": "double"
+          },
+          "unit": {
+            "type": "string",
+            "nullable": true
           }
         },
         "additionalProperties": false
@@ -9797,6 +9999,10 @@
           "remaining": {
             "type": "number",
             "format": "double"
+          },
+          "unit": {
+            "type": "string",
+            "nullable": true
           }
         },
         "additionalProperties": false
@@ -10124,6 +10330,14 @@
           "reason": {
             "type": "string",
             "nullable": true
+          },
+          "availableInRequestUnit": {
+            "type": "number",
+            "format": "double"
+          },
+          "remainingAfterReservation": {
+            "type": "number",
+            "format": "double"
           }
         },
         "additionalProperties": false
@@ -10512,6 +10726,11 @@
           "status": {
             "$ref": "#/components/schemas/AllocationStatus"
           },
+          "requestQuantity": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
           "approvedBy": {
             "type": "string",
             "nullable": true
@@ -10587,6 +10806,23 @@
             "type": "string",
             "format": "uuid",
             "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "ResourceUnit": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "nullable": true
+          },
+          "label": {
+            "type": "string",
+            "nullable": true
+          },
+          "allowsFractions": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false
@@ -11219,6 +11455,10 @@
           },
           "status": {
             "$ref": "#/components/schemas/ContributionStatus"
+          },
+          "unit": {
+            "type": "string",
+            "nullable": true
           }
         },
         "additionalProperties": false

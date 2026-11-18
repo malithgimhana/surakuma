@@ -195,7 +195,8 @@ public sealed class LogisticsController(CrisisDbContext db, IStore store, Access
             if (input.DestinationResourceId is not { } receiverId || input.OperationalAreaId != null || input.CrisisId != null)
                 throw new RuleException("Choose a destination inventory record for a depot transfer.");
             receiver = await RequireResource(receiverId, ct);
-            if (!MatchesTransfer(source, receiver)) throw new RuleException("Choose the same product and unit at a different registered depot.");
+            if (!MatchesTransfer(source, receiver)) throw new RuleException("Choose the same product with a compatible unit at a different registered depot.");
+            QuantityUnits.ForInventory(input.Quantity, source.Unit, receiver.Unit);
             await access.RequirePartner(receiver.OrganisationId, receiver.CountryCode, ct);
             destination = await Place(receiver, ct);
         }
@@ -270,8 +271,9 @@ public sealed class LogisticsController(CrisisDbContext db, IStore store, Access
             db.Add(receipt);
             if (receiver != null && quantity > 0)
             {
-                receiver.ChangePhysical(quantity);
-                RecordMovement(receiver, order, "TransferReceived", reason, quantity);
+                var destinationQuantity = QuantityUnits.ForInventory(quantity, source.Unit, receiver.Unit);
+                receiver.ChangePhysical(destinationQuantity);
+                RecordMovement(receiver, order, "TransferReceived", reason, destinationQuantity);
             }
             if (receipt.ExceptionDetail.Length > 0)
                 operations.Audit("DeliveryException", order, "See the delivery confirmation for details.", source.CountryCode);
@@ -333,7 +335,7 @@ public sealed class LogisticsController(CrisisDbContext db, IStore store, Access
 
     private static bool MatchesTransfer(Resource source, Resource receiver) =>
         source.DepotId != null && receiver.DepotId != null && source.DepotId != receiver.DepotId &&
-        source.Category == receiver.Category && source.Unit.Equals(receiver.Unit, StringComparison.OrdinalIgnoreCase) &&
+        source.Category == receiver.Category && QuantityUnits.Compatible(source.Unit, receiver.Unit) &&
         source.Name.Equals(receiver.Name, StringComparison.OrdinalIgnoreCase) &&
         (source.Code == null || receiver.Code == null || source.Code.Equals(receiver.Code, StringComparison.OrdinalIgnoreCase));
 }

@@ -68,7 +68,8 @@ public sealed partial class IntegrationTests
         async Task<Guid> Submit(AidCategory category, decimal quantity, string description)
         {
             var request = await Post(citizen, "requests", new CreateRequestInput(crisisId, orgId, category, Priority.Normal,
-                description, "Synthetic Kelaniya collection point", 6.955, 79.92, 4, "Step-free access", quantity, Guid.NewGuid().ToString(), true));
+                description, "Synthetic Kelaniya collection point", 6.955, 79.92, 4, "Step-free access", quantity, Guid.NewGuid().ToString(), true,
+                Unit: category == AidCategory.Shelter ? "household" : "pieces"));
             return request.GetProperty("id").GetGuid();
         }
         async Task Transition(Guid id, string status)
@@ -101,7 +102,7 @@ public sealed partial class IntegrationTests
         (await coordinator.PostAsync($"/api/v1/alerts/{alertId}/publish" + lk, null)).EnsureSuccessStatusCode();
         Assert.Contains((await anonymous.GetFromJsonAsync<List<PublicAlert>>("/api/v1/alerts" + lk))!, a => a.Id == alertId);
         // A candidate with identical wording must remain accessible after being marked distinct.
-        string description = "Synthetic flood household acceptance " + Guid.NewGuid() + " needs food packs and clean drinking water.";
+        string description = "Synthetic flood household acceptance " + Guid.NewGuid() + " needs ten individual bottles of clean drinking water.";
         Guid candidateId = await Submit(AidCategory.FoodWater, 10, description);
         Guid foodId = await Submit(AidCategory.FoodWater, 10, description);
         const string pixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jv1sAAAAASUVORK5CYII=";
@@ -141,8 +142,8 @@ public sealed partial class IntegrationTests
         await Transition(foodId, "Approved");
         Assert.Contains((await volunteers.GetFromJsonAsync<List<VolunteerCase>>("/api/v1/volunteer-tasks/cases"))!, r => r.Id == foodId);
 
-        // Create isolated stock through the real API; attempts beyond it must not reserve anything.
-        var resource = await Post(logistics, "resources", new ResourceInput(orgId, "Acceptance food packs", AidCategory.FoodWater, "packs", 6, "Synthetic depot", 6.92, 79.88, "Family packs", true));
+        // Piece-counted water is separate from the shared fixture's pack stock.
+        var resource = await Post(logistics, "resources", new ResourceInput(orgId, "Acceptance water bottles", AidCategory.FoodWater, "pieces", 6, "Synthetic depot", 6.92, 79.88, "Individual sealed bottles", true));
         Guid resourceId = resource.GetProperty("id").GetGuid();
         Assert.Equal(HttpStatusCode.BadRequest, (await logistics.PostAsJsonAsync("/api/v1/allocations", new AllocateInput(foodId, resourceId, 10), DemonstrationJson)).StatusCode);
         async Task Deliver(int quantity)
@@ -163,17 +164,17 @@ public sealed partial class IntegrationTests
         Assert.Equal(6, partial.GetProperty("request").GetProperty("deliveredQuantity").GetDecimal());
         var metrics = await coordinator.GetFromJsonAsync<JsonElement>("/api/v1/reports/metrics");
         Assert.True(metrics.GetProperty("openCases").GetInt32() > 0);
-        Assert.True(metrics.GetProperty("resourceStock").GetDecimal() >= 0);
+        Assert.All(metrics.GetProperty("stockByUnit").EnumerateArray(), row => Assert.True(row.GetProperty("stock").GetDecimal() >= 0));
         Assert.True(metrics.GetProperty("aiApprovedCount").GetInt32() >= 0);
         Assert.Contains(metrics.GetProperty("shortages").EnumerateArray(), x => x.GetProperty("id").GetGuid() == foodId && x.GetProperty("outstanding").GetDecimal() == 4);
         var ranking = await logistics.GetFromJsonAsync<JsonElement>($"/api/v1/requests/{foodId}/allocation-recommendations");
         Assert.True(ranking.GetProperty("shortage").GetBoolean());
         var support = await Post(logistics, "supply-support/LK", new { operationId = Guid.NewGuid(), requestingOrganisationId = orgId,
-            targetOrganisationId = partnerId, caseId = foodId, category = "FoodWater", unit = "packs", quantity = 4,
-            reason = "Synthetic flood response requires four more family packs." });
+            targetOrganisationId = partnerId, caseId = foodId, category = "FoodWater", unit = "pieces", quantity = 4,
+            reason = "Synthetic flood response requires four more individual bottles." });
         var commitment = await Post(partner, "partner/contributions" + lk, new { operationId = Guid.NewGuid(), organisationId = partnerId,
-            supportRequestId = support.GetProperty("id").GetGuid(), title = "Synthetic family packs", kind = "Resource",
-            category = "FoodWater", unit = "packs", quantity = 4, description = "Verified partner has four packs ready." });
+            supportRequestId = support.GetProperty("id").GetGuid(), title = "Synthetic water bottles", kind = "Resource",
+            category = "FoodWater", unit = "pieces", quantity = 4, description = "Verified partner has four individual bottles ready." });
         var commitmentId = commitment.GetProperty("id").GetGuid();
         await Post(admin, $"partner/contributions/{commitmentId}/accept" + lk, new { note = "Approved partner stock handoff for the remaining demand." });
         var handoff = await Post(logistics, $"supply-support/LK/contributions/{commitmentId}/receipts", new { operationId = Guid.NewGuid(),

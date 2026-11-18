@@ -11,6 +11,55 @@ namespace Surakuma.Tests;
 public sealed class LogisticsTests(ApiFixture fixture) : IClassFixture<ApiFixture>
 {
     [Fact]
+    public async Task TransferCreditsCompatibleStockExactlyAndRejectsUnrepresentableAmounts()
+    {
+        using var logistics = await fixture.Login("logistics");
+        using var scope = fixture.Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
+        var organisation = await db.Set<AssistanceRequest>().Where(r => r.SubmissionKey == "seed-food").Select(r => r.OrganisationId).SingleAsync();
+        const string path = "/api/v1/logistics";
+        async Task<Guid> Register(string unit, decimal stock)
+        {
+            var depot = Guid.NewGuid();
+            (await logistics.PostAsJsonAsync(path + "/depots", new
+            {
+                operationId = depot, organisationId = organisation, countryCode = "LK", name = $"Synthetic {unit} depot", location = "Colombo",
+            })).EnsureSuccessStatusCode();
+            var item = Guid.NewGuid();
+            (await logistics.PostAsJsonAsync("/api/v1/resources", new
+            {
+                operationId = item, organisationId = organisation, countryCode = "LK", depotId = depot,
+                name = "Synthetic packaged water", category = "FoodWater", unit, stock, locationText = "Colombo",
+                latitude = 6.92, longitude = 79.9, suitability = "", transportAvailable = true,
+            })).EnsureSuccessStatusCode();
+            return item;
+        }
+        var source = await Register("ml", 1501);
+        var receiver = await Register("l", 0);
+        var order = new
+        {
+            operationId = Guid.NewGuid(), kind = "Transfer", resourceId = source, destinationResourceId = receiver,
+            quantity = 1501, reason = "Synthetic transfer between authorised depots.",
+        };
+        Assert.Equal(HttpStatusCode.BadRequest, (await logistics.PostAsJsonAsync(path + "/orders", order)).StatusCode);
+        (await logistics.PostAsJsonAsync(path + "/orders", order with { quantity = 1500 })).EnsureSuccessStatusCode();
+        var shipment = $"{path}/orders/{order.operationId}";
+        (await logistics.PostAsJsonAsync(shipment + "/dispatch", new { reason = "Synthetic dispatch." })).EnsureSuccessStatusCode();
+        var delivery = new
+        {
+            reference = "SYNTHETIC-UNIT-TRANSFER", confirmedQuantity = 1500, receivedBy = "Synthetic depot",
+            method = "ReceivingStaff", exceptionDetail = "Synthetic partial receipt.",
+        };
+        Assert.Equal(HttpStatusCode.BadRequest, (await logistics.PostAsJsonAsync(shipment + "/deliver",
+            new { delivery = delivery with { confirmedQuantity = 1 } })).StatusCode);
+        (await logistics.PostAsJsonAsync(shipment + "/deliver", new { delivery })).EnsureSuccessStatusCode();
+        Assert.Equal(1m, await db.Set<Resource>().Where(r => r.Id == source).Select(r => r.Stock).SingleAsync());
+        Assert.Equal(1.5m, await db.Set<Resource>().Where(r => r.Id == receiver).Select(r => r.Stock).SingleAsync());
+        Assert.Equal(1.5m, await db.Set<StockMovement>().Where(m => m.ResourceId == receiver && m.Kind == "TransferReceived")
+            .Select(m => m.Quantity).SingleAsync());
+    }
+
+    [Fact]
     public async Task ReceiveReserveDispatchAndTransferStockWithCountryScopedHistory()
     {
         using var admin = await fixture.Login("admin");

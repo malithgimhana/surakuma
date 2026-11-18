@@ -70,6 +70,9 @@ export interface AidRequest extends Entity {
   householdSize: number;
   accessibilityNeeds: string;
   quantity: number;
+  unit?: string | null;
+  unitRequiresClarification?: boolean;
+  administrativeDivisionId?: string | null;
   deliveredQuantity: number;
   status: Status;
   escalated: boolean;
@@ -88,6 +91,8 @@ export interface History extends Entity {
 }
 export interface Allocation extends Entity {
   confirmedQuantity?: number | null;
+  requestQuantity?: number | null;
+  unit?: string | null;
   requestId: string;
   resourceId: string;
   quantity: number;
@@ -100,6 +105,7 @@ export interface Placement extends Entity {
   status: 'Reserved' | 'CheckedIn' | 'Departed' | 'Cancelled';
 }
 export interface RequestDetail {
+  administrativeRegion?: string | null;
   consolidations?: { originalId: string; originalReference: string; primaryId: string; primaryReference: string; createdAt: string }[];
   feedback?: {
     id: string;
@@ -251,8 +257,9 @@ export interface Metrics {
   shelterOccupancy: number;
   shelterReserved: number;
   shelterCapacity: number;
-  resourceReserved: number;
-  resourceStock: number;
+  resourceReserved: number | null;
+  resourceStock: number | null;
+  resourceUnit?: string | null;
   aiOverrideFrequency: number;
   aiApprovedCount: number;
   aiModifiedCount: number;
@@ -270,5 +277,6 @@ export interface Metrics {
 
 export interface AllocationRecommendations {
   outstanding: number; shortage: boolean; queuePosition: number; competingRequests: number; shortageExplanation: string;
-  candidates: { resourceId: string; name: string; unit: string; available: number; suggestedQuantity: number; score: number; distanceKm: number | null; transportAvailable: boolean; shortForRequest: boolean; reason: string }[];
+  unit?: string | null; unitRequiresClarification?: boolean;
+  candidates: { resourceId: string; name: string; unit: string; available: number; suggestedQuantity: number; score: number; distanceKm: number | null; transportAvailable: boolean; shortForRequest: boolean; reason: string; availableInRequestUnit: number; remainingAfterReservation: number }[];
 }

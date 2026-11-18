@@ -9,14 +9,15 @@ public sealed record ForecastInput(AidCategory Category);
 public sealed record BriefingInput([Range(1, 90)] int Days = 7);
 public sealed record ReviewNote([Required, MaxLength(1000)] string Reason);
 public sealed record InvestigationReview(InvestigationOutcome Outcome, [Required, MaxLength(1000)] string Reason);
-public sealed record DemandWeek(DateTimeOffset From, int Requests, decimal Requested, decimal Fulfilled);
+public sealed record DemandWeek(DateTimeOffset From, int Requests, decimal? Requested, decimal? Fulfilled);
+public sealed record DemandGroup(Guid? RegionId, string? Region, string Unit, IReadOnlyList<DemandWeek> Weeks, decimal? WeeklyEstimate);
 public sealed record ForecastEvidence(IReadOnlyList<DemandWeek> Weeks, int? ObservedLow, int? ObservedHigh,
-    int TransportReadyItems, string Risk, string Limitations);
+    int TransportReadyItems, string Risk, string Limitations, IReadOnlyList<DemandGroup>? Groups = null, int UnknownUnitRequests = 0);
 public sealed record ForecastView(DemandForecast Record, ForecastEvidence Evidence);
 public sealed record BriefingFactSet(int NewCases, int ActiveCases, int CriticalCases, int OutstandingCases,
     IReadOnlyList<BriefingNeed> Needs, int LowStockItems, int OpenShelters, long Capacity, long Occupied,
     long Reserved, int ActiveVolunteerTasks, int TasksAwaitingReview, int EscalatedCases);
-public sealed record BriefingNeed(AidCategory Category, int Cases, decimal OutstandingQuantity);
+public sealed record BriefingNeed(AidCategory Category, int Cases, decimal? OutstandingQuantity, string? Unit = null);
 public sealed record BriefingView(CrisisBriefing Record, BriefingFactSet Facts);
 public sealed record DecisionWorkspace(string Name, string CountryCode, string? Region, IReadOnlyList<ForecastView> Forecasts,
     IReadOnlyList<BriefingView> Briefings, IReadOnlyList<InvestigationFlag> Flags);
@@ -44,34 +45,56 @@ public sealed class DecisionSupportService(IStore store, AccessService access, O
     public Task<ForecastView> Forecast(Guid crisisId, ForecastInput input, CancellationToken ct) => store.TransactionAsync(async () =>
     {
         var crisis = await Scope(crisisId, ct);
+        if (!Enum.IsDefined(input.Category)) throw new RuleException("Choose a valid category.");
         var now = DateTimeOffset.UtcNow;
         var monday = new DateTimeOffset(now.UtcDateTime.Date.AddDays(-((7 + (int)now.DayOfWeek - (int)DayOfWeek.Monday) % 7)), TimeSpan.Zero);
-        var from = monday.AddDays(-56);
-        var cases = store.Query<AssistanceRequest>().Where(r => r.CrisisId == crisis.Id && r.Category == input.Category &&
+        var observedFrom = monday.AddDays(-56);
+        var cases = (await access.Visible(ct)).Where(r => r.CrisisId == crisis.Id && r.Category == input.Category &&
             r.Status != RequestStatus.Rejected && r.Status != RequestStatus.Cancelled);
-        var requests = await store.ListAsync(cases.Where(r => r.CreatedAt >= from && r.CreatedAt < monday)
-            .Select(r => new { r.CreatedAt, r.Quantity }), ct);
-        var shipments = store.Query<ResourceAllocation>().Where(a => cases.Any(r => r.Id == a.RequestId));
-        var receipts = await store.ListAsync(store.Query<DeliveryConfirmation>().Where(d => d.ReceivedAt >= from &&
-            d.ReceivedAt < monday && shipments.Any(a => a.Id == d.AllocationId))
-            .Select(d => new { d.ReceivedAt, d.ConfirmedQuantity }), ct);
-        var weeks = Enumerable.Range(0, 8).Select(i =>
-        {
-            var start = from.AddDays(i * 7);
-            var end = start.AddDays(7);
-            var samples = requests.Where(r => r.CreatedAt >= start && r.CreatedAt < end).ToList();
-            return new DemandWeek(start, samples.Count, samples.Sum(r => r.Quantity),
-                receipts.Where(r => r.ReceivedAt >= start && r.ReceivedAt < end).Sum(r => r.ConfirmedQuantity));
-        }).ToList();
-        var stock = (await access.Located<Resource>(ct, crisis.Id)).Where(r => r.CountryCode == crisis.CountryCode &&
-            r.Category == input.Category && r.TransportAvailable && r.Stock > r.Reserved);
-        var items = (await store.ListAsync(stock.Select(r => r.Id), ct)).Count;
+        var requests = await store.ListAsync(cases.Where(r => r.CreatedAt >= observedFrom && r.CreatedAt < monday)
+            .Select(r => new { r.CreatedAt, r.Quantity, r.Unit, r.AdministrativeDivisionId }), ct);
+        var receipts = await store.ListAsync(
+            from receipt in store.Query<DeliveryConfirmation>()
+            join shipment in store.Query<ResourceAllocation>() on receipt.AllocationId equals (Guid?)shipment.Id
+            join request in cases on shipment.RequestId equals request.Id
+            join stock in store.Query<Resource>() on shipment.ResourceId equals stock.Id
+            where receipt.ReceivedAt >= observedFrom && receipt.ReceivedAt < monday && request.Unit != null && shipment.RequestQuantity != null
+            select new { receipt.ReceivedAt, receipt.ConfirmedQuantity, StockUnit = stock.Unit, request.Unit, request.AdministrativeDivisionId }, ct);
+        var inventory = await store.ListAsync((await access.Located<Resource>(ct, crisis.Id)).Where(r => r.CountryCode == crisis.CountryCode &&
+            r.Category == input.Category && r.TransportAvailable && r.Stock > r.Reserved).Select(r => r.Unit), ct);
+        var demand = requests.Where(r => r.Unit != null).ToLookup(r => (r.AdministrativeDivisionId, Unit: QuantityUnits.BaseUnit(r.Unit)));
+        var fulfilled = receipts.Where(r => QuantityUnits.Compatible(r.StockUnit, r.Unit))
+            .ToLookup(r => (r.AdministrativeDivisionId, Unit: QuantityUnits.BaseUnit(r.Unit)));
+        var keys = demand.Select(g => g.Key).Union(fulfilled.Select(g => g.Key)).ToList();
+        var regionIds = keys.Select(key => key.AdministrativeDivisionId).OfType<Guid>().Distinct().ToArray();
+        var divisions = (await store.ListAsync(store.Query<AdministrativeDivision>()
+            .Where(r => r.CountryCode == crisis.CountryCode && regionIds.Contains(r.Id)), ct))
+            .ToDictionary(r => r.Id, r => r.Name);
+        var starts = Enumerable.Range(0, 8).Select(i => observedFrom.AddDays(i * 7)).ToList();
+        var weeks = starts.Select(start => new DemandWeek(start, requests.Count(r => InWeek(r.CreatedAt, start)), null, null)).ToList();
+        var groups = keys.OrderBy(k => k.AdministrativeDivisionId).ThenBy(k => k.Unit)
+            .Select(key =>
+            {
+                var series = starts.Select(start =>
+                {
+                    var samples = demand[key].Where(r => InWeek(r.CreatedAt, start)).ToList();
+                    return new DemandWeek(start, samples.Count, samples.Sum(r => QuantityUnits.Convert(r.Quantity, r.Unit, key.Unit)),
+                        fulfilled[key].Where(r => InWeek(r.ReceivedAt, start)).Sum(r => QuantityUnits.Convert(r.ConfirmedQuantity, r.StockUnit, key.Unit)));
+                }).ToList();
+                return new DemandGroup(key.AdministrativeDivisionId, divisions.GetValueOrDefault(key.AdministrativeDivisionId ?? Guid.Empty), key.Unit, series,
+                    series.Sum(w => w.Requests) >= 8 && series.Count(w => w.Requests > 0) >= 4
+                        ? decimal.Round(series.Sum(w => w.Requested ?? 0) / series.Count, 2) : null);
+            }).ToList();
+        var demandUnits = demand.Select(group => group.Key.Unit).ToHashSet();
+        var items = inventory.Count(unit => demandUnits.Contains(QuantityUnits.BaseUnit(unit)));
         var sufficient = requests.Count >= 8 && weeks.Count(w => w.Requests > 0) >= 4;
-        var risk = items == 0 && requests.Count > 0 ? "No transport-ready stock in your scope" : "Review stock and compatible units manually";
+        var risk = demand.Count == 0 ? "No comparable request quantities in the observation period" :
+            items == 0 ? "No compatible transport-ready stock in your scope" : "Compatible stock exists in your scope";
         var evidence = new ForecastEvidence(weeks, sufficient ? weeks.Min(w => w.Requests) : null, sufficient ? weeks.Max(w => w.Requests) : null,
-            items, risk, "Eight complete UTC weeks. The crisis's administrative region describes its scope. Requests lack standardized units, so quantities are descriptive only. Receipt quantities exclude legacy deliveries without a receipt. The observed range is descriptive and is not a prediction interval.");
+            items, risk, "Eight complete UTC weeks. Quantities are grouped by recorded request region and compatible unit. Cases with unknown units are counted separately. Material receipt quantities use confirmed deliveries.", groups,
+            requests.Count(r => r.Unit == null));
         var record = new DemandForecast { CrisisId = crisis.Id, RegionId = crisis.AdministrativeDivisionId, Category = input.Category,
-            ObservedFrom = from, ForecastFrom = monday, ForecastTo = monday.AddDays(7), Model = "weekly-request-mean-v1",
+            ObservedFrom = observedFrom, ForecastFrom = monday, ForecastTo = monday.AddDays(7), Model = "weekly-request-and-unit-mean-v2",
             Estimate = sufficient ? decimal.Round((decimal)requests.Count / weeks.Count, 2) : null, InputsJson = JsonSerializer.Serialize(evidence, Json),
             CreatedByUserId = access.UserId };
         store.Add(record);
@@ -79,16 +102,19 @@ public sealed class DecisionSupportService(IStore store, AccessService access, O
         return new ForecastView(record, evidence);
     }, ct);
 
+    private static bool InWeek(DateTimeOffset time, DateTimeOffset start) => time >= start && time < start.AddDays(7);
+
     public async Task<BriefingView> Briefing(Guid crisisId, BriefingInput input, CancellationToken ct)
     {
         var crisis = await Scope(crisisId, ct);
         var now = DateTimeOffset.UtcNow;
         var from = now.AddDays(-input.Days);
         var cases = store.Query<AssistanceRequest>().Where(r => r.CrisisId == crisis.Id);
-        var recorded = await store.ListAsync(cases.Select(r => new { r.CreatedAt, r.Status, r.Category, r.Priority, r.Escalated, r.Quantity, r.DeliveredQuantity }), ct);
+        var recorded = await store.ListAsync(cases.Select(r => new { r.CreatedAt, r.Status, r.Category, r.Priority, r.Escalated, r.Quantity, r.DeliveredQuantity, r.Unit }), ct);
         var active = recorded.Where(r => !Terminal.Contains(r.Status)).ToList();
-        var needs = active.Where(r => r.Quantity > r.DeliveredQuantity).GroupBy(r => r.Category)
-            .Select(group => new BriefingNeed(group.Key, group.Count(), group.Sum(r => r.Quantity - r.DeliveredQuantity))).ToList();
+        var needs = active.Where(r => r.Quantity > r.DeliveredQuantity).GroupBy(r => (r.Category, Unit: QuantityUnits.BaseUnit(r.Unit)))
+            .Select(group => new BriefingNeed(group.Key.Category, group.Count(), group.Key.Unit.Length == 0 ? null :
+                group.Sum(r => QuantityUnits.Convert(r.Quantity - r.DeliveredQuantity, r.Unit, group.Key.Unit)), group.Key.Unit)).ToList();
         var stock = await store.ListAsync((await access.Located<Resource>(ct, crisis.Id)).Where(r => r.CountryCode == crisis.CountryCode &&
             (r.Stock <= r.Reserved || r.Stock - r.Reserved <= r.LowStockThreshold)).Select(r => r.Id), ct);
         var shelters = await store.ListAsync((await access.Located<Shelter>(ct, crisis.Id)).Where(s => s.CountryCode == crisis.CountryCode && s.Open)
@@ -190,7 +216,13 @@ public sealed class DecisionSupportService(IStore store, AccessService access, O
         return crisis;
     }
 
-    private static ForecastView View(DemandForecast record) => new(record, JsonSerializer.Deserialize<ForecastEvidence>(record.InputsJson, Json)!);
+    private static ForecastView View(DemandForecast record)
+    {
+        var evidence = JsonSerializer.Deserialize<ForecastEvidence>(record.InputsJson, Json)!;
+        if (evidence.Groups is null)
+            evidence = evidence with { Weeks = evidence.Weeks.Select(w => w with { Requested = null, Fulfilled = null }).ToList() };
+        return new(record, evidence);
+    }
     private static BriefingView View(CrisisBriefing record) => new(record, JsonSerializer.Deserialize<BriefingFactSet>(record.FactsJson, Json)!);
     private static string Reason(string value) => !string.IsNullOrWhiteSpace(value) ? value.Trim() : throw new RuleException("Enter a review reason.");
 

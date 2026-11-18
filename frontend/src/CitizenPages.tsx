@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useCountry } from './geography';
+import { RegionField, useCountry, useDivisions } from './geography';
 import { isAxiosError } from 'axios';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -45,6 +45,8 @@ import {
 } from './components';
 import { CommunityArt } from './CommunityArt';
 import { MapView } from './MapView';
+import { ResourceUnitSelect } from './ResourceUnitSelect';
+import { isMeasuredUnit, unitSymbol } from './quantity';
 import type {
   AidRequest,
   Category,
@@ -301,7 +303,9 @@ const requestSchema = z.object({
   description: z.string().min(10).max(4000),
   locationText: z.string().min(3).max(500),
   householdSize: z.number().min(1).max(50),
-  quantity: z.number().int().positive().max(100000),
+  quantity: z.number().min(0.01).max(100000),
+  unit: z.string(),
+  administrativeDivisionId: z.string().nullable(),
   accessibilityNeeds: z.string().max(500),
   crisisId: z.string().min(1),
   organisationId: z.string(),
@@ -311,11 +315,17 @@ const requestSchema = z.object({
   latitude: z.number().nullable(),
   longitude: z.number().nullable(),
   synthetic: z.boolean(),
+}).superRefine((input, ctx) => {
+  if (input.category !== 'Shelter' && !input.unit)
+    ctx.addIssue({ code: 'custom', path: ['unit'], message: 'Select a unit.' });
+  if (input.quantity !== Number(input.quantity.toFixed(isMeasuredUnit(input.unit) && input.category !== 'Shelter' ? 2 : 0)))
+    ctx.addIssue({ code: 'custom', path: ['quantity'], message: 'Enter a valid quantity for the selected unit.' });
 });
 type RequestForm = z.infer<typeof requestSchema>;
 const icons = [Utensils, Stethoscope, House, Bus, Accessibility, MoreHorizontal];
 export function NewRequest() {
   const country = useCountry();
+  const divisions = useDivisions(country);
   const { t } = useTranslation(),
     { user } = useAuth(),
     navigate = useNavigate(),
@@ -333,7 +343,7 @@ export function NewRequest() {
     >([]),
     [submittedId, setSubmittedId] = useState<string | null>(null);
   const lookup = useQuery({
-    queryKey: ['lookups'],
+    queryKey: ['lookups', country],
     queryFn: () => get<Lookups>('/public/lookups'),
   });
   const draftKey = `surakuma.draft.${user?.id}`;
@@ -349,6 +359,8 @@ export function NewRequest() {
     locationText: '',
     householdSize: user?.householdSize || 1,
     quantity: 1,
+    unit: '',
+    administrativeDivisionId: null,
     accessibilityNeeds: user?.accessibilityNeeds || '',
     crisisId: '',
     organisationId: '',
@@ -382,6 +394,13 @@ export function NewRequest() {
     if (values.category === 'Shelter' && values.quantity !== 1) setValue('quantity', 1);
   }, [values.category, values.quantity, setValue]);
   useEffect(() => {
+    if (values.administrativeDivisionId && Array.isArray(divisions.data) &&
+        !divisions.data.some(division => division.id === values.administrativeDivisionId))
+      setValue('administrativeDivisionId', null);
+    if (values.crisisId && lookup.data && !lookup.data.crises.some(crisis => crisis.id === values.crisisId))
+      setValue('crisisId', '');
+  }, [values.administrativeDivisionId, values.crisisId, divisions.data, lookup.data, setValue]);
+  useEffect(() => {
     if (!submittedId) {
       sessionStorage.setItem(draftKey, JSON.stringify(values));
       sessionStorage.setItem(draftKey + '.key', submissionKey);
@@ -390,7 +409,7 @@ export function NewRequest() {
   async function next() {
     const fields: (keyof RequestForm)[][] = [
       ['category'],
-      ['description', 'priority', 'householdSize', 'quantity', 'crisisId', 'organisationId'],
+      ['description', 'priority', 'householdSize', 'quantity', 'unit', 'crisisId', 'organisationId'],
       ['locationText'],
       [],
     ];
@@ -456,7 +475,8 @@ export function NewRequest() {
     try {
       let id = submittedId;
       if (!id) {
-        const r = (await api.post<AidRequest>('/requests', { ...input, organisationId: null, submissionKey })).data;
+        const r = (await api.post<AidRequest>('/requests', { ...input,
+          unit: input.category === 'Shelter' ? 'household' : input.unit, organisationId: null, submissionKey })).data;
         id = r.id;
         setSubmittedId(id);
       }
@@ -566,12 +586,17 @@ export function NewRequest() {
                     {...register('householdSize', { valueAsNumber: true })}
                   />
                 </Field>
-                <Field label={t(values.category === 'Shelter' ? 'shelterQuantity' : 'quantity')} hint={values.category === 'Shelter' ? t('shelterQuantityHint') : undefined}>
+                {values.category !== 'Shelter' && <Field label={t('measurementUnit')} error={errors.unit ? t('selectMeasurementUnit') : undefined}>
+                  <ResourceUnitSelect {...register('unit')} />
+                </Field>}
+                <Field label={t(values.category === 'Shelter' ? 'shelterQuantity' : 'quantity')}
+                  error={errors.quantity ? t('checkFields') : undefined}
+                  hint={values.category === 'Shelter' ? t('shelterQuantityHint') : undefined}>
                   <input
                     type="number"
-                    min={1}
+                    min={values.category !== 'Shelter' && isMeasuredUnit(values.unit) ? 0.01 : 1}
                     max={100000}
-                    step="1"
+                    step={values.category !== 'Shelter' && isMeasuredUnit(values.unit) ? 0.01 : 1}
                     readOnly={values.category === 'Shelter'}
                     {...register('quantity', { valueAsNumber: true })}
                   />
@@ -599,6 +624,8 @@ export function NewRequest() {
           {step === 2 && (
             <>
               <h2>{t('location')}</h2>
+              <RegionField key={country} initialDivisionId={values.administrativeDivisionId}
+                onChange={id => setValue('administrativeDivisionId', id)} />
               <Field
                 label={t('location')}
                 hint={t('locationHint')}
@@ -701,7 +728,7 @@ export function NewRequest() {
                 <dt>{t('householdSize')}</dt>
                 <dd>{values.householdSize}</dd>
                 <dt>{t(values.category === 'Shelter' ? 'shelterQuantity' : 'quantity')}</dt>
-                <dd>{values.quantity}</dd>
+                <dd>{values.quantity} {values.category !== 'Shelter' && unitSymbol(values.unit)}</dd>
                 <dt>{t('organisation')}</dt>
                 <dd>{t('automaticCentreRouting')}</dd>
                 {values.requestedForSomeoneElse && <>
@@ -710,6 +737,10 @@ export function NewRequest() {
                 </>}
                 <dt>{t('location')}</dt>
                 <dd>{values.locationText}</dd>
+                {values.administrativeDivisionId && Array.isArray(divisions.data) && <>
+                  <dt>{t('administrativeRegion')}</dt>
+                  <dd>{divisions.data.find(d => d.id === values.administrativeDivisionId)?.name}</dd>
+                </>}
                 <dt>{t('evidence')}</dt>
                 <dd>{file?.name || '—'}</dd>
               </dl>
@@ -839,6 +870,9 @@ export function RequestTracking() {
             <dl className="review-grid">
               <dt>{t('location')}</dt>
               <dd>{r.locationText}</dd>
+              {data.administrativeRegion && <>
+                <dt>{t('administrativeRegion')}</dt><dd>{data.administrativeRegion}</dd>
+              </>}
               <dt>{t('householdSize')}</dt>
               <dd>{r.householdSize}</dd>
               <dt>{t('priority')}</dt>
@@ -847,10 +881,11 @@ export function RequestTracking() {
               </dd>
               <dt>{t('delivered')}</dt>
               <dd>
-                {r.deliveredQuantity} / {r.quantity} {r.category === 'Shelter' && `· ${t('shelterQuantity')}`}
+                {r.deliveredQuantity} / {r.quantity} {r.category === 'Shelter' ? t('shelterQuantity') : unitSymbol(r.unit)}
               </dd>
               <dt>{t('outstanding')}</dt>
-              <dd>{r.quantity - r.deliveredQuantity}</dd>
+              <dd>{Number((r.quantity - r.deliveredQuantity).toFixed(5))} {unitSymbol(r.unit)}</dd>
+              {r.unitRequiresClarification && <dd>{t('unitRequiresClarification')}</dd>}
             </dl>
             <div className="progress-bar">
               <span style={{ width: `${(100 * r.deliveredQuantity) / r.quantity}%` }} />
@@ -859,7 +894,7 @@ export function RequestTracking() {
               <section aria-label={t('deliverySteps')}>
                 <h3>{t('deliverySteps')}</h3>
                 {data.allocations.filter((a) => a.status !== 'Cancelled').map((a) => (
-                  <p key={a.id}>{a.confirmedQuantity ?? a.quantity} · {t('delivery.' + a.status)}</p>
+                  <p key={a.id}>{a.confirmedQuantity ?? a.quantity} {unitSymbol(a.unit)} · {t('delivery.' + a.status)}</p>
                 ))}
               </section>
             )}

@@ -9,6 +9,7 @@ import { OrganisationDialog } from './OrganisationDialog';
 import { DeliveryFields, deliveryInput } from './DeliveryFields';
 import { ResourceLocationFields } from './ResourceLocationFields';
 import { isMeasuredUnit } from './quantity';
+import { ResourceUnitSelect } from './ResourceUnitSelect';
 import { actionLabels, resourceCode, shipmentCode, transferMatches } from './logistics';
 import type { InventoryItem, LogisticsData, LogisticsDialogState } from './logistics';
 
@@ -188,7 +189,7 @@ function RegisterForm({ kind, data, defaultCountry, operationId, busy, form, con
               {categories.map(value => <option value={value} key={value}>{t(`category.${value}`)}</option>)}
             </select>
           </Field>
-          <Field label="Unit"><input name="unit" value={unit} onChange={event => setUnit(event.target.value)} maxLength={40} required /></Field>
+          <Field label="Unit"><ResourceUnitSelect name="unit" value={unit} onChange={event => setUnit(event.target.value)} required /></Field>
           <Field label="Opening stock"><input name="stock" type="number" min={0} max={10000000} step={quantityStep(unit)} defaultValue={0} required /></Field>
           <Field label="Low-stock threshold" hint="Alerts appear below this amount of available stock.">
             <input name="threshold" type="number" min={0} max={10000000} step={quantityStep(unit)} />
@@ -281,7 +282,7 @@ function MovementForm({ kind, data, selected, defaultCountry, operationId, busy,
       </fieldset>
       <ReasonField />
       {sources.length === 0 && <p className="muted">No eligible resources have been recorded for this action.</p>}
-      {item && isTransfer && destinations?.length === 0 && <p className="muted">Register the same resource and unit at the destination depot first.</p>}
+      {item && isTransfer && destinations?.length === 0 && <p className="muted">Register the same resource with a compatible unit at the destination depot first.</p>}
       {item && !isTransfer && !isStock && crises.length === 0 && <p className="muted">An active crisis in the source country is required.</p>}
       {controls(submitLabel, !item || !quantityLimit || (!isStock && (isTransfer ? !destinationId : !crisisId)))}
     </form>

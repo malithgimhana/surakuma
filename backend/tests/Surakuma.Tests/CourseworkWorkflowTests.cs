@@ -131,7 +131,7 @@ public sealed class CourseworkWorkflowTests(ApiFixture fixture) : IClassFixture<
         {
             seeded.CrisisId, seeded.OrganisationId, category = "FoodWater", priority = "Normal", description = "Synthetic coursework comparison needs the same family food packs.",
             locationText = "Synthetic Kelaniya collection point", latitude = 6.955, longitude = 79.92, householdSize = 4, accessibilityNeeds = "",
-            quantity = 9, submissionKey = Guid.NewGuid().ToString(), synthetic = true,
+            quantity = 9, unit = "packs", submissionKey = Guid.NewGuid().ToString(), synthetic = true,
         };
         var original = Id(await Post(citizen, requests, equivalent));
         var primary = Id(await Post(citizen, requests, equivalent with { submissionKey = Guid.NewGuid().ToString() }));
@@ -303,6 +303,7 @@ public sealed class CourseworkWorkflowTests(ApiFixture fixture) : IClassFixture<
                 crisisId = crisis, organisationId = organisation, category, priority = "Normal",
                 description = "Synthetic regional household needs approved assistance.", locationText = "Synthetic household checkpoint",
                 latitude, longitude, householdSize = 3, accessibilityNeeds = "Step-free entry", quantity,
+                unit = category == "Shelter" ? "household" : "packs", administrativeDivisionId = division,
                 submissionKey = Guid.NewGuid().ToString(), synthetic = true,
             }));
             foreach (var status in new[] { "UnderReview", "Verified", "Approved" })

@@ -71,6 +71,8 @@ builder.Services.AddScoped<IStore, EfStore>();
 builder.Services.AddScoped<ICurrentActor, CurrentActor>();
 builder.Services.AddScoped<AccessService>();
 builder.Services.AddScoped<Operations>();
+builder.Services.AddSingleton(new ResourceUnitCatalog(
+    builder.Configuration.GetSection("ResourceUnits:Additional").Get<ResourceUnit[]>() ?? []));
 builder.Services.AddScoped<FundingService>();
 builder.Services.AddScoped<DecisionSupportService>();
 builder.Services.AddScoped<SupplySupportService>();

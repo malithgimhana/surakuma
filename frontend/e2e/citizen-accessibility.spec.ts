@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 const password = process.env.SURAKUMA_ACCEPTANCE_PASSWORD ?? (JSON.parse(
   readFileSync(new URL('../../backend/data/development-settings.json', import.meta.url), 'utf8'),
 ) as { Seed: { Password: string } }).Seed.Password;
-test('mobile citizen form supports three languages and accessible fields', async ({ page }) => {
+test('mobile citizen form supports three languages and accessible fields', async ({ page }, run) => {
   await page.setViewportSize({ width: 375, height: 900 });
   await page.goto('/login');
   await page.getByLabel('Email address', { exact: true }).fill('citizen@surakuma.test');
@@ -27,9 +27,12 @@ test('mobile citizen form supports three languages and accessible fields', async
   expect(
     result.violations.map((v) => ({ id: v.id, targets: v.nodes.map((n) => n.target) })),
   ).toEqual([]);
-  await page.screenshot({ path: '../docs/screenshots/citizen-form-375.png', fullPage: true });
+  await page.screenshot({ path: run.outputPath('citizen-form-375.png'), fullPage: true });
   await page.getByLabel('Crisis event').selectOption({ index: 1 });
   await page.getByLabel('Describe what you need').fill('Synthetic request to check draft photo handling.');
+  await page.getByLabel('Measurement unit').focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByLabel('Measurement unit')).toHaveValue('pieces');
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
   await expect(page.getByText(/Photos are not saved in the draft/)).toBeVisible();
   await page.getByLabel('Supporting photo (optional)').setInputFiles({ name: 'draft.png', mimeType: 'image/png', buffer: Buffer.from('89504e470d0a1a0a', 'hex') });

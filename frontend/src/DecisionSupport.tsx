@@ -7,6 +7,7 @@ import { useAuth } from './auth';
 import { Badge, Button, Card, Empty, ErrorState, Field, Loading, PageHeader, categories, formatDate } from './components';
 import { countryPath } from './crisisOperationsApi';
 import { useCountry } from './geography';
+import { unitSymbol } from './quantity';
 
 export interface Investigation {
   id: string; requestId?: string; donationId?: string; category: string; evidence: string; severity: string; outcome?: string;
@@ -14,14 +15,16 @@ export interface Investigation {
 }
 interface Forecast {
   record: { id: string; category: string; createdAt: string; forecastFrom: string; forecastTo: string; model: string; estimate?: number };
-  evidence: { weeks: { from: string; requests: number; requested: number; fulfilled: number }[]; observedLow?: number; observedHigh?: number;
-    transportReadyItems: number; risk: string; limitations: string };
+  evidence: { weeks: DemandWeek[]; observedLow?: number; observedHigh?: number;
+    transportReadyItems: number; risk: string; limitations: string; unknownUnitRequests?: number;
+    groups?: { regionId?: string; region?: string; unit: string; weeks: DemandWeek[]; weeklyEstimate?: number }[] };
 }
+interface DemandWeek { from: string; requests: number; requested?: number; fulfilled?: number }
 interface Briefing {
   record: { id: string; periodFrom: string; periodTo: string; draft: string; source: string; createdByUserId: string; reviewedAt?: string; reviewNote?: string };
   facts: { newCases: number; activeCases: number; criticalCases: number; outstandingCases: number; escalatedCases: number; lowStockItems: number;
     openShelters: number; capacity: number; occupied: number; reserved: number; activeVolunteerTasks: number; tasksAwaitingReview: number;
-    needs: { category: string; cases: number; outstandingQuantity: number }[] };
+    needs: { category: string; cases: number; outstandingQuantity?: number; unit?: string }[] };
 }
 interface DecisionData {
   name: string; countryCode: string; region?: string; forecasts: Forecast[]; briefings: Briefing[]; flags: Investigation[];
@@ -82,7 +85,9 @@ export default function DecisionSupport() {
         <li>{facts.occupied} people checked in and {facts.reserved} places reserved across {facts.openShelters} open shelters with {facts.capacity} total places in scope.</li>
         <li>{facts.activeVolunteerTasks} active tasks and {facts.tasksAwaitingReview} volunteer reports awaiting verification.</li>
       </ul>
-      {!!facts.needs.length && <ul>{facts.needs.map(need => <li key={need.category}>{need.category} · {need.cases} cases · {need.outstandingQuantity} recorded outstanding quantity</li>)}</ul>}
+      {!!facts.needs.length && <ul>{facts.needs.map(need => <li key={need.category + (need.unit ?? '')}>
+        {need.category} · {need.cases} cases · {need.unit ? `${need.outstandingQuantity} ${unitSymbol(need.unit)} outstanding` : 'unit clarification required'}
+      </li>)}</ul>}
       <h4>Draft interpretation · {record.source}</h4><p>{record.draft}</p>
       {record.reviewedAt ? <p>Reviewed {formatDate(record.reviewedAt)} · {record.reviewNote}</p> : <p>Independent administrator review pending. Internal briefing.</p>}
       {isReviewer && user?.id !== record.createdByUserId && !record.reviewedAt &&
@@ -113,11 +118,21 @@ function ForecastResult({ forecast }: { forecast: Forecast }) {
       </BarChart></ResponsiveContainer>
     </div>
     <div className="table-scroll"><table>
-      <caption>Observed weekly demand and receipts</caption>
-      <thead><tr><th>Week of</th><th>Requests</th><th>Requested quantity</th><th>Confirmed quantity</th></tr></thead>
-      <tbody>{chart.map(w => <tr key={w.from}><td>{w.week}</td><td>{w.requests}</td><td>{w.requested}</td><td>{w.fulfilled}</td></tr>)}</tbody>
+      <caption>Observed weekly request counts</caption>
+      <thead><tr><th>Week of</th><th>Requests</th></tr></thead>
+      <tbody>{chart.map(w => <tr key={w.from}><td>{w.week}</td><td>{w.requests}</td></tr>)}</tbody>
     </table></div>
-    <p>{evidence.limitations}</p>
+    {(evidence.unknownUnitRequests ?? 0) > 0 && <p>{evidence.unknownUnitRequests} requests need unit clarification.</p>}
+    {evidence.groups?.map(group => <details key={(group.regionId ?? '-') + group.unit}>
+      <summary>{group.region ?? 'Region unrecorded'} · {unitSymbol(group.unit)}
+        {group.weeklyEstimate == null ? ' · Insufficient history for a quantity forecast' : ` · ${group.weeklyEstimate} ${unitSymbol(group.unit)} estimated next week`}
+      </summary>
+      <div className="table-scroll"><table>
+        <thead><tr><th>Week of</th><th>Requested ({unitSymbol(group.unit)})</th><th>Received ({unitSymbol(group.unit)})</th></tr></thead>
+        <tbody>{group.weeks.map(w => <tr key={w.from}><td>{w.from.slice(0, 10)}</td><td>{w.requested}</td><td>{w.fulfilled}</td></tr>)}</tbody>
+      </table></div>
+    </details>)}
+    <p>{evidence.groups ? evidence.limitations : 'This historical forecast records weekly request counts. Recalculate for a breakdown by measurement unit.'}</p>
   </Card>;
 }
 

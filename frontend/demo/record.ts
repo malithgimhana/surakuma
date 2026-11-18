@@ -76,6 +76,7 @@ const base = {
 const candidate = await call('citizen', 'requests', {
   ...base,
   category: 'FoodWater',
+  unit: 'packs',
   quantity: 10,
   description,
   submissionKey: `record-candidate-${stamp}`,
@@ -204,8 +205,8 @@ try {
   );
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
   await page.getByLabel('Crisis event', { exact: true }).selectOption(crisis.id);
-  await page.getByLabel('Receiving organisation', { exact: true }).selectOption(org.id);
   await page.getByLabel('Describe what you need', { exact: true }).fill(description);
+  await page.getByLabel('Measurement unit', { exact: true }).selectOption('packs');
   await page.getByLabel('Quantity needed', { exact: true }).fill('10');
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
   await page.getByLabel('Location', { exact: true }).fill(base.locationText);
@@ -265,7 +266,7 @@ try {
   await receiptFirst.getByLabel('Delivery reference').fill('RECORDING-FIRST');
   await receiptFirst.getByLabel('Receiving person or representative').fill('Synthetic receiving representative');
   await receiptFirst.getByRole('button', { name: 'Record receipt' }).click();
-  await expect(page.getByText('6 / 10', { exact: true })).toBeVisible();
+  await expect(page.getByText('6 / 10 packs', { exact: true })).toBeVisible();
   await caption(
     'Six of ten delivered. Four remain outstanding; reservation, dispatch and delivery are separate records.',
     2700,
@@ -339,7 +340,7 @@ try {
   await receiptRemainder.getByLabel('Delivery reference').fill('RECORDING-REMAINDER');
   await receiptRemainder.getByLabel('Receiving person or representative').fill('Synthetic receiving representative');
   await receiptRemainder.getByRole('button', { name: 'Record receipt' }).click();
-  await expect(page.getByText('10 / 10', { exact: true })).toBeVisible();
+  await expect(page.getByText('10 / 10 packs', { exact: true })).toBeVisible();
   await caption('The remaining four packs are delivered. The requested quantity is now fulfilled.');
   await switchAccount('case');
   await page.goto(`${site}/staff/cases/${foodId}`);

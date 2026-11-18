@@ -38,8 +38,9 @@ test('citizen submits, staff review AI, logistics deliver partial aid and close 
   await page
     .getByLabel('Describe what you need', { exact: true })
     .fill(
-      'Synthetic end-to-end scenario: our household needs food packs and clean drinking water.',
+      'Synthetic end-to-end scenario: our household needs ten food packs.',
     );
+  await page.getByLabel('Measurement unit', { exact: true }).selectOption('packs');
   await page.getByLabel('Quantity needed', { exact: true }).fill('10');
   await page.getByRole('button', { name: 'Continue' }).click();
   await page.getByLabel('Location', { exact: true }).fill('Demo collection point in Kelaniya');
@@ -113,7 +114,7 @@ test('citizen submits, staff review AI, logistics deliver partial aid and close 
   await page.getByLabel('Delivery reference').fill('ACCEPTANCE-PARTIAL');
   await page.getByLabel('Receiving person or representative').fill('Synthetic receiving representative');
   await page.getByRole('button', { name: 'Record receipt', exact: true }).click();
-  await expect(page.getByText('6 / 10', { exact: true })).toBeVisible();
+  await expect(page.getByText('6 / 10 packs', { exact: true })).toBeVisible();
   await expect(
     page.locator('.page-header').getByText('Partially delivered', { exact: true }),
   ).toBeVisible();
@@ -137,12 +138,12 @@ test('citizen submits, staff review AI, logistics deliver partial aid and close 
   await page.getByLabel('Delivery reference').fill('ACCEPTANCE-REMAINDER');
   await page.getByLabel('Receiving person or representative').fill('Synthetic receiving representative');
   await page.getByRole('button', { name: 'Record receipt', exact: true }).click();
-  await expect(page.getByText('10 / 10', { exact: true })).toBeVisible();
+  await expect(page.getByText('10 / 10 packs', { exact: true })).toBeVisible();
   await switchAccount('case', '/staff');
   await page.goto(`/staff/cases/${id}`);
   await page.getByRole('button', { name: 'Close completed case', exact: true }).click();
   await expect(page.locator('.page-header').getByText('Completed', { exact: true })).toBeVisible();
   await switchAccount('citizen', '/app');
   await page.goto(`/app/requests/${id}`);
-  await expect(page.getByText('10 / 10', { exact: true })).toBeVisible();
+  await expect(page.getByText('10 / 10 packs', { exact: true })).toBeVisible();
 });

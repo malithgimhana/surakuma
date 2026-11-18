@@ -136,6 +136,7 @@ public sealed partial class IntegrationTests(ApiFixture fixture) : IClassFixture
             householdSize = 4,
             accessibilityNeeds = "",
             quantity = 10,
+            unit = "packs",
             submissionKey = Guid.NewGuid().ToString(),
             synthetic = true
         };

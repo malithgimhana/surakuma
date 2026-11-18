@@ -16,6 +16,8 @@ namespace Surakuma.Api.Controllers;
 public sealed partial class OperationsController(Operations ops, AccessService access, CrisisDbContext db, UserManager<AppUser> users, IMappingProvider maps, IMemoryCache cache, InternalNotifications notifications) : ControllerBase
 {
     [AllowAnonymous, HttpGet("public/lookups")] public Task<PublicLookups> Lookups(CancellationToken ct, string countryCode = "LK") => ops.PublicData(ct, countryCode);
+    [AllowAnonymous, HttpGet("public/resource-units")]
+    public IReadOnlyCollection<ResourceUnit> ResourceUnits([FromServices] ResourceUnitCatalog catalog) => catalog.Definitions;
     [AllowAnonymous, HttpGet("alerts")] public Task<List<PublicAlert>> Alerts(CancellationToken ct, string countryCode = "LK") => ops.Alerts(ct, countryCode);
     [AllowAnonymous, HttpGet("shelters")] public Task<List<PublicShelter>> Shelters(CancellationToken ct, string countryCode = "LK") => ops.PublicShelters(ct, countryCode);
     [HttpGet("staff/shelters")] public async Task<object> StaffShelters(CancellationToken ct, bool dashboard = false) =>

@@ -13,11 +13,18 @@ public sealed class ConstraintAllocationPolicy : IAllocationPolicy
             throw new RuleException("Verify and approve this case before allocating aid.");
         if (resource.Category != request.Category)
             throw new RuleException("The resource category does not match this request.");
+        if (request.Category == AidCategory.Shelter)
+            throw new RuleException("Use the household placement workflow for shelter requests.");
+        if (request.UnitRequiresClarification)
+            throw new RuleException("Clarify the requested unit before reserving aid.");
+        if (!QuantityUnits.Compatible(resource.Unit, request.Unit))
+            throw new RuleException("The stock unit is incompatible with the requested unit.");
+        QuantityUnits.ValidateInventory(quantity, resource.Unit);
         if (!resource.TransportAvailable)
             throw new RuleException("Transport is unavailable for this resource.");
         if (quantity <= 0 || quantity > resource.Available)
             throw new RuleException("Insufficient available stock; allocate a smaller amount or escalate the shortage.");
-        if (quantity > request.Quantity - request.DeliveredQuantity - committed)
+        if (QuantityUnits.Convert(quantity, resource.Unit, request.Unit) > request.Quantity - request.DeliveredQuantity - committed)
             throw new RuleException("Allocation exceeds outstanding unallocated quantity.");
     }
 }

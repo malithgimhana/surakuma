@@ -5,6 +5,8 @@ import { api, errorMessage, get } from './api';
 import { Badge, Button, Card, Empty, ErrorState, Field, Loading, PageHeader, categories } from './components';
 import { countryPath } from './crisisOperationsApi';
 import { useCountry } from './geography';
+import { ResourceUnitSelect } from './ResourceUnitSelect';
+import { isMeasuredUnit, unitSymbol } from './quantity';
 import type { Category } from './types';
 
 interface Organisation { id: string; name: string }
@@ -30,6 +32,7 @@ export default function SupplySupport() {
   });
   const [operation, setOperation] = useState(() => crypto.randomUUID());
   const [from, setFrom] = useState(params.get('organisation') ?? '');
+  const [unit, setUnit] = useState(params.get('unit') ?? '');
   if (query.isPending) return <Loading />;
   if (query.isError) return <ErrorState error={query.error} retry={() => void query.refetch()} />;
   const data = query.data;
@@ -58,8 +61,9 @@ export default function SupplySupport() {
         </select></Field>
         {caseId && category ? <p>Aid category · {category}</p> : <Field label="Aid category"><select name="category">
           {categories.map(c => <option key={c}>{c}</option>)}</select></Field>}
-        <Field label="Quantity"><input name="quantity" type="number" min="0.01" max="10000000" step="0.01" required /></Field>
-        <Field label="Unit"><input name="unit" maxLength={40} required /></Field>
+        <Field label="Unit"><ResourceUnitSelect name="unit" value={unit} onChange={e => setUnit(e.target.value)} required /></Field>
+        <Field label="Quantity"><input name="quantity" type="number" min={isMeasuredUnit(unit) ? 0.01 : 1}
+          max="10000000" step={isMeasuredUnit(unit) ? 0.01 : 1} required /></Field>
         <Field label="Operational need" hint="Include only details the receiving organisation needs. Keep household and personal information in the case.">
           <textarea name="reason" maxLength={1000} required />
         </Field>
@@ -117,7 +121,7 @@ export function ContributionReceipt({ id, country }: { id: string; country: stri
   const path = '/supply-support/' + country + '/contributions/' + id + '/receipts';
   const query = useQuery({
     queryKey: ['partner-receipts', country, id],
-    queryFn: () => get<{ resources: { id: string; name: string; unit: string }[]; remaining: number }>(countryPath(path, country)),
+    queryFn: () => get<{ resources: { id: string; name: string; unit: string }[]; remaining: number; unit: string }>(countryPath(path, country)),
   });
   const [operationId, changeId] = useState(() => crypto.randomUUID());
   const write = useMutation({ mutationFn: (data: unknown) => api.post(countryPath(path, country), data), onSuccess: () => client.invalidateQueries() });
@@ -131,7 +135,10 @@ export function ContributionReceipt({ id, country }: { id: string; country: stri
   }}>
     <Field label="Receiving inventory"><select name="resource">
       {query.data.resources.map(r => <option key={r.id} value={r.id}>{r.name} ({r.unit})</option>)}</select></Field>
-    <Field label="Actual quantity received"><input name="quantity" type="number" min="0.01" max={query.data.remaining} step="0.01" required /></Field>
+    <Field label="Actual quantity received" hint={`Enter the receipt quantity in ${unitSymbol(query.data.unit)}.`}>
+      <input name="quantity" type="number" min={isMeasuredUnit(query.data.unit) ? 0.01 : 1} max={query.data.remaining}
+        step={isMeasuredUnit(query.data.unit) ? 0.01 : 1} required />
+    </Field>
     <Field label="Physical receipt reference"><input name="reference" maxLength={100} required /></Field>
     <Button busy={write.isPending}>Confirm stock receipt</Button>
     {write.isSuccess && <p role="status">Inventory receipt recorded.</p>}

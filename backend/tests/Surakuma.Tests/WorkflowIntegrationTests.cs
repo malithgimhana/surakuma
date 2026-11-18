@@ -213,7 +213,7 @@ public sealed partial class IntegrationTests
         {
             var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
             var seed = await db.Set<AssistanceRequest>().FirstAsync();
-            var request = new AssistanceRequest { CitizenId = seed.CitizenId, CrisisId = seed.CrisisId, OrganisationId = seed.OrganisationId, Category = AidCategory.FoodWater, Quantity = 10, Status = RequestStatus.Approved, SubmissionKey = Guid.NewGuid().ToString() };
+            var request = new AssistanceRequest { CitizenId = seed.CitizenId, CrisisId = seed.CrisisId, OrganisationId = seed.OrganisationId, Category = AidCategory.FoodWater, Quantity = 10, Unit = "packs", Status = RequestStatus.Approved, SubmissionKey = Guid.NewGuid().ToString() };
             db.Add(request); db.Add(new Resource { OrganisationId = seed.OrganisationId ?? throw new InvalidOperationException("Test request must have an organisation."), Name = "Recommendation stock", Category = AidCategory.FoodWater, Unit = "packs", Stock = 10 });
             await db.SaveChangesAsync(); requestId = request.Id;
         }
@@ -262,11 +262,11 @@ public sealed partial class IntegrationTests
             var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
             var seed = await db.Set<AssistanceRequest>().FirstAsync();
             orgId = seed.OrganisationId ?? throw new InvalidOperationException("Test request must have an organisation."); crisisId = seed.CrisisId;
-            var request = new AssistanceRequest { CitizenId = seed.CitizenId, CrisisId = crisisId, OrganisationId = orgId, Category = AidCategory.FoodWater, Quantity = 10, Status = RequestStatus.Approved, SubmissionKey = Guid.NewGuid().ToString() };
+            var request = new AssistanceRequest { CitizenId = seed.CitizenId, CrisisId = crisisId, OrganisationId = orgId, Category = AidCategory.FoodWater, Quantity = 10, Unit = "kg", Status = RequestStatus.Approved, SubmissionKey = Guid.NewGuid().ToString() };
             db.Add(request); await db.SaveChangesAsync(); requestId = request.Id;
         }
         using var citizen = await fixture.Login("citizen");
-        var submission = new { crisisId, organisationId = orgId, category = "FoodWater", priority = "High", description = "Synthetic request for food supplies", locationText = "Test location", householdSize = 2, accessibilityNeeds = "", quantity = 2.5m, submissionKey = Guid.NewGuid().ToString(), synthetic = true };
+        var submission = new { crisisId, organisationId = orgId, category = "FoodWater", priority = "High", description = "Synthetic request for food supplies", locationText = "Test location", householdSize = 2, accessibilityNeeds = "", unit = "packs", quantity = 2.5m, submissionKey = Guid.NewGuid().ToString(), synthetic = true };
         Assert.Equal(HttpStatusCode.BadRequest, (await citizen.PostAsJsonAsync("/api/v1/requests", submission)).StatusCode);
         using var logistics = await fixture.Login("logistics");
         object ResourceInput(string unit, decimal stock) => new { organisationId = orgId, name = "Quantity test " + unit, category = "FoodWater", unit, stock, locationText = "Depot", latitude = 6.9, longitude = 79.9, suitability = "", transportAvailable = true };
@@ -291,7 +291,7 @@ public sealed partial class IntegrationTests
             var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
             var seed = await db.Set<AssistanceRequest>().FirstAsync();
             string citizenId = await db.Users.Where(x => x.UserName == "citizen@surakuma.test").Select(x => x.Id).SingleAsync();
-            var request = new AssistanceRequest { CitizenId = citizenId, CrisisId = seed.CrisisId, OrganisationId = seed.OrganisationId, Category = AidCategory.FoodWater, Quantity = 10, Status = RequestStatus.Approved, SubmissionKey = Guid.NewGuid().ToString() };
+            var request = new AssistanceRequest { CitizenId = citizenId, CrisisId = seed.CrisisId, OrganisationId = seed.OrganisationId, Category = AidCategory.FoodWater, Quantity = 10, Unit = "packs", Status = RequestStatus.Approved, SubmissionKey = Guid.NewGuid().ToString() };
             var resource = new Resource { OrganisationId = seed.OrganisationId ?? throw new InvalidOperationException("Test request must have an organisation."), Name = "Delivery test packs", Category = AidCategory.FoodWater, Stock = 6 };
             db.AddRange(request, resource);
             await db.SaveChangesAsync();

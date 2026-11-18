@@ -340,6 +340,9 @@ namespace Surakuma.Infrastructure.Migrations
                         .HasMaxLength(4000)
                         .HasColumnType("nvarchar(4000)");
 
+                    b.Property<Guid?>("AdministrativeDivisionId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<string>("AssignedCaseManagerId")
                         .HasMaxLength(450)
                         .HasColumnType("nvarchar(450)");
@@ -366,8 +369,8 @@ namespace Surakuma.Infrastructure.Migrations
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<decimal>("DeliveredQuantity")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)");
+                        .HasPrecision(21, 5)
+                        .HasColumnType("decimal(21,5)");
 
                     b.Property<string>("Description")
                         .IsRequired()
@@ -434,6 +437,10 @@ namespace Surakuma.Infrastructure.Migrations
                     b.Property<bool>("Synthetic")
                         .HasColumnType("bit");
 
+                    b.Property<string>("Unit")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("datetimeoffset");
 
@@ -444,6 +451,8 @@ namespace Surakuma.Infrastructure.Migrations
                         .HasColumnType("rowversion");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("AdministrativeDivisionId");
 
                     b.HasIndex("AssignedCaseManagerId");
 
@@ -2645,6 +2654,10 @@ namespace Surakuma.Infrastructure.Migrations
                     b.Property<Guid>("RequestId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<decimal?>("RequestQuantity")
+                        .HasPrecision(21, 5)
+                        .HasColumnType("decimal(21,5)");
+
                     b.Property<Guid>("ResourceId")
                         .HasColumnType("uniqueidentifier");
 
@@ -3405,6 +3418,11 @@ namespace Surakuma.Infrastructure.Migrations
 
             modelBuilder.Entity("Surakuma.Domain.AssistanceRequest", b =>
                 {
+                    b.HasOne("Surakuma.Domain.AdministrativeDivision", null)
+                        .WithMany()
+                        .HasForeignKey("AdministrativeDivisionId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("Surakuma.Infrastructure.AppUser", null)
                         .WithMany()
                         .HasForeignKey("AssignedCaseManagerId")
