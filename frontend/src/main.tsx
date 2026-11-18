@@ -7,6 +7,7 @@ import './i18n';
 import './styles.css';
 import { Loading } from './components';
 import { AuthProvider, Protected } from './auth';
+import { useAuth } from './auth';
 import { AppLayout, PublicLayout } from './layouts';
 const AlertsPage = lazy(() => import('./PublicPages').then((m) => ({ default: m.AlertsPage })));
 const HomePage = lazy(() => import('./PublicPages').then((m) => ({ default: m.HomePage })));
@@ -39,9 +40,9 @@ const AdminLogistics = lazy(() => import('./AdminLogistics'));
 const ShelterManagement = lazy(() =>
   import('./StaffPages').then((m) => ({ default: m.ShelterManagement })),
 );
-const StaffOverview = lazy(() =>
-  import('./StaffPages').then((m) => ({ default: m.StaffOverview })),
-);
+const StaffOverview = lazy(() => import('./StaffOverview'));
+const PartnerWorkspace = lazy(() => import('./PartnerWorkspace'));
+const PartnerCommitments = lazy(() => import('./PartnerWorkspace').then((m) => ({ default: m.PartnerCommitments })));
 const AdminPage = lazy(() => import('./StaffSupport').then((m) => ({ default: m.AdminPage })));
 const CrisesPage = lazy(() => import('./StaffSupport').then((m) => ({ default: m.CrisesPage })));
 const CrisisOperationsPage = lazy(() => import('./CrisisOperationsPage'));
@@ -57,8 +58,11 @@ const staffRoles = ['Administrator', 'CountryAdministrator',
   'Logistics',
   'ShelterAdmin',
   'VolunteerCoordinator',
-  'Partner',
 ];
+function StaffLogistics() {
+  const { user } = useAuth();
+  return user?.roles.includes('Logistics') ? <AdminLogistics specialist /> : <ResourcesPage />;
+}
 function App() {
   return (
     <Routes>
@@ -105,7 +109,7 @@ function App() {
           path="resources"
           element={
             <Protected roles={['Administrator', 'CountryAdministrator', 'Coordinator', 'Logistics']}>
-              <ResourcesPage />
+              <StaffLogistics />
             </Protected>
           }
         />
@@ -134,6 +138,11 @@ function App() {
           }
         />
       </Route>
+      <Route path="partner" element={<Protected roles={['Partner']}><AppLayout mode="partner" /></Protected>}>
+        <Route index element={<PartnerWorkspace />} />
+        <Route path="notifications" element={<NotificationsPage partner />} />
+        <Route path=":section" element={<PartnerWorkspace />} />
+      </Route>
       <Route
         path="volunteer"
         element={
@@ -158,6 +167,7 @@ function App() {
         <Route path="crises" element={<CrisisOperationsPage />} />
         <Route path="resources" element={<AdminLogistics />} />
         <Route path="shelters" element={<ShelterManagement />} />
+        <Route path="partner-commitments" element={<PartnerCommitments />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

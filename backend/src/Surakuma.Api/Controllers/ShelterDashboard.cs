@@ -8,23 +8,23 @@ namespace Surakuma.Api.Controllers;
 public sealed partial class OperationsController
 {
     private sealed record ShelterWarning(string Kind, string Severity);
+    private static readonly string[] ShelterDashboardRoles = [Roles.ShelterAdmin, Roles.Coordinator];
 
-    private async Task<string> RequireShelterAdministration(CancellationToken ct)
+    private async Task<(string Country, IQueryable<Shelter> Shelters)> ShelterScope(CancellationToken ct)
     {
         var country = access.SelectedCountry ?? throw new RuleException("Select a shelter country.");
-        if (!await access.CountryAccess(country, [], ct)) throw new AccessDeniedException();
-        return country;
+        if (!await access.CountryAccess(country, ShelterDashboardRoles, ct)) throw new AccessDeniedException();
+        return (country, (await access.Located<Shelter>(ct, roles: ShelterDashboardRoles)).Where(s => s.CountryCode == country));
     }
 
     private async Task<object> ShelterDashboard(CancellationToken ct)
     {
-        var country = await RequireShelterAdministration(ct);
+        var (country, scoped) = await ShelterScope(ct);
         var configuration = HttpContext.RequestServices.GetRequiredService<IConfiguration>();
         var near = Math.Clamp(configuration.GetValue("ShelterDashboard:NearPercent", 80), 1, 99);
         var critical = Math.Clamp(configuration.GetValue("ShelterDashboard:CriticalPercent", 95), near + 1, 100);
         var staleHours = Math.Clamp(configuration.GetValue("ShelterDashboard:StaleAfterHours", 168), 1, 87600);
         var staleBefore = DateTimeOffset.UtcNow.AddHours(-staleHours);
-        var scoped = db.Set<Shelter>().Where(s => s.CountryCode == country);
         var shelters = await scoped.OrderBy(s => s.Name).ToListAsync(ct);
         var active = await (
             from stay in db.Set<ShelterAllocation>()
@@ -57,6 +57,8 @@ public sealed partial class OperationsController
                 Occupied = shelters.Sum(s => (long)s.Occupancy),
                 // One shelter request represents one household, even when the same citizen files for others.
                 Households = active.Where(x => x.Status == StayStatus.CheckedIn).Select(x => x.RequestId).Distinct().Count(),
+                PendingArrivals = active.Count(x => x.Status == StayStatus.Reserved),
+                Reserved = shelters.Sum(s => (long)s.Reserved),
                 Attention = entries.Count(e => e.Warnings.Length > 0),
             },
         };
@@ -80,15 +82,23 @@ public sealed partial class OperationsController
     [HttpGet("staff/shelters/{id:guid}")]
     public async Task<object> ShelterDetails(Guid id, CancellationToken ct, bool allocation = false)
     {
-        var country = await RequireShelterAdministration(ct);
-        var shelter = await db.Set<Shelter>().SingleOrDefaultAsync(s => s.Id == id && s.CountryCode == country, ct)
+        var (country, scoped) = await ShelterScope(ct);
+        var shelter = await scoped.SingleOrDefaultAsync(s => s.Id == id, ct)
             ?? throw new MissingException();
         if (allocation)
         {
             if (!shelter.Open || shelter.Available <= 0 || !await access.PartnerEligible(shelter.OrganisationId, country, ct))
                 throw new RuleException("This shelter is not currently accepting reservations.");
+            var candidates = await access.Visible(ct);
+            if (!await access.CountryAccess(country, [], ct))
+            {
+                var grants = db.Set<Membership>().Where(m => m.UserId == access.UserId && m.CountryCode == country &&
+                    ShelterDashboardRoles.Contains(m.Role));
+                candidates = candidates.Where(r => r.OrganisationId == shelter.OrganisationId && grants.Any(m =>
+                    m.OrganisationId == r.OrganisationId && (m.CrisisId == null || m.CrisisId == r.CrisisId)));
+            }
             return await (
-                from request in db.Set<AssistanceRequest>()
+                from request in candidates
                 join crisis in db.Set<Crisis>() on request.CrisisId equals crisis.Id
                 where crisis.CountryCode == country && request.Category == AidCategory.Shelter
                     && (request.Status == RequestStatus.Approved || request.Status == RequestStatus.InProgress)

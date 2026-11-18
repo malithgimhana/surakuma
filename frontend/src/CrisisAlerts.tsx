@@ -15,8 +15,9 @@ import type { Country } from './geography';
 import type { Alert, Crisis } from './types';
 
 const severities = ['Information', 'Advisory', 'Warning', 'Critical'];
-const statuses = ['Published', 'Expired', 'Withdrawn', 'Draft', 'All'] as const;
+const statuses = ['All', 'Draft', 'PendingReview', 'Approved', 'Returned', 'Published', 'EmergencyPublished', 'EmergencyReview', 'Expired', 'Withdrawn'] as const;
 type AlertStatus = Exclude<(typeof statuses)[number], 'All'>;
+const statusLabel = (status: string) => ({ PendingReview: 'Pending review', EmergencyPublished: 'Emergency published', EmergencyReview: 'Emergency review' } as Record<string, string>)[status] ?? status;
 type Translation = { title: string; message: string };
 const emptyTranslation: Translation = { title: '', message: '' };
 const languageNames = new Intl.DisplayNames(['en'], { type: 'language' });
@@ -65,6 +66,8 @@ export function CrisisAlertComposer({
   setDraft,
   loading,
   failed,
+  editingId,
+  onSaved,
 }: {
   country: string;
   policy?: Country;
@@ -73,6 +76,8 @@ export function CrisisAlertComposer({
   setDraft: (draft: AlertDraft) => void;
   loading: boolean;
   failed: boolean;
+  editingId?: string;
+  onSaved?: () => void;
 }) {
   const selected = draft.crisisId
     ? crises.find((crisis) => crisis.id === draft.crisisId)
@@ -137,7 +142,7 @@ export function CrisisAlertComposer({
     });
   }
 
-  function publish() {
+  function saveDraft() {
     if (!preview || !reviewed || write.isPending) return;
     const {
       translations: { en, si, ta, ...other },
@@ -149,14 +154,14 @@ export function CrisisAlertComposer({
     } = preview;
     write.mutate(
       {
-        path: '/alerts',
+        path: editingId ? `/alerts/${editingId}` : '/alerts',
+        method: editingId ? 'put' : 'post',
         data: {
           crisisId,
           area,
           authority,
           severity,
           expiresAt: new Date(expiresAt).toISOString(),
-          published: true,
           title: en.title,
           message: en.message,
           sinhalaTitle: si?.title ?? '',
@@ -171,6 +176,7 @@ export function CrisisAlertComposer({
           setPreview(undefined);
           setDraft(emptyAlertDraft);
           setPublished(true);
+          onSaved?.();
         },
       },
     );
@@ -216,11 +222,11 @@ export function CrisisAlertComposer({
     <Card className="crisis-composer">
       <h2 className="crisis-panel-heading">
         <Megaphone aria-hidden="true" />
-        Public alert composer
+        {editingId ? 'Edit public alert draft' : 'Public alert composer'}
       </h2>
       {published && (
         <p className="success-text" role="status">
-          Public alert published.
+          Draft saved. Open the alert history to submit it for review.
         </p>
       )}
       {disabled && (
@@ -237,7 +243,7 @@ export function CrisisAlertComposer({
           <Field label="Crisis">
             <select
               required
-              disabled={disabled}
+              disabled={disabled || !!editingId}
               value={selected?.id ?? ''}
               onChange={(event) => {
                 setDraft({ ...draft, crisisId: event.target.value, area: '' });
@@ -313,7 +319,7 @@ export function CrisisAlertComposer({
           </Field>
           <p className="crisis-form-note muted">
             <Info size={16} aria-hidden="true" />
-            Review translations in the preview before publishing. Expiry uses your device’s local
+            Review translations in the preview before saving. Expiry uses your device’s local
             time.
           </p>
         </div>
@@ -322,7 +328,7 @@ export function CrisisAlertComposer({
             {validation}
           </p>
         )}
-        <Button disabled={disabled || !selected}>Publish verified alert</Button>
+        <Button disabled={disabled || !selected}>Preview alert draft</Button>
       </form>
       {preview && (
         <WorkspaceDialog
@@ -339,7 +345,7 @@ export function CrisisAlertComposer({
               checked={reviewed}
               onChange={(event) => setReviewed(event.target.checked)}
             />
-            I reviewed the public wording and translations and confirm they are ready to publish.
+            I reviewed the public wording and translations.
           </label>
           {write.error && (
             <p className="field-error" role="alert">
@@ -354,8 +360,8 @@ export function CrisisAlertComposer({
             >
               Back to edit
             </Button>
-            <Button busy={write.isPending} disabled={!reviewed} onClick={publish}>
-              Publish alert
+            <Button busy={write.isPending} disabled={!reviewed} onClick={saveDraft}>
+              Save draft
             </Button>
           </div>
         </WorkspaceDialog>
@@ -367,17 +373,21 @@ export function CrisisAlertComposer({
 interface AlertHistoryRow {
   alert: Alert;
   status: AlertStatus;
+  isAuthor?: boolean;
+  canReview?: boolean;
+  needsEmergencyReview?: boolean;
 }
 interface AlertHistoryPage {
   publishedCount: number;
   total: number;
   page: number;
   items: AlertHistoryRow[];
+  reviewer?: boolean;
 }
 const initialFilters = { search: '', severity: '', status: 'All', crisisId: '' };
 const recentFilters = { ...initialFilters, status: 'Published' };
 
-export function useCrisisAlertHistory(country: string) {
+export function useCrisisAlertHistory(country: string, staff = false) {
   const [expanded, setExpanded] = useState(false);
   const [filters, setFilters] = useState(initialFilters);
   const [search, setSearch] = useState('');
@@ -389,10 +399,10 @@ export function useCrisisAlertHistory(country: string) {
   const pageSize = expanded ? 10 : 4;
   const request = expanded ? { ...filters, search } : recentFilters;
   const query = useQuery({
-    queryKey: ['crisis-operations', country, 'alerts', request, page, pageSize],
+    queryKey: ['crisis-operations', country, 'alerts', staff, request, page, pageSize],
     queryFn: () =>
       get<AlertHistoryPage>(
-        countryPath('/admin/crisis-operations/alerts', country, {
+        countryPath(staff ? '/staff/alert-workflow' : '/admin/crisis-operations/alerts', country, {
           ...request,
           page: String(page),
           pageSize: String(pageSize),
@@ -410,6 +420,11 @@ export function useCrisisAlertHistory(country: string) {
     searching: expanded && search !== filters.search.trim(),
     updateFilter: (name: keyof typeof filters, value: string) => {
       setFilters({ ...filters, [name]: value });
+      setPage(1);
+    },
+    showReview: () => {
+      setExpanded(true);
+      setFilters({ ...initialFilters, status: 'PendingReview' });
       setPage(1);
     },
     toggleExpanded: () => {
@@ -484,25 +499,56 @@ export function CrisisPublishedAlerts({
   country,
   crises,
   history,
+  policy,
 }: {
   country: string;
   crises: Crisis[];
   history: ReturnType<typeof useCrisisAlertHistory>;
+  policy?: Country;
 }) {
-  const { query, expanded, filters, pageSize, updateFilter, setPage, toggleExpanded, searching } =
+  const { query, expanded, filters, pageSize, updateFilter, setPage, toggleExpanded, searching, showReview } =
     history;
   const [detail, setDetail] = useState<AlertHistoryRow>();
-  const [withdrawing, setWithdrawing] = useState(false);
+  const [action, setAction] = useState('');
+  const [reason, setReason] = useState('');
+  const [editingId, setEditingId] = useState<string>();
+  const [draft, setDraft] = useState(emptyAlertDraft);
   const write = useCrisisOperationsWrite(country);
   const results = query.data;
+  const activity = useQuery({
+    queryKey: ['alert-history', country, detail?.alert.id],
+    queryFn: () => get<{ id: string; action: string; detail: string; actorId: string; actorName?: string; createdAt: string }[]>(countryPath(`/alerts/${detail!.alert.id}/history`, country)),
+    enabled: !!detail && !!country,
+  });
+  const actions: { value: string; label: string; reason?: boolean }[] = [];
+  if (detail) {
+    if (detail.isAuthor && ['Draft', 'Returned'].includes(detail.status))
+      actions.push({ value: 'submit', label: 'Submit for review' });
+    if (detail.status === 'PendingReview' && detail.canReview)
+      actions.push({ value: 'approve', label: 'Approve alert', reason: true }, { value: 'return', label: 'Return for changes', reason: true });
+    if (detail.status === 'Approved' && (detail.isAuthor || results?.reviewer))
+      actions.push({ value: 'publish', label: 'Publish alert' });
+    if (results?.reviewer && detail.alert.severity === 'Critical' && ['Draft', 'Returned', 'PendingReview'].includes(detail.status))
+      actions.push({ value: 'emergency-publish', label: 'Emergency publication', reason: true });
+    if (detail.needsEmergencyReview && detail.canReview)
+      actions.push({ value: 'post-review', label: 'Complete emergency review', reason: true });
+    if (detail.alert.published && (detail.isAuthor || results?.reviewer))
+      actions.push({ value: 'unpublish', label: 'Withdraw alert', reason: true });
+  }
+  if (editingId) return <div className="stack">
+    <Button variant="secondary" onClick={() => setEditingId(undefined)}>Back to alert history</Button>
+    <CrisisAlertComposer country={country} policy={policy} crises={crises} draft={draft} setDraft={setDraft}
+      editingId={editingId} onSaved={() => setEditingId(undefined)} loading={false} failed={false} />
+  </div>;
 
   return (
     <Card className="crisis-alert-history">
       <div className="crisis-panel-bar">
         <h2 className="crisis-panel-heading">
           <FileText aria-hidden="true" />
-          Published alerts
+          {expanded ? 'Public alert history' : 'Published alerts'}
         </h2>
+        {results?.reviewer && <button type="button" className="crisis-panel-link" onClick={showReview}>Review queue</button>}
         <button
           type="button"
           className="crisis-panel-link"
@@ -540,7 +586,7 @@ export function CrisisPublishedAlerts({
             >
               {statuses.map((status) => (
                 <option key={status} value={status}>
-                  {status === 'All' ? 'All statuses' : status}
+                  {status === 'All' ? 'All statuses' : statusLabel(status)}
                 </option>
               ))}
             </select>
@@ -564,7 +610,7 @@ export function CrisisPublishedAlerts({
         <Loading />
       ) : query.error ? (
         <ErrorState error={query.error} retry={() => void query.refetch()} />
-      ) : !results?.items.length ? (
+      ) : !results?.items?.length ? (
         <p className="muted crisis-empty">
           {expanded ? 'No alerts match these filters.' : 'No published alerts in this country.'}
         </p>
@@ -604,15 +650,11 @@ export function CrisisPublishedAlerts({
                       <span
                         className={`badge ${status === 'Published' ? 'green' : status === 'Expired' ? 'amber' : 'blue'}`}
                       >
-                        {status}
+                        {statusLabel(status)}
                       </span>
                     </td>
                     <td>
-                      {status === 'Draft' ? (
-                        '—'
-                      ) : (
-                        <time dateTime={alert.createdAt}>{alertDate(alert.createdAt)}</time>
-                      )}
+                      {alert.publishedAt ? <time dateTime={alert.publishedAt}>{alertDate(alert.publishedAt)}</time> : '—'}
                     </td>
                     <td>
                       <button
@@ -621,7 +663,8 @@ export function CrisisPublishedAlerts({
                         aria-label={`View alert: ${alert.title}`}
                         onClick={() => {
                           setDetail(row);
-                          setWithdrawing(false);
+                          setAction('');
+                          setReason('');
                           write.reset();
                         }}
                       >
@@ -664,62 +707,57 @@ export function CrisisPublishedAlerts({
         )}
       {detail && (
         <WorkspaceDialog
-          title={withdrawing ? 'Withdraw public alert?' : detail.alert.title}
+          title={detail.alert.title}
           context={crises.find((crisis) => crisis.id === detail.alert.crisisId)?.name}
           className="crisis-dialog"
           busy={write.isPending}
           onDismiss={() => setDetail(undefined)}
         >
-          {withdrawing ? (
-            <p>
-              This removes the alert from the public feed. The alert and its history remain
-              available here.
-            </p>
-          ) : (
-            <>
-              <p className="muted">{detail.status}</p>
-              <AlertContent alert={detail.alert} translations={savedTranslations(detail.alert)} />
-            </>
-          )}
-          {write.error && (
-            <p className="field-error" role="alert">
-              {errorMessage(write.error)}
-            </p>
-          )}
+          <p className="muted">{statusLabel(detail.status)}</p>
+          <AlertContent alert={detail.alert} translations={savedTranslations(detail.alert)} />
+          <details>
+            <summary>Review and publication history</summary>
+            {activity.isPending && <Loading />}
+            {activity.error && <ErrorState error={activity.error} />}
+            {Array.isArray(activity.data) && <ol className="stack">{activity.data.map((event) => (
+              <li key={event.id}>{event.action.replace('PublicAlert', '')} · {alertDate(event.createdAt)} · {event.actorName || event.actorId}
+                {event.detail && <p>{event.detail}</p>}
+              </li>
+            ))}</ol>}
+          </details>
+          {action && <Field label="Reason">
+            <textarea value={reason} onChange={(event) => setReason(event.target.value)} maxLength={1000} />
+          </Field>}
+          {write.error && <p className="field-error" role="alert">{errorMessage(write.error)}</p>}
           <div className="organisation-dialog-actions">
-            <Button
-              type="button"
-              variant="secondary"
-              disabled={write.isPending}
-              onClick={() => {
-                if (withdrawing) setWithdrawing(false);
-                else setDetail(undefined);
-              }}
-            >
-              {withdrawing ? 'Cancel' : 'Close'}
-            </Button>
-            {withdrawing ? (
-              <Button
-                variant="danger"
-                busy={write.isPending}
-                onClick={() =>
-                  write.mutate(
-                    {
-                      path: `/alerts/${detail.alert.id}/unpublish`,
-                    },
-                    { onSuccess: () => setDetail(undefined) },
-                  )
-                }
-              >
-                Withdraw alert
-              </Button>
-            ) : (
-              detail.status === 'Published' && (
-                <Button variant="secondary" onClick={() => setWithdrawing(true)}>
-                  Withdraw alert
-                </Button>
-              )
+            {detail.isAuthor && policy && ['Draft', 'Returned'].includes(detail.status) && !action &&
+              <Button variant="secondary" onClick={() => {
+                const expiresAt = new Date(detail.alert.expiresAt);
+                expiresAt.setMinutes(expiresAt.getMinutes() - expiresAt.getTimezoneOffset());
+                setDraft({
+                  crisisId: detail.alert.crisisId, severity: detail.alert.severity, authority: detail.alert.authority,
+                  area: detail.alert.area, expiresAt: expiresAt.toISOString().slice(0, 16), translations: savedTranslations(detail.alert),
+                });
+                setEditingId(detail.alert.id);
+                setDetail(undefined);
+              }}>Edit draft</Button>}
+            {actions.filter((entry) => !action || action === entry.value).map((entry) =>
+              <Button key={entry.value} busy={write.isPending}
+                disabled={action === entry.value && reason.trim().length < 5}
+                variant={entry.value === 'unpublish' || entry.value === 'emergency-publish' ? 'danger' : 'secondary'}
+                onClick={() => {
+                  if (entry.reason && action !== entry.value) {
+                    setAction(entry.value);
+                    return;
+                  }
+                  write.mutate({ path: `/alerts/${detail.alert.id}/${entry.value}`, data: { reason } },
+                    { onSuccess: () => setDetail(undefined) });
+                }}>{entry.label}</Button>,
             )}
+            <Button variant="secondary" disabled={write.isPending} onClick={() => {
+              if (action) { setAction(''); setReason(''); }
+              else setDetail(undefined);
+            }}>{action ? 'Cancel action' : 'Close'}</Button>
           </div>
         </WorkspaceDialog>
       )}

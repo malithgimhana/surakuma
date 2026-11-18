@@ -267,7 +267,7 @@ function CountryCrisisDashboard({
         />
       </div>
       <div className="crisis-bottom-grid">
-        <CrisisPublishedAlerts country={country} crises={crises} history={history} />
+        <CrisisPublishedAlerts country={country} crises={crises} history={history} policy={policy} />
         <Card className="crisis-ended-card">
           <div className="crisis-panel-bar">
             <h2 className="crisis-panel-heading">

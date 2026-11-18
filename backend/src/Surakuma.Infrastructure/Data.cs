@@ -83,6 +83,12 @@ public sealed class CrisisDbContext(DbContextOptions<CrisisDbContext> options) :
         Fk<LogisticsOrder, Crisis>(b, nameof(LogisticsOrder.CrisisId));
         Fk<LogisticsOrder, OperationalArea>(b, nameof(LogisticsOrder.OperationalAreaId));
         b.Entity<LogisticsOrder>().ToTable(t => t.HasCheckConstraint("CK_LogisticsOrder_Quantity", "[Quantity] > 0"));
+        Fk<DeliveryConfirmation, ResourceAllocation>(b, nameof(DeliveryConfirmation.AllocationId));
+        Fk<DeliveryConfirmation, LogisticsOrder>(b, nameof(DeliveryConfirmation.LogisticsOrderId));
+        b.Entity<DeliveryConfirmation>().HasIndex(x => x.AllocationId).IsUnique();
+        b.Entity<DeliveryConfirmation>().HasIndex(x => x.LogisticsOrderId).IsUnique();
+        b.Entity<DeliveryConfirmation>().ToTable(t => t.HasCheckConstraint("CK_DeliveryConfirmation_Shipment",
+            "(([AllocationId] IS NOT NULL AND [LogisticsOrderId] IS NULL) OR ([AllocationId] IS NULL AND [LogisticsOrderId] IS NOT NULL)) AND [ConfirmedQuantity] >= 0"));
         b.Entity<StockMovement>().HasIndex(x => x.OperationId);
         foreach (var entity in new[] { typeof(Crisis), typeof(Resource), typeof(Shelter), typeof(AdministrativeDivision), typeof(OrganisationCountry), typeof(Membership), typeof(VolunteerProfile) })
             b.Entity(entity).Property<string>("CountryCode").HasMaxLength(2).IsUnicode(false).HasDefaultValue("LK");
@@ -117,6 +123,8 @@ public sealed class CrisisDbContext(DbContextOptions<CrisisDbContext> options) :
         b.Entity<RefreshSession>().Property(x => x.TokenHash).HasMaxLength(64);
         b.Entity<RefreshSession>().HasIndex(x => x.TokenHash).IsUnique();
         b.Entity<CaseShare>().HasIndex(x => new { x.RequestId, x.OrganisationId }).IsUnique();
+        b.Entity<CaseShare>().Property(x => x.WorkTitle).HasMaxLength(160);
+        b.Entity<CaseShare>().Property(x => x.WorkInstructions).HasMaxLength(1000);
         b.Entity<CrisisAssignment>().Property(x => x.UserId).HasMaxLength(450);
         b.Entity<CrisisAssignment>().HasIndex(x => new { x.CrisisId, x.UserId }).IsUnique();
         b.Entity<Household>().Property(x => x.UserId).HasMaxLength(450);
@@ -125,6 +133,15 @@ public sealed class CrisisDbContext(DbContextOptions<CrisisDbContext> options) :
         b.Entity<VolunteerProfile>().HasIndex(x => x.UserId).IsUnique();
         b.Entity<Notification>().Property(x => x.UserId).HasMaxLength(450);
         b.Entity<Notification>().HasIndex(x => new { x.EventId, x.UserId }).IsUnique();
+        b.Entity<Notification>().Property(x => x.ScopeCountryCode).HasMaxLength(2).IsUnicode(false);
+        b.Entity<Notification>().Property(x => x.ScopeRole).HasMaxLength(50);
+        b.Entity<PartnerContribution>().Property(x => x.CountryCode).HasMaxLength(2).IsUnicode(false);
+        b.Entity<PartnerContribution>().HasIndex(x => new { x.CountryCode, x.OrganisationId, x.Status });
+        b.Entity<PartnerContribution>().HasOne<Country>().WithMany().HasForeignKey(x => x.CountryCode)
+            .HasPrincipalKey(x => x.Code).OnDelete(DeleteBehavior.Restrict);
+        Fk<PartnerContribution, Organisation>(b, nameof(PartnerContribution.OrganisationId));
+        b.Entity<PartnerContribution>().ToTable(t => t.HasCheckConstraint("CK_PartnerContribution_Quantity",
+            "[Quantity] > 0 AND [FulfilledQuantity] >= 0 AND [FulfilledQuantity] <= [Quantity]"));
         b.Entity<NotificationDelivery>().Property(x => x.RecipientId).HasMaxLength(450);
         b.Entity<NotificationDelivery>().HasIndex(x => new { x.EventId, x.RecipientId }).IsUnique();
         b.Entity<PotentialDuplicate>().HasIndex(x => new { x.RequestId, x.CandidateId }).IsUnique();
@@ -165,6 +182,8 @@ public sealed class CrisisDbContext(DbContextOptions<CrisisDbContext> options) :
         Fk<VolunteerProfile, Organisation>(b, nameof(VolunteerProfile.OrganisationId));
         Fk<VolunteerTask, VolunteerProfile>(b, nameof(VolunteerTask.VolunteerId));
         Fk<VolunteerTask, AssistanceRequest>(b, nameof(VolunteerTask.RequestId));
+        Fk<VolunteerTaskEvent, VolunteerTask>(b, nameof(VolunteerTaskEvent.TaskId));
+        b.Entity<VolunteerTaskEvent>().HasIndex(x => new { x.TaskId, x.CreatedAt });
         Fk<PublicAlert, Crisis>(b, nameof(PublicAlert.CrisisId));
         Fk<Notification, AppUser>(b, nameof(Notification.UserId));
         Fk<Feedback, AssistanceRequest>(b, nameof(Feedback.RequestId));

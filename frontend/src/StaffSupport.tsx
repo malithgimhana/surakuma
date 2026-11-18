@@ -1,3 +1,4 @@
+import { CrisisAlertComposer, CrisisPublishedAlerts, emptyAlertDraft, useCrisisAlertHistory } from './CrisisAlerts';
 import { CrisisCreationForm } from './CrisisCreationForm';
 import { AdministratorAlerts, StaffLifecycle, SystemAdministratorRequests } from './AdministrationWorkflows';
 import { AdminCaseQueue } from './AdminCaseQueue';
@@ -26,7 +27,7 @@ import {
   Loading,
   PageHeader,
 } from './components';
-import type { AidRequest, Alert, Crisis, Lookups, Page, User, VolunteerData } from './types';
+import type { AidRequest, Crisis, Lookups, Page, User, VolunteerData } from './types';
 function useWrite() {
   const client = useQueryClient();
   return useMutation({
@@ -53,9 +54,12 @@ function Message({ mutation }: { mutation: ReturnType<typeof useWrite> }) {
 }
 const values = (form: HTMLFormElement) => Object.fromEntries(new FormData(form).entries());
 export function VolunteerPage({ self = false }: { self?: boolean }) {
+  const [params] = useSearchParams();
+  const view = self ? '' : params.get('view') ?? '';
+  const country = useCountry();
   const { user } = useAuth(),
     query = useQuery({
-      queryKey: ['volunteers'],
+      queryKey: ['volunteers', country],
       queryFn: () => get<VolunteerData>('/volunteers'),
     }),
     write = useWrite();
@@ -68,24 +72,39 @@ export function VolunteerPage({ self = false }: { self?: boolean }) {
   }, [caseSearch]);
   const cases = useQuery({
     queryKey: ['volunteer-cases', debouncedCaseSearch],
-    queryFn: () => get<Page<AidRequest>>(`/requests?search=${encodeURIComponent(debouncedCaseSearch)}&page=1`),
+    queryFn: () => get<Pick<AidRequest, 'id' | 'reference' | 'locationText' | 'organisationId'>[]>(`/volunteer-tasks/cases?search=${encodeURIComponent(debouncedCaseSearch)}`),
     placeholderData: (previous) => previous,
     enabled: !self,
   });
   const searchingCases = caseSearch.trim() !== debouncedCaseSearch || cases.isFetching;
-  const availableCases = cases.data?.items.filter((r) => !['Closed', 'Rejected', 'Cancelled'].includes(r.status)) ?? [];
+  const availableCases = cases.data ?? [];
+  const selectedOrganisation = availableCases.find((r) => r.id === selectedCase)?.organisationId;
+  const availableVolunteers = query.data?.profiles.filter((v) => v.verified && v.available && v.organisationId === selectedOrganisation) ?? [];
   const lookups = useQuery({
     queryKey: ['lookups'],
     queryFn: () => get<Lookups>('/public/lookups'),
   });
   const profile = query.data?.profiles.find((p) => p.userId === user?.id);
-  const tasks = self
+  const rosterTasks = self
     ? query.data?.tasks.filter((t) => t.volunteerId === profile?.id)
     : query.data?.tasks;
+  const taskView = ['open', 'deployments', 'reports', 'overdue'].includes(view);
+  const directoryView = ['verified', 'available'].includes(view);
+  const tasks = rosterTasks?.filter((task) => {
+    const open = !['Completed', 'Declined'].includes(task.status);
+    if (view === 'open') return open;
+    if (view === 'deployments') return ['Accepted', 'InProgress'].includes(task.status);
+    if (view === 'reports') return task.status === 'AwaitingVerification';
+    if (view === 'overdue') return open && Date.parse(task.dueAt) < Date.now();
+    return !directoryView;
+  });
+  const profiles = query.data?.profiles.filter((v) => !directoryView || v.verified && (view !== 'available' || v.available));
   return (
     <>
       <PageHeader
-        title={self ? 'My volunteer assignments' : 'Volunteer coordination'}
+        title={self ? 'My volunteer assignments' : ({ reports: 'Reports awaiting verification', open: 'Open assignments',
+          deployments: 'Active deployments', overdue: 'Overdue tasks', verified: 'Verified volunteers',
+          available: 'Available verified volunteers' } as Record<string, string>)[view] ?? 'Volunteer coordination'}
         description={
           self
             ? 'Your time and skills make a difference.'
@@ -153,7 +172,7 @@ export function VolunteerPage({ self = false }: { self?: boolean }) {
         <ErrorState error={query.error} />
       ) : (
         <>
-          {!self && (
+          {!self && !taskView && (
             <Card>
               <h2>Volunteer directory</h2>
               <div className="table-wrap">
@@ -167,7 +186,7 @@ export function VolunteerPage({ self = false }: { self?: boolean }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {query.data?.profiles.map((v) => (
+                    {profiles?.map((v) => (
                       <tr key={v.id}>
                         <td>
                           <strong>{query.data?.names?.[v.userId] || v.id.slice(0, 8)}</strong>
@@ -187,7 +206,7 @@ export function VolunteerPage({ self = false }: { self?: boolean }) {
               </div>
             </Card>
           )}
-          {!self && (
+          {!self && !view && (
             <Card>
               <h2>Assign a task</h2>
               <form
@@ -204,7 +223,7 @@ export function VolunteerPage({ self = false }: { self?: boolean }) {
                 <Field label="Search cases" hint="Search by reference, location or request details, then select a case.">
                   <input value={caseSearch} onChange={(e) => { setCaseSearch(e.target.value); setSelectedCase(''); }} />
                 </Field>
-                <Field label="Case" hint={searchingCases ? 'Searching cases…' : cases.error ? 'Could not load cases. Check your connection and change the search to try again.' : availableCases.length === 0 ? 'No selectable cases in these results. Try a more specific search.' : cases.data && cases.data.total > cases.data.items.length ? 'Showing the first 20 matches. Narrow your search to find more.' : undefined}>
+                <Field label="Case" hint={searchingCases ? 'Searching cases…' : cases.error ? 'Could not load cases. Check your connection and change the search to try again.' : availableCases.length === 0 ? 'No selectable cases in these results. Try a more specific search.' : availableCases.length === 20 ? 'Showing the first 20 matches. Narrow your search to find more.' : undefined}>
                   <select name="requestId" required value={selectedCase} onChange={(e) => setSelectedCase(e.target.value)} disabled={searchingCases || !!cases.error}>
                     <option value="">Select a case</option>
                     {availableCases.map((r) => (
@@ -212,10 +231,9 @@ export function VolunteerPage({ self = false }: { self?: boolean }) {
                     ))}
                   </select>
                 </Field>
-                <Field label="Verified volunteer">
-                  <select name="volunteerId" required>
-                    {query.data?.profiles
-                      .filter((v) => v.verified && v.available)
+                <Field label="Verified volunteer" hint={selectedCase && !availableVolunteers.length ? 'No verified, available volunteers in this organisation.' : undefined}>
+                  <select name="volunteerId" required disabled={!availableVolunteers.length} key={selectedCase}>
+                    {availableVolunteers
                       .map((v) => (
                         <option key={v.id} value={v.id}>
                           {query.data?.names?.[v.userId] || v.id.slice(0, 8)} · {v.skills}
@@ -232,7 +250,7 @@ export function VolunteerPage({ self = false }: { self?: boolean }) {
                 <Field label="Due date and time">
                   <input type="datetime-local" name="dueAt" required />
                 </Field>
-                <Button busy={write.isPending} disabled={searchingCases || !!cases.error || !selectedCase}>Assign task</Button>
+                <Button busy={write.isPending} disabled={searchingCases || !!cases.error || !availableVolunteers.length}>Assign task</Button>
               </form>
             </Card>
           )}
@@ -248,19 +266,57 @@ export function VolunteerPage({ self = false }: { self?: boolean }) {
                   Due {formatDate(task.dueAt)} · {task.requiredSkill}
                 </p>
                 {task.note && <p>{task.note}</p>}
+                {!!query.data?.history?.some((event) => event.taskId === task.id) && (
+                  <details className="stack" open={!self && task.status === 'AwaitingVerification' || undefined}>
+                    <summary>Task history and reports</summary>
+                    <ol className="stack">
+                      {query.data.history.filter((event) => event.taskId === task.id).map((event) => (
+                        <li key={event.id}>
+                          <strong>{({ Complete: 'Report submitted', Return: 'Returned for correction', Verify: 'Report verified' } as Record<string, string>)[event.action] ?? event.action}</strong>
+                          {' · '}{formatDate(event.createdAt)}
+                          {event.workDescription && <p>Work completed — {event.workDescription}</p>}
+                          {event.outcome && <p>Outcome — {event.outcome}</p>}
+                          {event.peopleAssisted != null && <p>People assisted — {event.peopleAssisted}</p>}
+                          {event.issues && <p>Issues — {event.issues}</p>}
+                          {event.note && <p>{event.note}</p>}
+                        </li>
+                      ))}
+                    </ol>
+                  </details>
+                )}
+                {self && ['InProgress', 'Returned'].includes(task.status) && (
+                  <form className="stack" onSubmit={(event) => {
+                    event.preventDefault();
+                    const fields = values(event.currentTarget);
+                    write.mutate({ path: `/volunteer-tasks/${task.id}`, data: {
+                      ...fields, action: 'Complete', peopleAssisted: fields.peopleAssisted === '' ? null : Number(fields.peopleAssisted),
+                    } });
+                  }}>
+                    <Field label="Work completed"><textarea name="workDescription" required minLength={10} maxLength={2000} /></Field>
+                    <Field label="Actual outcome"><textarea name="outcome" required minLength={10} maxLength={2000} /></Field>
+                    <Field label="People assisted (if applicable)"><input name="peopleAssisted" type="number" min={0} max={10000000} step={1} /></Field>
+                    <Field label="Issues encountered"><textarea name="issues" maxLength={2000} /></Field>
+                    <Field label="Completion notes"><textarea name="note" maxLength={2000} /></Field>
+                    <Button busy={write.isPending}>Submit for verification</Button>
+                  </form>
+                )}
+                {!self && task.status === 'AwaitingVerification' && (
+                  <form className="stack" onSubmit={(event) => {
+                    event.preventDefault();
+                    const action = ((event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null)?.value;
+                    if (action) write.mutate({
+                      path: `/volunteer-tasks/${task.id}`, data: { action, note: values(event.currentTarget).note },
+                    });
+                  }}>
+                    <Field label="Verification notes"><textarea name="note" required minLength={5} maxLength={2000} /></Field>
+                    <div className="button-row">
+                      <Button value="Verify" busy={write.isPending}>Verify report</Button>
+                      <Button value="Return" variant="secondary" busy={write.isPending}>Return for correction</Button>
+                    </div>
+                  </form>
+                )}
                 <div className="button-row">
-                  {(self
-                    ? task.status === 'Assigned'
-                      ? ['Accept', 'Decline']
-                      : task.status === 'Accepted'
-                        ? ['Start']
-                        : task.status === 'InProgress'
-                          ? ['Complete']
-                          : []
-                    : task.status === 'AwaitingVerification'
-                      ? ['Verify']
-                      : []
-                  ).map((action) => (
+                  {(self ? task.status === 'Assigned' ? ['Accept', 'Decline'] : task.status === 'Accepted' ? ['Start'] : [] : []).map((action) => (
                     <Button
                       key={action}
                       busy={write.isPending}
@@ -270,19 +326,19 @@ export function VolunteerPage({ self = false }: { self?: boolean }) {
                           path: `/volunteer-tasks/${task.id}`,
                           data: {
                             action,
-                            note: action === 'Complete' ? 'Volunteer reports task complete.' : '',
                           },
                         })
                       }
                     >
-                      {action === 'Complete' ? 'Submit for verification' : action}
+                      {action}
                     </Button>
                   ))}
                 </div>
               </Card>
             ))}
           </div>
-          {!tasks?.length && <Empty title="No tasks assigned yet" />}
+          {!directoryView && !tasks?.length && <Empty title={taskView ? 'No tasks match this queue' : 'No tasks assigned yet'} />}
+          {directoryView && !profiles?.length && <Empty title="No volunteers match this queue" />}
         </>
       )}
     </>
@@ -295,9 +351,9 @@ export function CrisesPage() {
   const requestedCrisis = searchParams.get('crisisId');
   const [preparedCrisis, setPreparedCrisis] = useState<string | null>(null);
   const policy = Array.isArray(countries.data) ? countries.data.find(c => c.code === country) : undefined;
-  const requiredLanguages = (policy?.requiredAlertLanguages || (country === "LK" ? "en,si,ta" : "en")).split(",");
+  const [alertDraft, setAlertDraft] = useState(emptyAlertDraft);
+  const alertHistory = useCrisisAlertHistory(country, true);
   const query = useQuery({ queryKey: ['crises', country], queryFn: () => get<Crisis[]>('/crises') }),
-    alerts = useQuery({ queryKey: ['alerts', country], queryFn: () => get<Alert[]>('/alerts') }),
     lookups = useQuery({ queryKey: ['lookups', country], queryFn: () => get<Lookups>('/public/lookups') }),
     write = useWrite();
   const activeCrises = query.data?.filter((crisis) => crisis.active) ?? [];
@@ -409,95 +465,9 @@ export function CrisesPage() {
           </form>
         </Card>
       )}
-      <Card>
-        <h2>Publish public alert</h2>
-        <form
-          className="form-grid"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const f = values(e.currentTarget);
-            write.mutate({
-              path: '/alerts',
-              data: {
-                ...f,
-                expiresAt: new Date(String(f.expiresAt)).toISOString(),
-                published: true,
-                translationsJson: JSON.stringify(Object.fromEntries(['ne','hi'].filter(l => f[l + 'Title']).map(l => [l, {title:f[l + 'Title'],message:f[l + 'Message']}]))),
-              },
-            });
-          }}
-        >
-          <Field label="Crisis">
-            <select name="crisisId" required>
-              {activeCrises.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Severity">
-            <select name="severity">
-              <option>Information</option>
-              <option>Warning</option>
-            </select>
-          </Field>
-          <Field label="Affected area">
-            <input name="area" required />
-          </Field>
-          <Field label="Issuing authority">
-            <input name="authority" required />
-          </Field>
-          <Field label="English title">
-            <input name="title" required />
-          </Field>
-          <Field label="English instructions">
-            <textarea name="message" required />
-          </Field>
-          {(policy?.languages || (country === 'LK' ? 'en,si,ta' : 'en')).split(',').includes('si') && <>
-          <Field label="සිංහල මාතෘකාව">
-            <input name="sinhalaTitle" lang="si" required={requiredLanguages.includes("si")} />
-          </Field>
-          <Field label="සිංහල උපදෙස්">
-            <textarea name="sinhalaMessage" lang="si" required={requiredLanguages.includes("si")} />
-          </Field>
-          </>}
-          {(policy?.languages || (country === 'LK' ? 'en,si,ta' : 'en')).split(',').includes('ta') && <>
-          <Field label="தமிழ் தலைப்பு">
-            <input name="tamilTitle" lang="ta" required={requiredLanguages.includes("ta")} />
-          </Field>
-          <Field label="தமிழ் அறிவுறுத்தல்கள்">
-            <textarea name="tamilMessage" lang="ta" required={requiredLanguages.includes("ta")} />
-          </Field>
-          </>}
-          {(policy?.languages || '').split(',').filter(l => ['ne','hi'].includes(l)).map(l => <div key={l}><Field label={`${l === 'ne' ? 'Nepali' : 'Hindi'} title`}><input name={l + 'Title'} required={requiredLanguages.includes(l)} /></Field><Field label={`${l === 'ne' ? 'Nepali' : 'Hindi'} instructions`}><textarea name={l + 'Message'} required={requiredLanguages.includes(l)} /></Field></div>)}
-          <Field label="Expires at">
-            <input name="expiresAt" type="datetime-local" required />
-          </Field>
-          <div>
-            <p className="muted">Review the translations required for the selected country before publishing.</p>
-            <Button busy={write.isPending}>Publish verified alert</Button>
-          </div>
-        </form>
-      </Card>
-      <Card>
-        <h2>Published alerts</h2>
-        {alerts.error && <ErrorState error={alerts.error} />}
-        {alerts.data
-          ?.filter((a) => query.data?.some((c) => c.id === a.crisisId))
-          .map((a) => (
-            <div className="allocation-row" key={a.id}>
-              <strong>{a.title}</strong>
-              <Badge value={a.severity} />
-              <Button
-                variant="secondary"
-                onClick={() => write.mutate({ path: `/alerts/${a.id}/unpublish` })}
-              >
-                Unpublish
-              </Button>
-            </div>
-          ))}
-      </Card>
+      <CrisisAlertComposer country={country} policy={policy} crises={activeCrises} draft={alertDraft}
+        setDraft={setAlertDraft} loading={query.isPending || countries.isPending} failed={!!(query.error || countries.error)} />
+      <CrisisPublishedAlerts country={country} policy={policy} crises={query.data ?? []} history={alertHistory} />
     </>
   );
 }

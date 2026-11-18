@@ -22,7 +22,7 @@ public enum Priority
 }
 public enum AllocationStatus
 {
-    Reserved, Dispatched, Delivered, Cancelled
+    Reserved, Dispatched, Delivered, Cancelled, DeliveryException
 }
 public enum StayStatus
 {
@@ -30,7 +30,7 @@ public enum StayStatus
 }
 public enum TaskStatus
 {
-    Assigned, Accepted, Declined, InProgress, AwaitingVerification, Completed
+    Assigned, Accepted, Declined, InProgress, AwaitingVerification, Completed, Returned
 }
 public sealed class RuleException(string message) : Exception(message);
 
@@ -126,6 +126,8 @@ public sealed class OperationalArea : Record
 }
 public sealed class CaseShare : Record
 {
+    public string? WorkTitle { get; set; }
+    public string? WorkInstructions { get; set; }
     public Guid RequestId
     {
         get; set;
@@ -495,8 +497,24 @@ public sealed class VolunteerTask : Record
         get; set;
     }
 }
+public sealed class VolunteerTaskEvent : Record
+{
+    public Guid TaskId { get; set; }
+    public string ActorId { get; set; } = "";
+    public string Action { get; set; } = "";
+    public string WorkDescription { get; set; } = "";
+    public string Outcome { get; set; } = "";
+    public int? PeopleAssisted { get; set; }
+    public string Issues { get; set; } = "";
+    public string Note { get; set; } = "";
+}
 public sealed class PublicAlert : Record
 {
+    [System.Text.Json.Serialization.JsonIgnore] public string? WorkflowState { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore] public string? CreatorUserId { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore] public string? ReviewerUserId { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore] public string? EmergencyPublisherUserId { get; set; }
+    public DateTimeOffset? PublishedAt { get; set; }
     public string TranslationsJson { get; set; } = "{}";
     public Guid CrisisId
     {
@@ -513,6 +531,9 @@ public sealed class PublicAlert : Record
 }
 public sealed class Notification : Record
 {
+    public Guid? ScopeOrganisationId { get; set; }
+    public string? ScopeCountryCode { get; set; }
+    public string? ScopeRole { get; set; }
     public bool IsInternal { get; set; }
     public Guid? CrisisId { get; set; }
     public Guid? TaskId { get; set; }

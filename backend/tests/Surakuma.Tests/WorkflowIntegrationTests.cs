@@ -299,7 +299,7 @@ public sealed partial class IntegrationTests
             resourceId = resource.Id;
         }
         using var logistics = await fixture.Login("logistics");
-        async Task Deliver(int quantity)
+        async Task Deliver(int quantity, int received)
         {
             var response = await logistics.PostAsJsonAsync("/api/v1/allocations", new
             {
@@ -309,18 +309,28 @@ public sealed partial class IntegrationTests
             });
             response.EnsureSuccessStatusCode();
             Guid id = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+            var receipt = new { reference = $"UNIT-{id:N}", confirmedQuantity = received, receivedBy = "Test receiving staff",
+                method = "ReceivingStaff", exceptionDetail = received < quantity ? "One pack damaged in transit." : "" };
+            Assert.Equal(HttpStatusCode.BadRequest, (await logistics.PostAsJsonAsync($"/api/v1/allocations/{id}/Deliver", receipt)).StatusCode);
             (await logistics.PostAsync($"/api/v1/allocations/{id}/Dispatch", null)).EnsureSuccessStatusCode();
-            (await logistics.PostAsync($"/api/v1/allocations/{id}/Deliver", null)).EnsureSuccessStatusCode();
+            Assert.Equal(HttpStatusCode.BadRequest, (await logistics.PostAsJsonAsync($"/api/v1/allocations/{id}/Deliver",
+                receipt with { confirmedQuantity = quantity + 1 })).StatusCode);
+            (await logistics.PostAsJsonAsync($"/api/v1/allocations/{id}/Deliver", receipt)).EnsureSuccessStatusCode();
+            (await logistics.PostAsJsonAsync($"/api/v1/allocations/{id}/Deliver", receipt)).EnsureSuccessStatusCode();
         }
-        await Deliver(6);
+        await Deliver(6, 5);
         var partial = await logistics.GetFromJsonAsync<JsonElement>($"/api/v1/requests/{requestId}");
         Assert.Equal("PartiallyFulfilled", partial.GetProperty("request").GetProperty("status").GetString());
+        Assert.Equal(5, partial.GetProperty("request").GetProperty("deliveredQuantity").GetDecimal());
+        var movement = Assert.Single(partial.GetProperty("allocations").EnumerateArray());
+        Assert.Equal(5, movement.GetProperty("confirmedQuantity").GetDecimal());
+        Assert.DoesNotContain("Test receiving staff", partial.GetRawText());
         (await logistics.PostAsJsonAsync($"/api/v1/resources/{resourceId}/replenish", new
         {
-            quantity = 4,
+            quantity = 5,
             note = "Synthetic replenishment"
         })).EnsureSuccessStatusCode();
-        await Deliver(4);
+        await Deliver(5, 5);
         using var manager = await fixture.Login("case");
         (await manager.PatchAsJsonAsync($"/api/v1/requests/{requestId}/status", new
         {

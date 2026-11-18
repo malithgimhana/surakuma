@@ -57,6 +57,35 @@ public sealed class ShelterDashboardTests(ApiFixture fixture) : IClassFixture<Ap
 
         var candidates = await admin.GetFromJsonAsync<JsonElement>(Detail("NP") + "&allocation=true");
         Assert.Equal(candidate.Id, Assert.Single(candidates.EnumerateArray()).GetProperty("id").GetGuid());
+        var shelterUser = await db.Users.SingleAsync(u => u.Email == "shelter@surakuma.test");
+        var caseUser = await db.Users.SingleAsync(u => u.Email == "case@surakuma.test");
+        var externalOrg = new Organisation { Name = "Separate shelter operator" };
+        var externalShelter = new Shelter { CountryCode = "NP", OrganisationId = externalOrg.Id, Name = "Restricted shelter", Capacity = 5 };
+        var externalRequest = new AssistanceRequest { CitizenId = citizenId, CrisisId = crisis.Id, OrganisationId = externalOrg.Id,
+            Category = AidCategory.Shelter, Status = RequestStatus.Approved, SubmissionKey = "restricted-candidate" };
+        candidate.OrganisationId = org.Id;
+        db.AddRange(externalOrg, externalShelter, externalRequest,
+            new Membership { UserId = shelterUser.Id, Role = Roles.ShelterAdmin, CountryCode = "NP", OrganisationId = org.Id },
+            new Membership { UserId = caseUser.Id, Role = Roles.CaseManager, CountryCode = "NP", OrganisationId = org.Id });
+        await db.SaveChangesAsync();
+        (await admin.PostAsJsonAsync("/api/v1/admin/users", new
+        {
+            email = "shelter-authority@surakuma.test", name = "Nepal authority", password = fixture.Password,
+            role = Roles.CountryAdministrator, countryCode = "NP",
+        })).EnsureSuccessStatusCode();
+        using var authority = await fixture.Login("shelter-authority");
+        using var shelterStaff = await fixture.Login("shelter");
+        using var caseStaff = await fixture.Login("case");
+        Assert.Equal(2, (await authority.GetFromJsonAsync<JsonElement>(List("NP"))).GetProperty("entries").GetArrayLength());
+        var specialist = await shelterStaff.GetFromJsonAsync<JsonElement>(List("NP"));
+        Assert.Equal(shelter.Id, Assert.Single(specialist.GetProperty("entries").EnumerateArray()).GetProperty("shelter").GetProperty("id").GetGuid());
+        Assert.Equal(HttpStatusCode.Forbidden, (await shelterStaff.GetAsync(Detail("IN"))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await caseStaff.GetAsync(Detail("NP"))).StatusCode);
+        var restrictedDetails = $"/api/v1/staff/shelters/{externalShelter.Id}?countryCode=NP";
+        Assert.Equal(HttpStatusCode.NotFound, (await shelterStaff.GetAsync(restrictedDetails)).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await shelterStaff.GetAsync(restrictedDetails + "&allocation=true")).StatusCode);
+        var scopedCandidates = await shelterStaff.GetFromJsonAsync<JsonElement>(Detail("NP") + "&allocation=true");
+        Assert.Equal(candidate.Id, Assert.Single(scopedCandidates.EnumerateArray()).GetProperty("id").GetGuid());
         var placement = await admin.PostAsJsonAsync("/api/v1/shelter-allocations?countryCode=NP", new { requestId = candidate.Id, shelterId = shelter.Id });
         placement.EnsureSuccessStatusCode();
         var stayId = (await placement.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
@@ -64,7 +93,7 @@ public sealed class ShelterDashboardTests(ApiFixture fixture) : IClassFixture<Ap
         Assert.Equal(0, afterReservation.GetProperty("available").GetInt32());
         Assert.Equal(8, afterReservation.GetProperty("occupied").GetInt32());
         Assert.Equal(1, afterReservation.GetProperty("households").GetInt32());
-        var arrival = await admin.PostAsync($"/api/v1/shelter-allocations/{stayId}/CheckIn?countryCode=NP", null);
+        var arrival = await shelterStaff.PostAsync($"/api/v1/shelter-allocations/{stayId}/CheckIn?countryCode=NP", null);
         arrival.EnsureSuccessStatusCode();
         var afterArrival = (await admin.GetFromJsonAsync<JsonElement>(List("NP"))).GetProperty("statistics");
         Assert.Equal(0, afterArrival.GetProperty("available").GetInt32());

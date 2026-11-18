@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
@@ -43,7 +44,8 @@ type Entry = {
 };
 type Snapshot = {
   entries: Entry[];
-  statistics: Record<'total' | 'available' | 'occupied' | 'households' | 'attention', number>;
+  statistics: Record<'total' | 'available' | 'occupied' | 'households' | 'attention', number> &
+    Partial<Record<'pendingArrivals' | 'reserved', number>>;
 };
 type Details = {
   households: (Pick<Placement, 'id' | 'people' | 'status' | 'createdAt'> & {
@@ -469,10 +471,14 @@ function ShelterDialog({
 export function ShelterDashboard({
   country,
   onEdit,
+  specialist = false,
 }: {
   country: string;
   onEdit: (shelter: Shelter) => void;
+  specialist?: boolean;
 }) {
+  const [params, setParams] = useSearchParams();
+  const view = params.get('view');
   const snapshot = useQuery({
     queryKey: ['shelter-dashboard', country],
     queryFn: async () => {
@@ -516,7 +522,11 @@ export function ShelterDashboard({
   );
   const visible = entries
     .filter(
-      ({ shelter: s, crises }) =>
+      ({ shelter: s, crises, warnings }) =>
+        (view !== 'arrivals' || s.reserved > 0) &&
+        (view !== 'occupied' || s.occupancy > 0) &&
+        (view !== 'accessible' || (s.open && s.accessible)) &&
+        (view !== 'attention' || warnings.length > 0) &&
         (!status || (status === 'open') === s.open) &&
         (!crisis || crises.some((c) => c.id === crisis)) &&
         (!region || location(s).some((d) => d.id === region)) &&
@@ -554,12 +564,13 @@ export function ShelterDashboard({
     );
   const warningCount = new Set(warnings.map(({ entry }) => entry.shelter.id)).size;
   const active = entries.find((e) => e.shelter.id === selected?.id);
-  const filtered = Boolean(search.trim() || region || crisis || status);
+  const filtered = Boolean(search.trim() || region || crisis || status || view);
   const clear = () => {
     setSearch('');
     setRegion('');
     setCrisis('');
     setStatus('');
+    if (view) setParams((previous) => { previous.delete('view'); return previous; });
   };
   return (
     <>
@@ -568,13 +579,13 @@ export function ShelterDashboard({
         aria-label="Shelter statistics"
         aria-busy={snapshot.isPending}
       >
-        {metrics.map(([key, label, Icon, tone]) => (
+        {(specialist ? [...metrics, ['reserved', 'Reserved spaces', Users, 'blue'], ['pendingArrivals', 'Pending arrivals', House, 'purple']] as const : metrics).map(([key, label, Icon, tone]) => (
           <Card key={key} className={`shelter-stat shelter-stat-${tone}`}>
             <IconTile icon={Icon} tone={tone} />
             <div>
               <span>{label}</span>
               <strong>
-                {snapshot.data?.statistics[key].toLocaleString() ??
+                {snapshot.data?.statistics[key]?.toLocaleString() ??
                   (snapshot.isPending ? <span className="shelter-skeleton" /> : '—')}
               </strong>
             </div>

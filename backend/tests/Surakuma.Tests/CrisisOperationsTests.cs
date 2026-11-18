@@ -16,6 +16,12 @@ public sealed class CrisisOperationsTests(ApiFixture fixture) : IClassFixture<Ap
         using var admin = await fixture.Login("admin");
         using var anonymous = fixture.Client();
         using var coordinator = await fixture.Login("coordinator");
+        (await admin.PostAsJsonAsync("/api/v1/admin/users", new
+        {
+            email = "alert-reviewer@surakuma.test", name = "India alert reviewer", password = fixture.Password,
+            role = Roles.CountryAdministrator, countryCode = "IN",
+        })).EnsureSuccessStatusCode();
+        using var reviewer = await fixture.Login("alert-reviewer");
         var created = await admin.PostAsJsonAsync("/api/v1/crises?countryCode=IN", new
         {
             countryCode = "IN", name = "Isolated India response", district = "Assam",
@@ -50,11 +56,25 @@ public sealed class CrisisOperationsTests(ApiFixture fixture) : IClassFixture<Ap
             Area = "Assam", Authority = "Isolated QA", ExpiresAt = DateTimeOffset.UtcNow.AddHours(2), Published = true,
         };
         Assert.Equal(HttpStatusCode.BadRequest, (await admin.PostAsJsonAsync($"/api/v1/alerts?{country}", alert)).StatusCode);
-        alert.TranslationsJson = """{"hi":{"title":"परीक्षण","message":"केवल परीक्षण"}}""";
+        alert.Published = false;
         Assert.Equal(HttpStatusCode.Forbidden, (await admin.PostAsJsonAsync($"/api/v1/alerts?{otherCountry}", alert)).StatusCode);
-        var published = await admin.PostAsJsonAsync($"/api/v1/alerts?{country}", alert);
-        published.EnsureSuccessStatusCode();
-        var publishedAlert = (await published.Content.ReadFromJsonAsync<PublicAlert>())!;
+        var drafted = await admin.PostAsJsonAsync($"/api/v1/alerts?{country}", alert);
+        drafted.EnsureSuccessStatusCode();
+        var publishedAlert = (await drafted.Content.ReadFromJsonAsync<PublicAlert>())!;
+        var workflow = $"/api/v1/alerts/{publishedAlert.Id}";
+        Assert.DoesNotContain((await anonymous.GetFromJsonAsync<List<PublicAlert>>($"/api/v1/alerts?{country}"))!, row => row.Id == publishedAlert.Id);
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PostAsync($"{workflow}/submit?{country}", null)).StatusCode);
+        alert.TranslationsJson = """{"hi":{"title":"परीक्षण","message":"केवल परीक्षण"}}""";
+        (await admin.PutAsJsonAsync($"{workflow}?{country}", alert)).EnsureSuccessStatusCode();
+        (await admin.PostAsync($"{workflow}/submit?{country}", null)).EnsureSuccessStatusCode();
+        var approval = new { reason = "Confirmed source, affected area and translations." };
+        Assert.Equal(HttpStatusCode.Forbidden, (await admin.PostAsJsonAsync($"{workflow}/approve?{country}", approval)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await coordinator.PostAsJsonAsync($"{workflow}/approve?{country}", approval)).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PostAsync($"{workflow}/publish?{country}", null)).StatusCode);
+        (await reviewer.PostAsJsonAsync($"{workflow}/approve?{country}", approval)).EnsureSuccessStatusCode();
+        Assert.DoesNotContain((await anonymous.GetFromJsonAsync<List<PublicAlert>>($"/api/v1/alerts?{country}"))!, row => row.Id == publishedAlert.Id);
+        (await admin.PostAsync($"{workflow}/publish?{country}", null)).EnsureSuccessStatusCode();
+        (await admin.PostAsync($"{workflow}/publish?{country}", null)).EnsureSuccessStatusCode();
         Assert.Contains((await anonymous.GetFromJsonAsync<List<PublicAlert>>($"/api/v1/alerts?{country}"))!, row => row.Id == publishedAlert.Id);
         Assert.DoesNotContain((await anonymous.GetFromJsonAsync<List<PublicAlert>>($"/api/v1/alerts?{otherCountry}"))!, row => row.Id == publishedAlert.Id);
 
@@ -71,7 +91,7 @@ public sealed class CrisisOperationsTests(ApiFixture fixture) : IClassFixture<Ap
         Assert.Equal("Published", Assert.Single(filtered.GetProperty("items").EnumerateArray()).GetProperty("status").GetString());
         var withdraw = $"/api/v1/alerts/{publishedAlert.Id}/unpublish";
         Assert.Equal(HttpStatusCode.Forbidden, (await admin.PostAsync($"{withdraw}?{otherCountry}", null)).StatusCode);
-        Assert.Equal(HttpStatusCode.NoContent, (await admin.PostAsync($"{withdraw}?{country}", null)).StatusCode);
+        (await admin.PostAsJsonAsync($"{withdraw}?{country}", new { reason = "The source issued updated guidance." })).EnsureSuccessStatusCode();
         var all = await admin.GetFromJsonAsync<JsonElement>($"{history}?{country}&status=All&pageSize=3");
         Assert.Equal(0, all.GetProperty("publishedCount").GetInt32());
         Assert.Equal(new[] { "Draft", "Expired", "Withdrawn" }, all.GetProperty("items").EnumerateArray()
@@ -79,11 +99,24 @@ public sealed class CrisisOperationsTests(ApiFixture fixture) : IClassFixture<Ap
 
         var responseStatus = $"{crisisPath}/response-status?{country}";
         (await admin.PutAsJsonAsync(responseStatus, new { active = false })).EnsureSuccessStatusCode();
-        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PostAsJsonAsync($"/api/v1/alerts?{country}", alert)).StatusCode);
         (await admin.PutAsJsonAsync(responseStatus, new { active = true })).EnsureSuccessStatusCode();
         var restored = (await admin.GetFromJsonAsync<List<Crisis>>($"/api/v1/crises?{country}"))!.Single(x => x.Id == crisis.Id);
         Assert.True(restored.Active);
         Assert.Equal("Isolated India response", restored.Name);
+
+        alert.Severity = "Critical";
+        var urgentDraft = await admin.PostAsJsonAsync($"/api/v1/alerts?{country}", alert);
+        urgentDraft.EnsureSuccessStatusCode();
+        var urgent = (await urgentDraft.Content.ReadFromJsonAsync<PublicAlert>())!;
+        var emergency = $"/api/v1/alerts/{urgent.Id}";
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PostAsync($"{emergency}/emergency-publish?{country}", null)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await coordinator.PostAsJsonAsync($"{emergency}/emergency-publish?{country}", approval)).StatusCode);
+        (await admin.PostAsJsonAsync($"{emergency}/emergency-publish?{country}", new { reason = "Immediate evacuation instructions require release." })).EnsureSuccessStatusCode();
+        Assert.Equal(HttpStatusCode.Forbidden, (await admin.PostAsJsonAsync($"{emergency}/post-review?{country}", approval)).StatusCode);
+        (await reviewer.PostAsJsonAsync($"{emergency}/post-review?{country}", approval)).EnsureSuccessStatusCode();
+        var audit = await admin.GetFromJsonAsync<JsonElement>($"{emergency}/history?{country}");
+        Assert.Contains(audit.EnumerateArray(), a => a.GetProperty("action").GetString() == "PublicAlertEmergencyPublished");
+        Assert.Contains(audit.EnumerateArray(), a => a.GetProperty("action").GetString() == "PublicAlertEmergencyReviewed");
     }
 
     [Fact]

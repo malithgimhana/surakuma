@@ -522,6 +522,7 @@ const entries: string[][] = [
   ['delivery.Reserved', 'Aid reserved; awaiting dispatch', 'සහාය වෙන් කර ඇත; පිටත් කිරීමට බලා සිටී', 'உதவி ஒதுக்கப்பட்டுள்ளது; அனுப்புவதற்காக காத்திருக்கிறது'],
   ['delivery.Dispatched', 'Aid dispatched; awaiting delivery', 'සහාය පිටත් කර ඇත; ලබාදීමට බලා සිටී', 'உதவி அனுப்பப்பட்டுள்ளது; வழங்குவதற்காக காத்திருக்கிறது'],
   ['delivery.Delivered', 'Aid delivered', 'සහාය ලබා දී ඇත', 'உதவி வழங்கப்பட்டது'],
+  ['delivery.DeliveryException', 'Delivery attempted. Aid is still outstanding.', 'බෙදාහැරීමට උත්සාහ කළ නමුත් සහාය තවමත් ලැබී නැත.', 'விநியோகம் முயற்சிக்கப்பட்டது. உதவி இன்னும் கிடைக்கவில்லை.'],
   ['status.Escalated', 'Escalated', 'වැඩිදුර අවධානයට යොමු කර ඇත', 'மேலதிக கவனத்திற்கு அனுப்பப்பட்டது'],
   ['status.Dispatched', 'Dispatched', 'පිටත්කර ඇත', 'அனுப்பப்பட்டது'],
   ['status.Delivered', 'Delivered', 'ලබාදී ඇත', 'வழங்கப்பட்டது'],

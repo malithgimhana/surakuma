@@ -6,6 +6,8 @@ import { api, errorMessage, get } from './api';
 import { Button, categories, ErrorState, Field, formatDate, Loading } from './components';
 import { CountryScope, RegionField } from './geography';
 import { OrganisationDialog } from './OrganisationDialog';
+import { DeliveryFields, deliveryInput } from './DeliveryFields';
+import { ResourceLocationFields } from './ResourceLocationFields';
 import { isMeasuredUnit } from './quantity';
 import { actionLabels, resourceCode, shipmentCode, transferMatches } from './logistics';
 import type { InventoryItem, LogisticsData, LogisticsDialogState } from './logistics';
@@ -41,7 +43,7 @@ export function LogisticsDialogs({ state, data, defaultCountry, change, close, s
   const item = 'resourceId' in state ? data.inventory.find(row => row.id === state.resourceId) : undefined;
   const titles = {
     resource: 'Add resource', depot: 'Register depot', stock: 'Record stock', dispatch: 'Create dispatch',
-    reservation: 'Reserve stock', transfer: 'Create transfer', details: 'Resource details',
+    reservation: 'Reserve stock', transfer: 'Create transfer', details: 'Resource details', receipt: 'Delivery receipt',
   };
   const title = state.kind === 'transition' ? actionLabels[state.action] : titles[state.kind];
   const controls = (label: string, disabled = false) => (
@@ -72,6 +74,21 @@ export function LogisticsDialogs({ state, data, defaultCountry, change, close, s
       content = item ? <ResourceDetails resource={item} data={data} form={form} controls={controls}
         busy={write.isPending} change={change} /> : <p>Resource is no longer available.</p>;
       break;
+    case 'receipt': {
+      const { receipt, order } = state;
+      const unit = data.inventory.find(row => row.id === order.resourceId)?.unit;
+      content = <dl className="stack">
+        <div><dt>Delivery reference</dt><dd>{receipt.reference}</dd></div>
+        <div><dt>Confirmed quantity</dt><dd>{receipt.confirmedQuantity} of {order.quantity} {unit}</dd></div>
+        <div><dt>Actual receipt time</dt><dd>{formatDate(receipt.receivedAt)}</dd></div>
+        <div><dt>Received by</dt><dd>{receipt.receivedBy}</dd></div>
+        <div><dt>Recorded by</dt><dd>{data.actors[receipt.actorId] ?? receipt.actorId}</dd></div>
+        <div><dt>Confirmation method</dt><dd>{receipt.method === 'ReceivingStaff' ? 'Authorized receiving staff' : 'Recipient acknowledgment'}</dd></div>
+        {receipt.note && <div><dt>Notes</dt><dd>{receipt.note}</dd></div>}
+        {receipt.exceptionDetail && <div><dt>Delivery exception</dt><dd>{receipt.exceptionDetail}</dd></div>}
+      </dl>;
+      break;
+    }
     case 'transition': {
       const { order, action } = state;
       const unit = data.inventory.find(row => row.id === order.resourceId)?.unit;
@@ -83,13 +100,15 @@ export function LogisticsDialogs({ state, data, defaultCountry, change, close, s
             : 'The shipment will be marked delivered.';
       content = <form className="stack" onSubmit={event => form(event, fields => ({
         path: `/logistics/${order.requestId ? 'allocations' : 'orders'}/${order.id}/${action}`,
-        data: { reason: read(fields, 'reason') }, message: action === 'dispatch' ? 'Stock dispatched.'
+        data: action === 'deliver' ? { delivery: deliveryInput(fields) } : { reason: read(fields, 'reason') }, message: action === 'dispatch' ? 'Stock dispatched.'
           : action === 'deliver' ? 'Receipt confirmed.' : 'Reservation released.',
       }))}>
         <p><strong>{shipmentCode(order)}</strong> · {order.quantity} {unit}</p>
         <p>{order.origin} → {order.destination}</p>
         <p className="muted">{description}</p>
-        <ReasonField />
+        {action === 'deliver'
+          ? <DeliveryFields quantity={order.quantity} unit={unit} transfer={order.kind === 'Transfer'} />
+          : <ReasonField />}
         {controls(title)}
       </form>;
       break;
@@ -174,8 +193,7 @@ function RegisterForm({ kind, data, defaultCountry, operationId, busy, form, con
           <Field label="Low-stock threshold" hint="Alerts appear below this amount of available stock.">
             <input name="threshold" type="number" min={0} max={10000000} step={quantityStep(unit)} />
           </Field>
-          <Field label="Latitude"><input name="latitude" type="number" min={-90} max={90} step="any" required /></Field>
-          <Field label="Longitude"><input name="longitude" type="number" min={-180} max={180} step="any" required /></Field>
+          <ResourceLocationFields key={country} country={country} />
           <CountryScope.Provider value={country}><RegionField key={country} /></CountryScope.Provider>
           <Field label="Suitability notes"><input name="suitability" maxLength={1000} /></Field>
           <label className="checkbox-label"><input name="transport" type="checkbox" defaultChecked />Transport available</label>

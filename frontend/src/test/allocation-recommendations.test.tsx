@@ -1,10 +1,11 @@
-import { expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import '../i18n';
 import { CaseDetails } from '../StaffPages';
-import { api } from '../api';
+import { api, get } from '../api';
+import type { RequestDetail } from '../types';
 
 vi.mock('../auth', () => ({ useAuth: () => ({ user: { roles: ['Logistics'] } }) }));
 vi.mock('../MapView', () => ({ MapView: () => null }));
@@ -18,6 +19,7 @@ vi.mock('../api', () => ({
   api: { request: vi.fn().mockResolvedValue({ data: {} }) },
   errorMessage: () => 'Error',
 }));
+afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 it('explains shortage and records when staff reserve the alternative', async () => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -28,4 +30,20 @@ it('explains shortage and records when staff reserve the alternative', async () 
   fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '2' } });
   fireEvent.click(screen.getByRole('button', { name: 'Approve reservation' }));
   await waitFor(() => expect(api.request).toHaveBeenCalledWith(expect.objectContaining({ url: '/allocations', data: { requestId: 'case', resourceId: 'two', quantity: 2, recommendedResourceId: 'one' } })));
+});
+
+it('explains why a verified case cannot reserve stock until approval', async () => {
+  const original = vi.mocked(get).getMockImplementation()!;
+  vi.mocked(get).mockImplementation(async (path) => {
+    const data = await original(path);
+    if (path !== '/requests/case') return data;
+    const detail = data as RequestDetail;
+    return { ...detail, request: { ...detail.request, status: 'Verified' } };
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}><MemoryRouter initialEntries={['/staff/cases/case']}>
+    <Routes><Route path="/staff/cases/:id" element={<CaseDetails />} /></Routes>
+  </MemoryRouter></QueryClientProvider>);
+  expect(await screen.findByText(/Current status: Verified.*verified and approved/)).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Approve reservation' })).not.toBeInTheDocument();
 });

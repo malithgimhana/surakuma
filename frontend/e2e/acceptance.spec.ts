@@ -1,8 +1,8 @@
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
-const settings = JSON.parse(
+const seedPassword = process.env.SURAKUMA_ACCEPTANCE_PASSWORD ?? (JSON.parse(
   readFileSync(new URL('../../backend/data/development-settings.json', import.meta.url), 'utf8'),
-) as { Seed: { Password: string } };
+) as { Seed: { Password: string } }).Seed.Password;
 test('public homepage and Sinhala mobile navigation', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 812 });
   await page.goto('/');
@@ -20,11 +20,11 @@ test('public homepage and Sinhala mobile navigation', async ({ page }) => {
 });
 test('citizen submits, staff review AI, logistics deliver partial aid and close the case', async ({
   page,
-}) => {
+}, run) => {
   test.setTimeout(120000);
   await page.goto('/login');
   await page.getByLabel('Email address', { exact: true }).fill('citizen@surakuma.test');
-  await page.getByLabel('Password', { exact: true }).fill(settings.Seed.Password);
+  await page.getByLabel('Password', { exact: true }).fill(seedPassword);
   await page.getByRole('button', { name: 'Log in', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Hello, Amara' })).toBeVisible();
   await page.reload();
@@ -54,7 +54,7 @@ test('citizen submits, staff review AI, logistics deliver partial aid and close 
   await page.waitForURL('/');
   await page.getByRole('link', { name: 'Log in', exact: true }).first().click();
   await page.getByLabel('Email address', { exact: true }).fill('case@surakuma.test');
-  await page.getByLabel('Password', { exact: true }).fill(settings.Seed.Password);
+  await page.getByLabel('Password', { exact: true }).fill(seedPassword);
   await page.getByRole('button', { name: 'Log in', exact: true }).click();
   await page.waitForURL('/staff');
   await page.goto(`/staff/cases/${id}`);
@@ -66,14 +66,14 @@ test('citizen submits, staff review AI, logistics deliver partial aid and close 
   await page.getByRole('button', { name: 'Approve', exact: true }).click();
   await page.getByRole('button', { name: 'Approve case', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Approve case', exact: true })).toHaveCount(0);
-  await page.screenshot({ path: '../docs/screenshots/case-review.png', fullPage: true });
+  await page.screenshot({ path: run.outputPath('case-review.png'), fullPage: true });
 
   async function switchAccount(account: string, destination: string) {
     await page.getByRole('button', { name: 'Log out', exact: true }).click();
     await page.waitForURL('/');
     await page.getByRole('link', { name: 'Log in', exact: true }).first().click();
     await page.getByLabel('Email address', { exact: true }).fill(`${account}@surakuma.test`);
-    await page.getByLabel('Password', { exact: true }).fill(settings.Seed.Password);
+    await page.getByLabel('Password', { exact: true }).fill(seedPassword);
     await page.getByRole('button', { name: 'Log in', exact: true }).click();
     await page.waitForURL(
       (url) => url.pathname === destination || url.pathname.startsWith(destination + '/'),
@@ -83,12 +83,23 @@ test('citizen submits, staff review AI, logistics deliver partial aid and close 
   await page.getByRole('link', { name: 'Resources & logistics', exact: true }).click();
   await page.getByRole('button', { name: 'Add resource', exact: true }).click();
   const resourceName = `Browser demo packs ${Date.now()}`;
+  const depotName = `Acceptance depot ${Date.now()}`;
+  await page.getByRole('button', { name: 'Register a depot', exact: true }).click();
+  await page.getByLabel('Organisation', { exact: true }).selectOption({ label: 'Surakuma Community Response (demo)' });
+  await page.getByLabel('Depot name', { exact: true }).fill(depotName);
+  await page.getByLabel('Depot location', { exact: true }).fill('Synthetic Colombo depot');
+  await page.getByRole('button', { name: 'Save depot', exact: true }).click();
+  await page.getByRole('button', { name: 'Add resource', exact: true }).click();
+  await page.getByLabel('Depot', { exact: true }).selectOption({ label: depotName });
+  await expect(page.getByLabel('Latitude', { exact: true })).toHaveValue('');
+  await expect(page.getByLabel('Longitude', { exact: true })).toHaveValue('');
+  await page.getByLabel('Latitude', { exact: true }).fill('6.92');
+  await page.getByLabel('Longitude', { exact: true }).fill('79.9');
   await page.getByLabel('Resource name', { exact: true }).fill(resourceName);
   await page.getByLabel('Category', { exact: true }).selectOption('FoodWater');
   await page.getByLabel('Opening stock', { exact: true }).fill('6');
-  await page.getByLabel('Location', { exact: true }).fill('Synthetic Colombo depot');
   await page.getByRole('button', { name: 'Save resource', exact: true }).click();
-  await expect(page.getByRole('heading', { name: resourceName, exact: true })).toBeVisible();
+  await expect(page.getByRole('rowheader', { name: new RegExp(resourceName) })).toBeVisible();
   await page.goto(`/staff/cases/${id}`);
   const resource = page.getByLabel('Resource', { exact: true });
   await expect(resource.locator('option').filter({ hasText: resourceName })).toHaveCount(1);
@@ -99,22 +110,22 @@ test('citizen submits, staff review AI, logistics deliver partial aid and close 
   await page.getByRole('button', { name: 'Approve reservation' }).click();
   await page.getByRole('button', { name: 'Dispatch', exact: true }).click();
   await page.getByRole('button', { name: 'Confirm delivery', exact: true }).click();
+  await page.getByLabel('Delivery reference').fill('ACCEPTANCE-PARTIAL');
+  await page.getByLabel('Receiving person or representative').fill('Synthetic receiving representative');
+  await page.getByRole('button', { name: 'Record receipt', exact: true }).click();
   await expect(page.getByText('6 / 10', { exact: true })).toBeVisible();
   await expect(
     page.locator('.page-header').getByText('Partially delivered', { exact: true }),
   ).toBeVisible();
-  await page.screenshot({ path: '../docs/screenshots/partial-delivery.png', fullPage: true });
+  await page.screenshot({ path: run.outputPath('partial-delivery.png'), fullPage: true });
 
   await page.getByRole('link', { name: 'Resources & logistics', exact: true }).click();
-  const card = page
-    .locator('.card')
-    .filter({ has: page.getByRole('heading', { name: resourceName, exact: true }) });
-  await card.getByLabel(`Replenish ${resourceName} quantity`, { exact: true }).fill('4');
-  await card
-    .getByLabel('Replenishment reason', { exact: true })
-    .fill('Synthetic shortage resolved');
-  await card.getByRole('button', { name: 'Add stock', exact: true }).click();
-  await expect(card.locator('.stock-numbers').first()).toContainText('4');
+  await page.getByRole('button', { name: 'Record stock', exact: true }).click();
+  await page.getByLabel('Resource', { exact: true }).selectOption({ label: `${resourceName} · ${depotName} (LK)` });
+  await page.getByLabel('Quantity (packs)', { exact: true }).fill('4');
+  await page.getByLabel('Reason', { exact: true }).fill('Synthetic shortage resolved');
+  await page.getByRole('button', { name: 'Save stock movement', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Stock movement recorded.' })).toBeVisible();
   await page.goto(`/staff/cases/${id}`);
   await page
     .getByLabel('Resource', { exact: true })
@@ -123,6 +134,9 @@ test('citizen submits, staff review AI, logistics deliver partial aid and close 
   await page.getByRole('button', { name: 'Approve reservation' }).click();
   await page.getByRole('button', { name: 'Dispatch', exact: true }).click();
   await page.getByRole('button', { name: 'Confirm delivery', exact: true }).click();
+  await page.getByLabel('Delivery reference').fill('ACCEPTANCE-REMAINDER');
+  await page.getByLabel('Receiving person or representative').fill('Synthetic receiving representative');
+  await page.getByRole('button', { name: 'Record receipt', exact: true }).click();
   await expect(page.getByText('10 / 10', { exact: true })).toBeVisible();
   await switchAccount('case', '/staff');
   await page.goto(`/staff/cases/${id}`);

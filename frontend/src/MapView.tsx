@@ -11,10 +11,14 @@ export function MapView({
   shelters = [],
   point,
   onPick,
+  initialCenter,
+  initialZoom = 12,
 }: {
   shelters?: PublicShelter[];
   point?: [number, number];
   onPick?: (lat: number, lng: number) => void;
+  initialCenter?: [number, number];
+  initialZoom?: number;
 }) {
   const { t } = useTranslation();
   const [failed, setFailed] = useState(false);
@@ -22,8 +26,8 @@ export function MapView({
     <div className="map-wrap">
       <MapContainer
         key={point ? `${point[0].toFixed(2)},${point[1].toFixed(2)}` : 'default'}
-        center={point || [6.94, 79.9]}
-        zoom={12}
+        center={point || initialCenter || [6.94, 79.9]}
+        zoom={point ? 12 : initialZoom}
         scrollWheelZoom={false}
         style={{ height: 320, width: '100%' }}
       >

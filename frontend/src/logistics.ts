@@ -36,7 +36,7 @@ export interface Shipment {
   origin: string;
   destination: string;
   quantity: number;
-  status: 'Reserved' | 'Dispatched' | 'Delivered' | 'Cancelled';
+  status: 'Reserved' | 'Dispatched' | 'Delivered' | 'Cancelled' | 'DeliveryException';
   actorId: string;
   reason: string;
   createdAt: string;
@@ -52,18 +52,33 @@ export interface LogisticsData {
   partners: Array<{ id: string; name: string; countryCode: string }>;
   orders: Shipment[];
   actors: Record<string, string>;
+  receipts?: Receipt[];
+}
+export interface Receipt {
+  id: string;
+  allocationId: string | null;
+  logisticsOrderId: string | null;
+  reference: string;
+  confirmedQuantity: number;
+  receivedAt: string;
+  receivedBy: string;
+  method: 'ReceivingStaff' | 'RecipientAcknowledgment';
+  actorId: string;
+  note: string;
+  exceptionDetail: string;
 }
 
 export type ShipmentAction = 'dispatch' | 'deliver' | 'cancel';
 export const actionLabels: Record<ShipmentAction, string> = {
   dispatch: 'Dispatch stock', deliver: 'Confirm receipt', cancel: 'Release reservation',
 };
-export const shipmentStatus = { Reserved: 'Pending', Dispatched: 'In transit', Delivered: 'Delivered', Cancelled: 'Cancelled' };
+export const shipmentStatus = { Reserved: 'Pending', Dispatched: 'In transit', Delivered: 'Delivered', Cancelled: 'Cancelled', DeliveryException: 'Delivery failed' };
 
 export type LogisticsDialogState =
   | { kind: 'resource' | 'depot'; country?: string }
   | { kind: 'stock' | 'dispatch' | 'reservation' | 'transfer'; resourceId?: string }
   | { kind: 'details'; resourceId: string }
+  | { kind: 'receipt'; receipt: Receipt; order: Shipment }
   | { kind: 'transition'; order: Shipment; action: ShipmentAction };
 
 export function resourceCode(item: InventoryItem) {

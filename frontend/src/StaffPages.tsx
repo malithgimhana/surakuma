@@ -1,23 +1,20 @@
 import { RegionField, useCountry } from './geography';
+import { countryPath } from './crisisOperationsApi';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { DeliveryFields, deliveryInput } from './DeliveryFields';
+import { ResourceLocationFields } from './ResourceLocationFields';
+import { OrganisationDialog } from './OrganisationDialog';
 import { Link, useLocation, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { BarChart, Bar, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import {
   ArrowRight,
   Boxes,
   BrainCircuit,
   CheckCircle2,
-  Clock,
-  ClipboardList,
   Download,
   Plus,
   Search,
-  ShieldCheck,
-  Tent,
-  TriangleAlert,
-  Users,
 } from 'lucide-react';
 import { api, errorMessage, get } from './api';
 import { useAuth } from './auth';
@@ -46,14 +43,12 @@ import type {
   Alert,
   Crisis,
   Lookups,
-  Metrics,
   Page,
   Priority,
   RequestDetail,
   Resource,
   Shelter,
   User,
-  VolunteerData,
 } from './types';
 
 function useWrite() {
@@ -109,153 +104,17 @@ function OrgSelect({ name = 'organisationId' }: { name?: string }) {
 function formValues(form: HTMLFormElement) {
   return Object.fromEntries(new FormData(form).entries());
 }
-export function StaffOverview() {
-  const query = useQuery({
-    queryKey: ['metrics'],
-    queryFn: () => get<Metrics>('/reports/metrics'),
-  });
-  const { user } = useAuth();
-  if (query.isPending) return <Loading />;
-  if (query.error) return <ErrorState error={query.error} retry={() => void query.refetch()} />;
-  const m = query.data!;
-  return (
-    <>
-      <PageHeader
-        eyebrow="COORDINATING CARE"
-        title={`Welcome back, ${user?.name.split(' ')[0]}`}
-        description="One shared view. More coordinated support."
-        action={
-          <Link to="/staff/cases" className="button primary">
-            Review incoming cases
-            <ArrowRight size={18} />
-          </Link>
-        }
-      />
-      <div className="metric-grid">
-        {[
-          [m.openCases, 'Open cases', ClipboardList, 'blue'],
-          [m.overdueCases, 'Overdue · over 24h', Clock, 'coral'],
-          [m.resolvedCases, 'Assistance delivered', CheckCircle2, 'green'],
-          [m.escalatedCases, 'Escalated cases', TriangleAlert, 'yellow'],
-        ].map(([value, label, Icon, tone]) => {
-          const Component = Icon as typeof Clock;
-          return (
-            <Card key={String(label)} className="metric">
-              <IconTile icon={Component} tone={String(tone)} />
-              <strong>{String(value)}</strong>
-              <span>{String(label)}</span>
-            </Card>
-          );
-        })}
-      </div>
-      <div className="two-column section-small">
-        <Card>
-          <h2>Case workload</h2>
-          <p className="muted">Current records within your authorised scope.</p>
-          <div className="chart" role="img" aria-label="Case counts by status">
-            <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={m.byStatus}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="status" tick={{ fontSize: 11 }} />
-                <YAxis allowDecimals={false} />
-                <Tooltip />
-                <Bar dataKey="count" fill="#1769e0" radius={[6, 6, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-          <ul className="chart-values">
-            {m.byStatus.map((s) => (
-              <li key={s.status}>
-                {s.status}: {s.count}
-              </li>
-            ))}
-          </ul>
-        </Card>
-        <Card>
-          <h2>Operational pulse</h2>
-          <dl className="pulse">
-            <div>
-              <dt>Average first review</dt>
-              <dd>
-                {m.averageResponseHours === null ? 'No reviews yet' : `${m.averageResponseHours} h`}
-              </dd>
-            </div>
-            <div>
-              <dt>Shelter occupancy</dt>
-              <dd>
-                {m.shelterOccupancy} / {m.shelterCapacity}
-              </dd>
-            </div>
-            <div>
-              <dt>Shelter reservations</dt>
-              <dd>{m.shelterReserved}</dd>
-            </div>
-            <div>
-              <dt>Stock reserved / physical</dt>
-              <dd>
-                {m.stockByUnit?.map((stock, i) => <div key={i}>{stock.category}: {stock.reserved} / {stock.stock} {stock.unit}</div>) ?? "See resource ledger"}
-              </dd>
-            </div>
-            <div>
-              <dt>AI override frequency</dt>
-              <dd>{(m.aiOverrideFrequency * 100).toFixed(0)}% · {m.aiApprovedCount} approved, {m.aiModifiedCount} modified, {m.aiRejectedCount} rejected, {m.aiDeferredCount} deferred</dd>
-            </div>
-          </dl>
-          <small className="muted">
-            Stock is grouped by category and unit; use the resource ledger for item-level
-            decisions.
-          </small>
-        </Card>
-      </div>
-      <Card>
-        <div className="section-heading">
-          <h2>Outstanding needs</h2>
-          <NextLink to="/staff/cases">Review cases</NextLink>
-        </div>
-        {m.shortages.length ? (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Case</th>
-                  <th>Category</th>
-                  <th>Priority</th>
-                  <th>Outstanding</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {m.shortages.map((s) => (
-                  <tr key={s.id}>
-                    <td>{s.reference}</td>
-                    <td>{s.category}</td>
-                    <td>
-                      <Badge value={s.priority} />
-                    </td>
-                    <td>{s.outstanding}</td>
-                    <td>
-                      <Link to={`/staff/cases/${s.id}`}>Review →</Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <Empty title="No approved outstanding needs" />
-        )}
-      </Card>
-    </>
-  );
-}
 export function CaseQueue() {
   const { pathname, search: queueSearch } = useLocation();
   const country = useCountry();
   const [params] = useSearchParams();
   const adminQueue = pathname === '/admin/cases';
-  const view = adminQueue ? params.get('view') : null;
+  const view = params.get('view');
+  const staffRole = adminQueue ? '' : params.get('role') ?? '';
   const crisisId = adminQueue && params.get('country') === country ? params.get('crisisId') : null;
-  const viewLabel = view === 'overdue' ? 'Overdue cases' : view === 'open' ? 'Open cases' : 'Case queue';
+  const viewLabel = ({ overdue: 'Overdue cases', open: 'Open cases', critical: 'Critical cases', escalated: 'Escalated cases',
+    'pending-ai': 'Cases awaiting AI review', unassigned: 'Unassigned cases', shortages: 'Resource shortages',
+    fulfilment: 'Cases eligible for fulfilment', assigned: 'Assigned cases' } as Record<string, string>)[view ?? ''] ?? 'Case queue';
   const { user } = useAuth();
   const { t } = useTranslation();
   const organisations = useLookups();
@@ -278,15 +137,20 @@ export function CaseQueue() {
     enabled: !!user?.roles.includes('Coordinator'),
   });
   const [search, setSearch] = useState(''),
-    [status, setStatus] = useState(''),
-    [assignedToMe, setAssignedToMe] = useState(isCaseManager),
+    [filterState, setFilterState] = useState<{ search: string; status?: string; assigned?: boolean }>({ search: queueSearch }),
     [page, setPage] = useState(1);
+  const status = filterState.search === queueSearch ? filterState.status ?? params.get('status') ?? '' : params.get('status') ?? '';
+  const assignedToMe = filterState.search === queueSearch ? filterState.assigned ?? (params.get('assignedToMe') === 'true' || !staffRole && isCaseManager) :
+    params.get('assignedToMe') === 'true' || !staffRole && isCaseManager;
+  const setStatus = (status: string) => setFilterState({ search: queueSearch, status, assigned: assignedToMe });
+  const setAssignedToMe = (assigned: boolean) => setFilterState({ search: queueSearch, status, assigned });
   const q = useQuery({
-    queryKey: ['cases', country, search, status, page, assignedToMe, view, crisisId],
+    queryKey: ['cases', country, search, status, page, assignedToMe, view, crisisId, staffRole],
     queryFn: () => {
       const query = new URLSearchParams({ search, status, page: String(page), assignedToMe: String(assignedToMe) });
       if (view) query.set('view', view);
       if (crisisId) query.set('crisisId', crisisId);
+      if (staffRole) query.set('staffRole', staffRole);
       return get<Page<AidRequest>>(`/requests?${query}`);
     },
   });
@@ -437,6 +301,7 @@ export function CaseQueue() {
 }
 export function CaseDetails() {
   const location = useLocation();
+  const country = useCountry();
   const { t } = useTranslation();
   const { id } = useParams(),
     { user } = useAuth(),
@@ -478,15 +343,37 @@ export function CaseDetails() {
     queryFn: () => get<Shelter[]>(`/requests/${id}/shelters`),
     enabled: canShelter,
   });
+  const shares = useQuery({
+    queryKey: ['partner-case-shares', country, id],
+    queryFn: () => get<string[]>(countryPath(`/partner/cases/${id}/shares`, country)),
+    enabled: !!id && !!canAssign,
+  });
   const [resourceId, setResourceId] = useState(''),
-    [ignoredRecommendation, setIgnoredRecommendation] = useState(false),
+    [deliveryId, setDeliveryId] = useState<string>(),
     [reason, setReason] = useState(''),
-    [priority, setPriority] = useState<Priority>('High'),
+    [ignoredRecommendation, setIgnoredRecommendation] = useState(false),
+    [decisions, setDecisions] = useState<Record<string, { priority?: Priority; reason?: string }>>({}),
     [downloadError, setDownloadError] = useState<unknown>(null);
   if (q.isPending) return <Loading />;
   if (q.error) return <ErrorState error={q.error} />;
   const d = q.data!,
     r = d.request;
+  const sharedOrganisations = Array.isArray(shares.data) ? shares.data : [];
+  const activeFulfilment = ['Approved', 'InProgress', 'PartiallyFulfilled'].includes(r.status);
+  const outstanding = Math.max(0, r.quantity - r.deliveredQuantity - d.allocations
+    .filter((a) => a.status === 'Reserved' || a.status === 'Dispatched')
+    .reduce((sum, a) => sum + a.quantity, 0));
+  const canReserveResources = activeFulfilment && outstanding > 0;
+  const suitableResources = resources.data?.filter((x) => x.category === r.category && x.available > 0 && x.transportAvailable !== false) ?? [];
+  const selectedResource = suitableResources.find((x) => x.id === resourceId) ?? suitableResources[0];
+  const maxReservation = Math.min(outstanding, selectedResource?.available ?? 0);
+  const delivery = d.allocations.find((a) => a.id === deliveryId && a.status === 'Dispatched');
+  const canReserveShelter = ['Approved', 'InProgress'].includes(r.status) && r.quantity === 1 && r.deliveredQuantity === 0 &&
+    !d.placements.some((p) => p.status === 'Reserved' || p.status === 'CheckedIn');
+  const suitableShelters = shelters.data?.filter((s) => s.open && s.available >= r.householdSize && (!r.accessibilityNeeds || s.accessible)) ?? [];
+  const reservationStatus = ['Submitted', 'UnderReview', 'Verified'].includes(r.status)
+    ? `Current status: ${r.status}. The case must be verified and approved before reserving.`
+    : `Current status: ${r.status}. There is no eligible outstanding reservation for this case.`;
   const recommended = allocationRecommendations.data?.candidates.find((candidate) => candidate.transportAvailable);
   const next = (
     {
@@ -575,6 +462,37 @@ export function CaseDetails() {
                 <Button type="submit" busy={write.isPending}>Assign case manager</Button>
               </form>
             )}
+            {canAssign && (
+              <details className="stack">
+                <summary>Partner work assignments</summary>
+                {shares.error && <ErrorState error={shares.error} />}
+                {sharedOrganisations.map((org) => (
+                  <div className="inline spread" key={org}>
+                    <span>{lookup.data?.organisations.find((entry) => entry.id === org)?.name ?? org}</span>
+                    <Button type="button" variant="secondary" busy={write.isPending} onClick={() => write.mutate({
+                      path: countryPath(`/partner/cases/${id}/shares/${org}`, country), method: 'delete',
+                    })}>Revoke access</Button>
+                  </div>
+                ))}
+                {activeFulfilment && Array.isArray(shares.data) && <form className="stack" onSubmit={(event) => {
+                  event.preventDefault();
+                  const data = formValues(event.currentTarget);
+                  write.mutate({ path: countryPath(`/partner/cases/${id}/shares/${data.partnerId}`, country),
+                    method: 'put', data: { title: data.title, instructions: data.instructions } });
+                }}>
+                  <Field label="Partner organisation"><select name="partnerId" required defaultValue="">
+                    <option value="" disabled>Select verified organisation</option>
+                    {lookup.data?.organisations.filter((org) => !sharedOrganisations.includes(org.id)).map((org) =>
+                      <option key={org.id} value={org.id}>{org.name}</option>)}
+                  </select></Field>
+                  <Field label="Partner task"><input name="title" required maxLength={160} /></Field>
+                  <Field label="Partner instructions" hint="Include the work to perform. Keep citizen contact details out of this assignment.">
+                    <textarea name="instructions" required maxLength={1000} />
+                  </Field>
+                  <Button busy={write.isPending}>Assign partner work</Button>
+                </form>}
+              </details>
+            )}
             {r.latitude !== null && <MapView point={[r.latitude, r.longitude!]} />}
             {d.attachments.map((file) => (
               <Button
@@ -628,7 +546,12 @@ export function CaseDetails() {
                       No recommendation yet. Generating one never approves this request.
                     </p>
                   )}
-                  {ai.data?.recommendations.map((rec) => (
+                  {ai.data?.recommendations.map((rec) => {
+                    const reason = decisions[rec.id]?.reason ?? '';
+                    const priority = decisions[rec.id]?.priority ?? rec.priority;
+                    const updateDraft = (change: { priority?: Priority; reason?: string }) =>
+                      setDecisions((previous) => ({ ...previous, [rec.id]: { ...previous[rec.id], ...change } }));
+                    return (
                     <div className="recommendation" key={rec.id}>
                       <div className="inline spread">
                         <strong>
@@ -642,7 +565,8 @@ export function CaseDetails() {
                         </div>
                       )}
                       <div className="inline">
-                        <Badge value={rec.priority} />
+                        <span>Current priority <Badge value={r.priority} /></span>
+                        <span>AI recommendation <Badge value={rec.priority} /></span>
                         <span>{rec.category}</span>
                         <small className="muted">
                           Confidence: {rec.confidence === null ? 'unavailable' : rec.confidence} (
@@ -656,7 +580,7 @@ export function CaseDetails() {
                             <Field label="Final priority for modification">
                               <select
                                 value={priority}
-                                onChange={(e) => setPriority(e.target.value as Priority)}
+                                onChange={(e) => updateDraft({ priority: e.target.value as Priority })}
                               >
                                 {['Low', 'Normal', 'High', 'Critical'].map((p) => (
                                   <option key={p}>{p}</option>
@@ -666,7 +590,7 @@ export function CaseDetails() {
                             <Field label="Decision / override reason">
                               <input
                                 value={reason}
-                                onChange={(e) => setReason(e.target.value)}
+                                onChange={(e) => updateDraft({ reason: e.target.value })}
                                 maxLength={1000}
                               />
                             </Field>
@@ -677,14 +601,15 @@ export function CaseDetails() {
                                 key={action}
                                 variant={action === 'Approve' ? 'primary' : 'secondary'}
                                 busy={write.isPending}
+                                disabled={['Modify', 'Reject'].includes(action) && !reason.trim()}
                                 onClick={() =>
                                   write.mutate({
                                     path: `/requests/${id}/decisions`,
                                     data: {
                                       recommendationId: rec.id,
                                       action,
-                                      finalPriority: priority,
-                                      finalCategory: r.category,
+                                      finalPriority: action === 'Modify' ? priority : undefined,
+                                      finalCategory: action === 'Modify' ? r.category : undefined,
                                       reason,
                                     },
                                   })
@@ -697,7 +622,8 @@ export function CaseDetails() {
                         </>
                       )}
                     </div>
-                  ))}
+                    );
+                  })}
                   {ai.data?.duplicates.map((duplicate) => (
                     <div className="recommendation" key={duplicate.id}>
                       <strong>
@@ -769,7 +695,10 @@ export function CaseDetails() {
                   {recommended && !ignoredRecommendation && <Button type="button" variant="ghost" busy={write.isPending} onClick={() => write.mutate({ path: `/requests/${id}/allocation-recommendations/ignore`, data: { recommendedResourceId: recommended.resourceId } }, { onSuccess: () => setIgnoredRecommendation(true) })}>Ignore suggestion</Button>}
                 </section>
               )}
-              {!['Closed', 'Rejected', 'Cancelled', 'Fulfilled'].includes(r.status) && <form
+              {!canReserveResources && <p className="muted">{reservationStatus}</p>}
+              {canReserveResources && !selectedResource && !resources.isPending && <p className="muted">No suitable stock is currently available.</p>}
+              {resources.error && <ErrorState error={resources.error} />}
+              {canReserveResources && selectedResource && <form
                 className="form-grid"
                 onSubmit={(e) => {
                   e.preventDefault();
@@ -781,9 +710,8 @@ export function CaseDetails() {
                 }}
               >
                 <Field label="Resource">
-                  <select name="resourceId" required value={resourceId || resources.data?.find((x) => x.category === r.category)?.id || ''} onChange={(e) => setResourceId(e.target.value)}>
-                    {resources.data
-                      ?.filter((x) => x.category === r.category)
+                  <select name="resourceId" required value={selectedResource.id} onChange={(e) => setResourceId(e.target.value)}>
+                    {suitableResources
                       .map((x) => (
                         <option key={x.id} value={x.id}>
                           {x.name} · {x.available} {x.unit} available · {x.locationText}
@@ -795,10 +723,11 @@ export function CaseDetails() {
                   <input
                     type="number"
                     name="quantity"
-                    min={isMeasuredUnit((resources.data?.find((x) => x.id === resourceId) ?? resources.data?.find((x) => x.category === r.category))?.unit ?? '') ? 0.1 : 1}
-                    step={isMeasuredUnit((resources.data?.find((x) => x.id === resourceId) ?? resources.data?.find((x) => x.category === r.category))?.unit ?? '') ? 0.1 : 1}
-                    max={r.quantity - r.deliveredQuantity}
-                    defaultValue={Math.max(1, r.quantity - r.deliveredQuantity)}
+                    key={selectedResource.id}
+                    min={isMeasuredUnit(selectedResource.unit) ? 0.01 : 1}
+                    step={isMeasuredUnit(selectedResource.unit) ? 0.01 : 1}
+                    max={maxReservation}
+                    defaultValue={isMeasuredUnit(selectedResource.unit) ? maxReservation : Math.floor(maxReservation)}
                     required
                   />
                 </Field>
@@ -824,19 +753,34 @@ export function CaseDetails() {
                   {a.status === 'Dispatched' && (
                     <Button
                       busy={write.isPending}
-                      onClick={() => write.mutate({ path: `/allocations/${a.id}/Deliver` })}
+                      onClick={() => { write.reset(); setDeliveryId(a.id); }}
                     >
                       Confirm delivery
                     </Button>
                   )}
                 </div>
               ))}
+              {delivery && <OrganisationDialog title="Confirm delivery" busy={write.isPending} onDismiss={() => setDeliveryId(undefined)}>
+                <form className="stack logistics-dialog-body" onSubmit={(event) => {
+                  event.preventDefault();
+                  write.mutate({ path: `/allocations/${delivery.id}/Deliver`, data: deliveryInput(new FormData(event.currentTarget)) },
+                    { onSuccess: () => setDeliveryId(undefined) });
+                }}>
+                  <p>Dispatched quantity · {delivery.quantity}</p>
+                  <DeliveryFields quantity={delivery.quantity} unit={resources.data?.find((resource) => resource.id === delivery.resourceId)?.unit} />
+                  {write.error && <ErrorState error={write.error} />}
+                  <Button busy={write.isPending}>Record receipt</Button>
+                </form>
+              </OrganisationDialog>}
             </Card>
           )}
           {canShelter && r.category === 'Shelter' && (
             <Card>
               <h2>Shelter placement</h2>
-              {!['Closed', 'Rejected', 'Cancelled', 'Fulfilled'].includes(r.status) && <form
+              {!canReserveShelter && <p className="muted">{reservationStatus}</p>}
+              {shelters.error && <ErrorState error={shelters.error} />}
+              {canReserveShelter && !suitableShelters.length && !shelters.isPending && <p className="muted">No authorised shelter meets the household’s capacity and accessibility needs.</p>}
+              {canReserveShelter && suitableShelters.length > 0 && <form
                 className="stack"
                 onSubmit={(e) => {
                   e.preventDefault();
@@ -849,13 +793,7 @@ export function CaseDetails() {
               >
                 <Field label="Suitable shelter">
                   <select name="shelterId" required>
-                    {shelters.data
-                      ?.filter(
-                        (s) =>
-                          s.open &&
-                          s.available >= r.householdSize &&
-                          (!r.accessibilityNeeds || s.accessible),
-                      )
+                    {suitableShelters
                       .map((s) => (
                         <option value={s.id} key={s.id}>
                           {s.name} · {s.available} spaces ·{' '}
@@ -1047,26 +985,7 @@ export function ResourcesPage() {
             <Field label="Location">
               <input name="locationText" required />
             </Field>
-            <Field label="Latitude">
-              <input
-                name="latitude"
-                type="number"
-                min={-90}
-                max={90}
-                step="any"
-                defaultValue={6.93}
-              />
-            </Field>
-            <Field label="Longitude">
-              <input
-                name="longitude"
-                type="number"
-                min={-180}
-                max={180}
-                step="any"
-                defaultValue={79.88}
-              />
-            </Field>
+            <ResourceLocationFields key={country} country={country} />
             <Field label="Suitability notes">
               <input name="suitability" />
             </Field>
@@ -1180,18 +1099,10 @@ function CountryShelterManagement({ country }: { country: string }) {
   const isAdmin = user?.roles.some(
     (role) => role === 'Administrator' || role === 'CountryAdministrator',
   );
-  const q = useQuery({
-    queryKey: ['staff-shelters', country],
-    queryFn: () => get<Shelter[]>(`/staff/shelters?countryCode=${encodeURIComponent(country)}`),
-    enabled: !isAdmin,
-  });
   const startEditing = (shelter: Shelter | null) => {
     write.reset();
     setEditing(shelter);
   };
-  const shelters = isAdmin
-    ? q.data
-    : q.data?.filter((s) => user?.memberships.some((m) => m.organisationId === s.organisationId));
   const editorTitle = t(editing ? 'updateShelter' : 'newShelter');
   const editor = editing !== undefined && (
     <form
@@ -1289,7 +1200,7 @@ function CountryShelterManagement({ country }: { country: string }) {
     </form>
   );
   return (
-    <div className={isAdmin ? 'shelter-management' : undefined}>
+    <div className="shelter-management">
       <PageHeader
         title={t('staffShelters')}
         description={
@@ -1321,45 +1232,7 @@ function CountryShelterManagement({ country }: { country: string }) {
             {editor}
           </Card>
         ))}
-      {isAdmin ? (
-        <ShelterDashboard country={country} onEdit={startEditing} />
-      ) : q.isPending ? (
-        <Loading />
-      ) : q.error ? (
-        <ErrorState error={q.error} />
-      ) : (
-        <div className="resource-grid">
-          {shelters?.map((s) => (
-            <Card key={s.id}>
-              <div className="inline spread">
-                <IconTile icon={Tent} tone="yellow" />
-                <Badge value={s.open ? 'Open' : 'ShelterClosed'} />
-              </div>
-              <h3>{s.name}</h3>
-              <p className="muted">{s.address}</p>
-              <div className="stock-numbers">
-                <div>
-                  <strong>{s.available}</strong>
-                  <small>{t('shelterAvailable')}</small>
-                </div>
-                <div>
-                  <strong>{s.reserved}</strong>
-                  <small>{t('shelterReserved')}</small>
-                </div>
-                <div>
-                  <strong>{s.occupancy}</strong>
-                  <small>{t('shelterCheckedIn')}</small>
-                </div>
-              </div>
-              <p>{s.facilities}</p>
-              <Button variant="secondary" onClick={() => startEditing(s)}>
-                {t('editShelter')}
-              </Button>
-              <NextLink to="/staff/cases">{t('allocateHousehold')}</NextLink>
-            </Card>
-          ))}
-        </div>
-      )}
+      <ShelterDashboard country={country} onEdit={startEditing} specialist={!isAdmin} />
     </div>
   );
 }

@@ -98,7 +98,11 @@ public sealed partial class IntegrationTests
         Assert.Equal(HttpStatusCode.OK, (await manager.GetAsync($"/api/v1/requests/{candidateId}")).StatusCode);
         var beforeApproval = await manager.GetFromJsonAsync<JsonElement>($"/api/v1/requests/{foodId}");
         Assert.Equal("Verified", beforeApproval.GetProperty("request").GetProperty("status").GetString());
+        var taskInput = new TaskInput(foodId, volunteerId, "Acceptance household distribution", "distribution", DateTimeOffset.UtcNow.AddDays(1));
+        Assert.Equal(HttpStatusCode.BadRequest, (await volunteers.PostAsJsonAsync("/api/v1/volunteer-tasks", taskInput)).StatusCode);
+        Assert.DoesNotContain((await volunteers.GetFromJsonAsync<List<VolunteerCase>>("/api/v1/volunteer-tasks/cases"))!, r => r.Id == foodId);
         await Transition(foodId, "Approved");
+        Assert.Contains((await volunteers.GetFromJsonAsync<List<VolunteerCase>>("/api/v1/volunteer-tasks/cases"))!, r => r.Id == foodId);
 
         // Create isolated stock through the real API; attempts beyond it must not reserve anything.
         var resource = await Post(logistics, "resources", new ResourceInput(orgId, "Acceptance food packs", AidCategory.FoodWater, "packs", 6, "Synthetic depot", 6.92, 79.88, "Family packs", true));
@@ -109,7 +113,12 @@ public sealed partial class IntegrationTests
             var allocation = await Post(logistics, "allocations", new AllocateInput(foodId, resourceId, quantity));
             Guid id = allocation.GetProperty("id").GetGuid();
             (await logistics.PostAsync($"/api/v1/allocations/{id}/Dispatch", null)).EnsureSuccessStatusCode();
-            (await logistics.PostAsync($"/api/v1/allocations/{id}/Deliver", null)).EnsureSuccessStatusCode();
+            var receipt = new DeliveryInput($"DEMO-{id:N}", quantity, null, "Synthetic household representative", "RecipientAcknowledgment");
+            (await logistics.PostAsJsonAsync($"/api/v1/allocations/{id}/Deliver", receipt)).EnsureSuccessStatusCode();
+            (await logistics.PostAsJsonAsync($"/api/v1/allocations/{id}/Deliver", receipt)).EnsureSuccessStatusCode();
+            var stored = await logistics.GetFromJsonAsync<DeliveryConfirmation>($"/api/v1/allocations/{id}/receipt");
+            Assert.Equal(receipt.Reference, stored!.Reference);
+            Assert.Equal(quantity, stored.ConfirmedQuantity);
         }
         await Deliver(6);
         var partial = await citizen.GetFromJsonAsync<JsonElement>($"/api/v1/requests/{foodId}");
@@ -132,10 +141,18 @@ public sealed partial class IntegrationTests
         Guid placementId = placement.GetProperty("id").GetGuid();
         (await shelters.PostAsync($"/api/v1/shelter-allocations/{placementId}/CheckIn", null)).EnsureSuccessStatusCode();
 
-        var task = await Post(volunteers, "volunteer-tasks", new TaskInput(foodId, volunteerId, "Acceptance household distribution", "distribution", DateTimeOffset.UtcNow.AddDays(1)));
+        var task = await Post(volunteers, "volunteer-tasks", taskInput);
+        Assert.Equal(HttpStatusCode.BadRequest, (await volunteers.PostAsJsonAsync("/api/v1/volunteer-tasks", taskInput)).StatusCode);
         Guid taskId = task.GetProperty("id").GetGuid();
-        foreach (string action in new[] { "Accept", "Start", "Complete" })
-            await Post(volunteer, $"volunteer-tasks/{taskId}", new TaskUpdateInput(action, "Synthetic volunteer progress"));
+        foreach (string action in new[] { "Accept", "Start" })
+            await Post(volunteer, $"volunteer-tasks/{taskId}", new TaskUpdateInput(action));
+        Assert.Equal(HttpStatusCode.BadRequest, (await volunteer.PostAsJsonAsync($"/api/v1/volunteer-tasks/{taskId}", new TaskUpdateInput("Complete"))).StatusCode);
+        var report = new TaskUpdateInput("Complete", "Finished the shift", "Distributed family packs", "Four households received packs", 4, "One household needed follow-up");
+        var submitted = await Post(volunteer, $"volunteer-tasks/{taskId}", report);
+        Assert.Equal("AwaitingVerification", submitted.GetProperty("status").GetString());
+        var returned = await Post(volunteers, $"volunteer-tasks/{taskId}", new TaskUpdateInput("Return", "Clarify the follow-up plan."));
+        Assert.Equal("Returned", returned.GetProperty("status").GetString());
+        await Post(volunteer, $"volunteer-tasks/{taskId}", report with { Note = "Referred follow-up to the case manager." });
         Assert.Equal(HttpStatusCode.Forbidden, (await volunteer.PostAsJsonAsync($"/api/v1/volunteer-tasks/{taskId}", new TaskUpdateInput("Verify"))).StatusCode);
         var verified = await Post(volunteers, $"volunteer-tasks/{taskId}", new TaskUpdateInput("Verify", "Coordinator confirmed completion"));
         Assert.Equal("Completed", verified.GetProperty("status").GetString());
@@ -164,10 +181,15 @@ public sealed partial class IntegrationTests
         var staffNotifications = await manager.GetFromJsonAsync<JsonElement>("/api/v1/notifications");
         Assert.Contains(staffNotifications.EnumerateArray(), x => x.GetProperty("requestId").GetGuid() == foodId);
         var taskNotifications = await volunteer.GetFromJsonAsync<JsonElement>("/api/v1/notifications");
-        var assigned = Assert.Single(taskNotifications.EnumerateArray(), x => x.GetProperty("taskId").GetGuid() == taskId);
+        var related = taskNotifications.EnumerateArray().Where(x => x.GetProperty("taskId").GetGuid() == taskId).ToArray();
+        Assert.Equal(3, related.Length);
+        Assert.Contains(related, x => x.GetProperty("message").GetString()!.Contains("returned for correction"));
+        Assert.Contains(related, x => x.GetProperty("message").GetString()!.Contains("was verified"));
+        var assigned = Assert.Single(related, x => x.GetProperty("message").GetString()!.StartsWith("Task assigned:"));
         var notificationId = assigned.GetProperty("id").GetGuid();
         Assert.Equal(HttpStatusCode.NotFound, (await citizen.PostAsync($"/api/v1/notifications/{notificationId}/read", null)).StatusCode);
         (await volunteer.PostAsync($"/api/v1/notifications/{notificationId}/read", null)).EnsureSuccessStatusCode();
+        (await volunteer.PostAsync("/api/v1/notifications/read-all", null)).EnsureSuccessStatusCode();
         var unread = await volunteer.GetFromJsonAsync<JsonElement>("/api/v1/notifications/unread-count");
         Assert.Equal(0, unread.GetProperty("count").GetInt32());
         using var check = fixture.Factory.Services.CreateScope();

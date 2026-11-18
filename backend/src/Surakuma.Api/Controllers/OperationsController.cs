@@ -35,7 +35,12 @@ public sealed partial class OperationsController(Operations ops, AccessService a
     [HttpGet("requests/{id:guid}/allocation-recommendations")] public Task<AllocationRecommendations> AllocationRecommendations(Guid id, CancellationToken ct) => ops.AllocationRecommendations(id, ct);
     [HttpPost("requests/{id:guid}/allocation-recommendations/ignore")] public async Task<IActionResult> IgnoreAllocationRecommendation(Guid id, IgnoreAllocationRecommendationInput input, CancellationToken ct) { await ops.IgnoreAllocationRecommendation(id, input.RecommendedResourceId, ct); return NoContent(); }
     [HttpPost("allocations")] public Task<ResourceAllocation> Allocate(AllocateInput input, CancellationToken ct) => ops.Allocate(input, ct);
-    [HttpPost("allocations/{id:guid}/{operation}")] public Task<ResourceAllocation> Allocation(Guid id, string operation, CancellationToken ct) => ops.UpdateAllocation(id, operation, ct);
+    [HttpPost("allocations/{id:guid}/{operation}")]
+    public Task<ResourceAllocation> Allocation(Guid id, string operation,
+        [FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] DeliveryInput? delivery,
+        CancellationToken ct) => ops.UpdateAllocation(id, operation, ct, delivery: delivery);
+    [HttpGet("allocations/{id:guid}/receipt")]
+    public Task<DeliveryConfirmation> AllocationReceipt(Guid id, CancellationToken ct) => ops.AllocationReceipt(id, ct);
     [HttpPost("shelters")] public Task<Shelter> AddShelter(ShelterInput input, CancellationToken ct) => ops.SaveShelter(null, input, ct);
     [HttpPut("shelters/{id:guid}")] public Task<Shelter> Shelter(Guid id, ShelterInput input, CancellationToken ct) => ops.SaveShelter(id, input, ct);
     [HttpPost("shelter-allocations")] public Task<ShelterAllocation> Place(ShelterPlaceInput input, CancellationToken ct) => ops.Place(input, ct);
@@ -46,23 +51,34 @@ public sealed partial class OperationsController(Operations ops, AccessService a
         var roster = await ops.Volunteers(ct);
         var userIds = roster.Profiles.Select(x => x.UserId).Distinct().ToArray();
         var names = await users.Users.Where(x => userIds.Contains(x.Id)).Select(x => new { x.Id, x.DisplayName }).ToDictionaryAsync(x => x.Id, x => x.DisplayName, ct);
-        return new { roster.Profiles, roster.Tasks, Names = names };
+        return new { roster.Profiles, roster.Tasks, roster.History, Names = names };
     }
     [HttpPost("volunteers")] public Task<VolunteerProfile> Volunteer(VolunteerProfile input, CancellationToken ct) => ops.SaveVolunteer(input, ct);
+    [HttpGet("volunteer-tasks/cases")] public Task<List<VolunteerCase>> VolunteerCases(string? search, CancellationToken ct) => ops.VolunteerCases(search, ct);
     [HttpPost("volunteer-tasks")] public Task<VolunteerTask> Task(TaskInput input, CancellationToken ct) => ops.AssignTask(input, ct);
     [HttpPost("volunteer-tasks/{id:guid}")] public Task<VolunteerTask> UpdateTask(Guid id, TaskUpdateInput input, CancellationToken ct) => ops.UpdateTask(id, input, ct);
     [HttpGet("notifications")]
-    public async Task<List<Notification>> Notifications(CancellationToken ct, bool unreadOnly = false)
+    public async Task<List<Notification>> Notifications(CancellationToken ct, bool unreadOnly = false, bool partnerOnly = false)
     {
-        var query = VisibleNotifications();
+        var query = VisibleNotifications(partnerOnly);
         if (unreadOnly)
             query = query.Where(n => !n.Read);
         return await query.OrderByDescending(n => n.CreatedAt).Take(100).ToListAsync(ct);
     }
     [HttpGet("notifications/unread-count")]
-    public async Task<object> UnreadNotifications(CancellationToken ct) => new { count = await VisibleNotifications().CountAsync(x => !x.Read, ct) };
-    private IQueryable<Notification> VisibleNotifications()
+    public async Task<object> UnreadNotifications(CancellationToken ct, bool partnerOnly = false)
+        => new { count = await VisibleNotifications(partnerOnly).CountAsync(x => !x.Read, ct) };
+    private IQueryable<Notification> VisibleNotifications(bool partnerOnly)
     {
+        if (partnerOnly)
+        {
+            return notifications.Visible(access.UserId, access.SelectedCountry).Where(n => n.ScopeRole == Roles.Partner &&
+                db.Set<Membership>().Any(m => m.UserId == access.UserId && m.Role == Roles.Partner &&
+                    m.OrganisationId == n.ScopeOrganisationId && m.CountryCode == n.ScopeCountryCode &&
+                    (m.CrisisId == null || m.CrisisId == n.CrisisId) &&
+                    db.Set<OrganisationCountry>().Any(o => o.OrganisationId == m.OrganisationId && o.CountryCode == m.CountryCode &&
+                        (o.VerificationState == "Verified" || o.VerificationState == "LegacyActive"))));
+        }
         if (!NotificationChannels.ReceivesCitizenEmail(User.FindAll(ClaimTypes.Role).Select(c => c.Value)))
             return notifications.Visible(access.UserId, access.SelectedCountry);
         var citizen = db.Set<Notification>().Where(n => !n.IsInternal && n.UserId == access.UserId
@@ -72,17 +88,17 @@ public sealed partial class OperationsController(Operations ops, AccessService a
         return citizen.Union(notifications.Visible(access.UserId, access.SelectedCountry));
     }
     [HttpPost("notifications/{id:guid}/read")]
-    public async Task<IActionResult> Read(Guid id, CancellationToken ct)
+    public async Task<IActionResult> Read(Guid id, CancellationToken ct, bool partnerOnly = false)
     {
-        var visible = VisibleNotifications().Where(n => n.Id == id);
+        var visible = VisibleNotifications(partnerOnly).Where(n => n.Id == id);
         if (await MarkNotificationsRead(visible, ct) == 0 && !await visible.AnyAsync(ct))
             throw new MissingException();
         return NoContent();
     }
     [HttpPost("notifications/read-all")]
-    public async Task<IActionResult> ReadAll(CancellationToken ct)
+    public async Task<IActionResult> ReadAll(CancellationToken ct, bool partnerOnly = false)
     {
-        await MarkNotificationsRead(VisibleNotifications(), ct);
+        await MarkNotificationsRead(VisibleNotifications(partnerOnly), ct);
         return NoContent();
     }
     private Task<int> MarkNotificationsRead(IQueryable<Notification> visible, CancellationToken ct)
@@ -237,50 +253,6 @@ public sealed partial class OperationsController(Operations ops, AccessService a
         return NoContent();
     }
 
-    [HttpPost("alerts")]
-    public async Task<PublicAlert> Publish(PublicAlert input, CancellationToken ct)
-    {
-        await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
-        var crisis = await CoordinatedCrisis(input.CrisisId, ct);
-        if (input.Published && !crisis.Active)
-            throw new RuleException("Select an active crisis to publish an alert.");
-        if (input.Severity is not ("Information" or "Advisory" or "Warning" or "Critical"))
-            throw new RuleException("Select a valid alert severity.");
-        if (input.Published && (string.IsNullOrWhiteSpace(input.Area) || string.IsNullOrWhiteSpace(input.Authority)))
-            throw new RuleException("Provide an affected area and issuing authority.");
-        if (string.IsNullOrWhiteSpace(input.Title) || string.IsNullOrWhiteSpace(input.Message) || input.ExpiresAt <= DateTimeOffset.UtcNow || input.Title.Length > 150 || input.Message.Length > 2000)
-            throw new RuleException("Provide a title, message and future expiry.");
-        var countryCode = crisis.CountryCode;
-        var policy = await db.Set<Country>().SingleAsync(x => x.Code == countryCode, ct);
-        Dictionary<string, AlertTranslation> translations;
-        try { translations = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, AlertTranslation>>(input.TranslationsJson, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? []; }
-        catch (System.Text.Json.JsonException) { throw new RuleException("Invalid alert translations."); }
-        translations["en"] = new(input.Title, input.Message);
-        if (!string.IsNullOrWhiteSpace(input.SinhalaTitle)) translations["si"] = new(input.SinhalaTitle, input.SinhalaMessage);
-        if (!string.IsNullOrWhiteSpace(input.TamilTitle)) translations["ta"] = new(input.TamilTitle, input.TamilMessage);
-        if (translations.Any(x => x.Value == null || x.Value.Title == null || x.Value.Message == null || x.Value.Title.Length > 150 || x.Value.Message.Length > 2000)) throw new RuleException("Alert translations exceed the allowed length.");
-        if (input.Published && policy.RequiredAlertLanguages.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).Any(language => !translations.TryGetValue(language, out var text) || string.IsNullOrWhiteSpace(text.Title) || string.IsNullOrWhiteSpace(text.Message)))
-            throw new RuleException("Provide alert wording in all required country languages: " + policy.RequiredAlertLanguages);
-        var extraTranslations = System.Text.Json.JsonSerializer.Serialize(translations.Where(x => x.Key is not ("en" or "si" or "ta")).ToDictionary(x => x.Key, x => x.Value), new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase });
-        if (extraTranslations.Length > 4000) throw new RuleException("Additional translations exceed the supported size.");
-        var alert = new PublicAlert { TranslationsJson = extraTranslations, CrisisId = input.CrisisId, Title = input.Title, Message = input.Message, SinhalaTitle = input.SinhalaTitle, SinhalaMessage = input.SinhalaMessage, TamilTitle = input.TamilTitle, TamilMessage = input.TamilMessage, Severity = input.Severity, Area = input.Area, Authority = input.Authority, ExpiresAt = input.ExpiresAt, Published = input.Published };
-        db.Add(alert);
-        ops.Audit("PublicAlertCreated", alert, countryCode: countryCode);
-        await db.SaveChangesAsync(ct);
-        await tx.CommitAsync(ct);
-        return alert;
-    }
-    [HttpPost("alerts/{id:guid}/unpublish")]
-    public async Task<IActionResult> Unpublish(Guid id, CancellationToken ct)
-    {
-        var a = await db.Set<PublicAlert>().FindAsync([id], ct) ?? throw new MissingException();
-        var crisis = await CoordinatedCrisis(a.CrisisId, ct);
-        if (!a.Published) return NoContent();
-        a.Published = false;
-        ops.Audit("PublicAlertUnpublished", a, countryCode: crisis.CountryCode);
-        await db.SaveChangesAsync(ct);
-        return NoContent();
-    }
     [AllowAnonymous, EnableRateLimiting("maps"), HttpGet("maps/geocode")]
     public async Task<IActionResult> Geocode(string query, CancellationToken ct)
     {

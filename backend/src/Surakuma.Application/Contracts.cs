@@ -3,7 +3,7 @@ using Surakuma.Domain;
 
 namespace Surakuma.Application;
 
-public sealed record VolunteerRoster(List<VolunteerProfile> Profiles, List<VolunteerTask> Tasks);
+public sealed record VolunteerRoster(List<VolunteerProfile> Profiles, List<VolunteerTask> Tasks, List<VolunteerTaskEvent> History);
 
 public sealed record RegisterInput([Required, EmailAddress] string Email, [Required, MinLength(10)] string Password, [Required, MaxLength(100)] string Name, string Language = "en");
 public sealed record LoginInput([Required, EmailAddress] string Email, [Required] string Password);
@@ -29,8 +29,14 @@ public sealed record IgnoreAllocationRecommendationInput(Guid RecommendedResourc
 public sealed record MovementInput([Range(typeof(decimal), "0.01", "100000")] decimal Quantity, string Note);
 public sealed record ShelterInput(Guid OrganisationId, [Required, MaxLength(150)] string Name, string Address, [Range(-90d, 90d)] double Latitude, [Range(-180d, 180d)] double Longitude, [Range(1, 100000)] int Capacity, bool Accessible, bool Open, string Facilities, string CountryCode = "LK", Guid? AdministrativeDivisionId = null);
 public sealed record ShelterPlaceInput(Guid RequestId, Guid ShelterId);
-public sealed record TaskInput(Guid RequestId, Guid VolunteerId, [Required] string Title, string RequiredSkill, DateTimeOffset DueAt);
-public sealed record TaskUpdateInput(string Action, string Note = "");
+public sealed record VolunteerCase(Guid Id, string Reference, string LocationText, Guid OrganisationId);
+public sealed record TaskInput(Guid RequestId, Guid VolunteerId, [Required, MaxLength(200)] string Title, [MaxLength(100)] string? RequiredSkill, DateTimeOffset DueAt);
+public sealed record TaskUpdateInput(string Action, [MaxLength(2000)] string Note = "",
+    [MaxLength(2000)] string? WorkDescription = null, [MaxLength(2000)] string? Outcome = null,
+    [Range(0, 10000000)] int? PeopleAssisted = null, [MaxLength(2000)] string? Issues = null);
+public sealed record DeliveryInput([Required, MaxLength(100)] string Reference, decimal ConfirmedQuantity,
+    DateTimeOffset? ReceivedAt, [Required, MaxLength(150)] string ReceivedBy, [Required] string Method,
+    [MaxLength(1000)] string? Note = null, [MaxLength(1000)] string? ExceptionDetail = null);
 public sealed record ResolveEscalationInput([Required, MaxLength(1000)] string Note);
 public sealed record FeedbackInput([Range(1, 5)] int Rating, bool Received, bool Problem, [MaxLength(2000)] string Comment);
 public sealed record ShareInput(Guid OrganisationId);

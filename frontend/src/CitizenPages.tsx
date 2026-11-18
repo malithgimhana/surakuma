@@ -855,7 +855,7 @@ export function RequestTracking() {
               <section aria-label={t('deliverySteps')}>
                 <h3>{t('deliverySteps')}</h3>
                 {data.allocations.filter((a) => a.status !== 'Cancelled').map((a) => (
-                  <p key={a.id}>{a.quantity} · {t('delivery.' + a.status)}</p>
+                  <p key={a.id}>{a.confirmedQuantity ?? a.quantity} · {t('delivery.' + a.status)}</p>
                 ))}
               </section>
             )}
@@ -935,9 +935,9 @@ export function RequestTracking() {
     </>
   );
 }
-export function NotificationsPage() {
+export function NotificationsPage({ partner = false }: { partner?: boolean }) {
   const { user } = useAuth();
-  const isAdministrator = !!user?.roles.some(role => ['Administrator', 'CountryAdministrator'].includes(role));
+  const isAdministrator = !partner && !!user?.roles.some(role => ['Administrator', 'CountryAdministrator'].includes(role));
   const country = useCountry();
   const adminAlerts = useQuery({ queryKey: ['admin-alerts-bell', country], enabled: isAdministrator, queryFn: () => get<{ acknowledgedAt?: string; resolvedAt?: string }[]>(`/admin/alerts?countryCode=${country}`), refetchInterval: 60000 });
   const attention = Array.isArray(adminAlerts.data) ? adminAlerts.data.filter(a => !a.acknowledgedAt && !a.resolvedAt).length : 0;
@@ -945,19 +945,20 @@ export function NotificationsPage() {
     client = useQueryClient();
   const [showRead, setShowRead] = useState(false);
   const q = useQuery({
-    queryKey: ['notifications', country, showRead ? 'all' : 'unread'],
-    queryFn: () => get<Notification[]>(showRead ? '/notifications' : '/notifications?unreadOnly=true'),
+    queryKey: ['notifications', country, showRead ? 'all' : 'unread', partner],
+    queryFn: () => get<Notification[]>(partner ? `/notifications?partnerOnly=true&unreadOnly=${!showRead}` :
+      showRead ? '/notifications' : '/notifications?unreadOnly=true'),
     refetchInterval: 15000,
   });
   const unread = useQuery({
-    queryKey: ['notifications', 'unread', country],
-    queryFn: () => get<{ count: number }>('/notifications/unread-count'),
+    queryKey: ['notifications', 'unread', country, partner],
+    queryFn: () => get<{ count: number }>(partner ? '/notifications/unread-count?partnerOnly=true' : '/notifications/unread-count'),
   });
   const hasUnread = (unread.data?.count ?? 0) > 0 || q.data?.some((n) => !n.read);
   const mutation = useMutation({
     mutationFn: (id?: string) =>
       api.post(id ? `/notifications/${id}/read` : '/notifications/read-all', undefined, {
-        params: { countryCode: country },
+        params: partner ? { countryCode: country, partnerOnly: true } : { countryCode: country },
       }),
     onSuccess: (_, id) => {
       if (id === undefined) setShowRead(false);
@@ -1008,8 +1009,17 @@ export function NotificationsPage() {
                       : n.message}
                 </p>
                 <small className="muted">{formatDate(n.createdAt, i18n.language)}</small>
-                {(n.taskId || n.requestId || n.crisisId) && (
-                  <NextLink to={n.taskId ? '/volunteer' : n.requestId ? `${n.isInternal ? '/staff/cases' : '/app/requests'}/${n.requestId}` : '/staff/crises'}>{t(n.taskId ? 'staffVolunteers' : n.requestId ? 'viewRequest' : 'staffCrises')}</NextLink>
+                {n.scopeRole === 'Partner' ? (
+                  <NextLink to={isAdministrator ? '/admin/partner-commitments' : n.crisisId ? '/partner/work' : '/partner/contributions'}>
+                    {isAdministrator ? 'Partner commitments' : n.crisisId ? 'Assigned work' : 'Contributions & commitments'}
+                  </NextLink>
+                ) : n.scopeRole === 'Logistics' ? (
+                  <NextLink to={isAdministrator ? '/admin/resources' : '/staff/resources'}>{t('staffResources')}</NextLink>
+                ) : n.scopeRole === 'VolunteerCoordinator' && user?.roles.some((role) => role === 'VolunteerCoordinator' || role === 'Coordinator') ? (
+                  <NextLink to="/staff/volunteers?view=reports">Reports awaiting verification</NextLink>
+                ) : (n.taskId || n.requestId || n.crisisId) && (
+                  <NextLink to={n.taskId ? '/volunteer' : n.requestId ? `${n.isInternal ? isAdministrator ? '/admin/cases' : '/staff/cases' : '/app/requests'}/${n.requestId}` :
+                    isAdministrator ? '/admin/crises' : '/staff/crises'}>{t(n.taskId ? 'staffVolunteers' : n.requestId ? 'viewRequest' : 'staffCrises')}</NextLink>
                 )}
               </div>
               {!n.read && (

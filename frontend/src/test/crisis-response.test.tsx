@@ -150,7 +150,7 @@ it('loads country-scoped responses and language policies while retaining each co
   expect(screen.getByLabelText('සිංහල මාතෘකාව')).toBeRequired();
 });
 
-it('previews reviewed translations before publishing to the selected country', async () => {
+it('previews reviewed translations and saves a draft in the selected country', async () => {
   vi.mocked(api.request).mockReset().mockResolvedValue({ data: {} });
   vi.mocked(get).mockImplementation(async (path) => {
     if (path === '/countries') return policies;
@@ -186,17 +186,17 @@ it('previews reviewed translations before publishing to the selected country', a
   }))
     fireEvent.change(screen.getByLabelText(label), { target: { value } });
   fireEvent.input(screen.getByLabelText('Expires at'), { target: { value: '2099-10-12T12:00' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Publish verified alert' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Preview alert draft' }));
   expect(screen.getByRole('alert')).toHaveTextContent(
     'Provide a title and instructions in Nepali.',
   );
   expect(vi.mocked(api.request)).not.toHaveBeenCalled();
 
   fireEvent.change(screen.getByLabelText('Nepali title'), { target: { value: 'सूचना' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Publish verified alert' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Preview alert draft' }));
   const preview = within(screen.getByRole('dialog', { name: 'Preview public alert' }));
   expect(preview.getByRole('heading', { name: 'सूचना' })).toBeVisible();
-  const publish = preview.getByRole('button', { name: 'Publish alert' });
+  const publish = preview.getByRole('button', { name: 'Save draft' });
   expect(publish).toBeDisabled();
   expect(vi.mocked(api.request)).not.toHaveBeenCalled();
   fireEvent.click(preview.getByRole('checkbox'));
@@ -207,12 +207,11 @@ it('previews reviewed translations before publishing to the selected country', a
       url: '/alerts?countryCode=NP',
       data: expect.objectContaining({
         crisisId: 'nepal-response',
-        published: true,
         translationsJson: '{"ne":{"title":"सूचना","message":"परीक्षण"}}',
       }),
     }),
   );
-  expect(await screen.findByText('Public alert published.')).toBeVisible();
+  expect(await screen.findByText(/Draft saved/)).toBeVisible();
 });
 
 it('blocks composition while the selected country’s crisis request fails and lets the user retry', async () => {
@@ -241,7 +240,7 @@ it('blocks composition while the selected country’s crisis request fails and l
       {renderDashboard('NP')}
     </QueryClientProvider>,
   );
-  expect(screen.getByRole('button', { name: 'Publish verified alert' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Preview alert draft' })).toBeDisabled();
   const activePanel = within(
     screen.getByRole('heading', { name: 'Active crisis response' }).parentElement!,
   );
@@ -250,5 +249,5 @@ it('blocks composition while the selected country’s crisis request fails and l
   );
   fireEvent.click(activePanel.getByRole('button', { name: 'Try again' }));
   expect(await activePanel.findByRole('heading', { name: 'Recovered response' })).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Publish verified alert' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Preview alert draft' })).toBeEnabled();
 });

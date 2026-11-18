@@ -43,7 +43,7 @@ public sealed class LogisticsTests(ApiFixture fixture) : IClassFixture<ApiFixtur
             var operationId = Guid.NewGuid();
             var registration = new { operationId, countryCode, organisationId, depotId, name = "Emergency family packs",
                 code = "FAMILY-PACK", unit = "packs", category = "FoodWater", stock = 0, lowStockThreshold = 350,
-                locationText = "Registered depot", latitude = 0, longitude = 0, suitability = "", transportAvailable = true };
+                locationText = "Registered depot", latitude = countryCode == "NP" ? 27.7 : 6.92, longitude = countryCode == "NP" ? 85.3 : 79.9, suitability = "", transportAvailable = true };
             (await admin.PostAsJsonAsync("/api/v1/resources", registration)).EnsureSuccessStatusCode();
             (await admin.PostAsJsonAsync("/api/v1/resources", registration)).EnsureSuccessStatusCode();
             return operationId;
@@ -77,7 +77,7 @@ public sealed class LogisticsTests(ApiFixture fixture) : IClassFixture<ApiFixtur
         (await admin.PostAsJsonAsync($"{module}/orders/{orderId}/dispatch", new { reason = "Released to carrier" })).EnsureSuccessStatusCode();
         await CheckBalance(origin, 300, 0, 300);
         Assert.Equal(HttpStatusCode.BadRequest, (await admin.PostAsJsonAsync($"{module}/orders/{orderId}/cancel", new { reason = "Already departed" })).StatusCode);
-        (await admin.PostAsJsonAsync($"{module}/orders/{orderId}/deliver", new { reason = "Crisis coordination team confirmed receipt" })).EnsureSuccessStatusCode();
+        (await admin.PostAsJsonAsync($"{module}/orders/{orderId}/deliver", new { delivery = new { reference = "Crisis-receipt", confirmedQuantity = 200, receivedBy = "Crisis coordination team", method = "ReceivingStaff" } })).EnsureSuccessStatusCode();
         var ledger = await admin.GetFromJsonAsync<JsonElement>($"{module}/resources/{origin}/history");
         var entries = ledger.EnumerateArray().ToArray();
         Assert.Single(entries, e => e.GetProperty("kind").GetString() == "Opening");
@@ -113,7 +113,7 @@ public sealed class LogisticsTests(ApiFixture fixture) : IClassFixture<ApiFixtur
         await CheckBalance(origin, 180, 0, 180);
         await CheckBalance(receiver, 0, 0, 0);
         Assert.Equal(HttpStatusCode.Forbidden, (await sriLanka.PostAsJsonAsync($"{module}/orders/{transferId}/deliver", new { reason = "Wrong country" })).StatusCode);
-        var delivery = new { reason = "Receiving depot confirmed quantities" };
+        var delivery = new { delivery = new { reference = "Transfer-receipt", confirmedQuantity = 120, receivedBy = "Receiving depot", method = "ReceivingStaff" } };
         (await admin.PostAsJsonAsync($"{module}/orders/{transferId}/deliver", delivery)).EnsureSuccessStatusCode();
         (await admin.PostAsJsonAsync($"{module}/orders/{transferId}/deliver", delivery)).EnsureSuccessStatusCode();
         await CheckBalance(origin, 180, 0, 180);

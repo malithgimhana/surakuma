@@ -97,14 +97,19 @@ public sealed class InternationalEndpointTests(ApiFixture fixture) : IClassFixtu
         Assert.Equal(HttpStatusCode.OK, (await staff.GetAsync($"/api/v1/crises/{np}/areas")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await staff.GetAsync($"/api/v1/crises/{india}/areas")).StatusCode);
         var alert = new { crisisId = np, title = "Safety update", message = "Follow local authorised guidance",
-            area = "Local district", authority = "Local coordination team", expiresAt = DateTimeOffset.UtcNow.AddDays(1), published = true };
-        Assert.Equal(HttpStatusCode.BadRequest, (await staff.PostAsJsonAsync("/api/v1/alerts", alert)).StatusCode);
+            area = "Local district", authority = "Local coordination team", expiresAt = DateTimeOffset.UtcNow.AddDays(1), published = false };
+        var draft = await staff.PostAsJsonAsync("/api/v1/alerts", alert);
+        draft.EnsureSuccessStatusCode();
+        var alertId = (await draft.Content.ReadFromJsonAsync<PublicAlert>())!.Id;
+        var submitAlert = $"/api/v1/alerts/{alertId}/submit";
+        Assert.Equal(HttpStatusCode.BadRequest, (await staff.PostAsync(submitAlert, null)).StatusCode);
         // A country policy change takes effect immediately for the existing coordinator session.
         var contacts = new[] { new { label = "Police emergency", number = "100", sourceUrl = "https://ncb.nepalpolice.gov.np/safety-and-security/" } };
         (await admin.PutAsJsonAsync("/api/v1/countries/NP/services", new { languages = "en,ne", requiredAlertLanguages = "en", contacts })).EnsureSuccessStatusCode();
-        Assert.Equal(HttpStatusCode.OK, (await staff.PostAsJsonAsync("/api/v1/alerts", alert)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await staff.PostAsync(submitAlert, null)).StatusCode);
         (await admin.PutAsJsonAsync("/api/v1/countries/NP/services", new { languages = "en,ne", requiredAlertLanguages = "en,ne", contacts })).EnsureSuccessStatusCode();
-        Assert.Equal(HttpStatusCode.BadRequest, (await staff.PostAsJsonAsync("/api/v1/alerts", alert)).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PostAsJsonAsync($"/api/v1/alerts/{alertId}/approve",
+            new { reason = "Revalidate after changing the local language policy." })).StatusCode);
         Guid membershipId;
         using (var scope = fixture.Factory.Services.CreateScope())
         {

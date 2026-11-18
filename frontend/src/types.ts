@@ -87,10 +87,11 @@ export interface History extends Entity {
   actorId: string;
 }
 export interface Allocation extends Entity {
+  confirmedQuantity?: number | null;
   requestId: string;
   resourceId: string;
   quantity: number;
-  status: 'Reserved' | 'Dispatched' | 'Delivered' | 'Cancelled';
+  status: 'Reserved' | 'Dispatched' | 'Delivered' | 'Cancelled' | 'DeliveryException';
 }
 export interface Placement extends Entity {
   requestId: string;
@@ -178,6 +179,7 @@ export interface Shelter extends PublicShelter {
   createdAt: string;
 }
 export interface Alert extends Entity {
+  publishedAt?: string | null;
   translationsJson?: string;
   crisisId: string;
   title: string;
@@ -193,6 +195,7 @@ export interface Alert extends Entity {
   published: boolean;
 }
 export interface Notification extends Entity {
+  scopeRole?: string | null;
   isInternal: boolean;
   crisisId: string | null;
   taskId: string | null;
@@ -224,6 +227,17 @@ export interface VolunteerData {
   profiles: Volunteer[];
   tasks: VolunteerTask[];
   names: Record<string, string>;
+  history?: {
+    id: string;
+    taskId: string;
+    createdAt: string;
+    action: string;
+    workDescription: string;
+    outcome: string;
+    peopleAssisted: number | null;
+    issues: string;
+    note: string;
+  }[];
 }
 export interface Metrics {
   stockByUnit?: { category: string; unit: string; stock: number; reserved: number }[];

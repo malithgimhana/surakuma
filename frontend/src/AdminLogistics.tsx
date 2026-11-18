@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { get } from './api';
 import { Button, Card, categories, ErrorState, Field, formatDate, Loading } from './components';
 import { useCountry } from './geography';
@@ -54,17 +54,22 @@ function recentTime(iso: string, locale: string | undefined) {
   return format.format(-Math.floor(minutes / 1440), 'day');
 }
 
-export default function AdminLogistics() {
-  const query = useQuery({ queryKey: ['admin-logistics'], queryFn: () => get<LogisticsData>('/logistics?countryCode=') });
+export default function AdminLogistics({ specialist = false }: { specialist?: boolean }) {
+  const country = useCountry();
+  const [params] = useSearchParams();
+  const query = useQuery({ queryKey: ['admin-logistics', specialist && country],
+    queryFn: () => get<LogisticsData>(specialist ? `/logistics?countryCode=${encodeURIComponent(country)}&specialist=true` : '/logistics?countryCode=') });
   if (query.isPending || query.isError) return <>
     <h1>Resources &amp; Logistics</h1>
     {query.isError ? <ErrorState error={query.error} retry={() => query.refetch()} /> : <Loading />}
   </>;
   if (!Array.isArray(query.data?.inventory)) return <ErrorState error={new Error('The logistics dashboard requires the updated API.')} retry={() => query.refetch()} />;
-  return <LogisticsWorkspace data={query.data} />;
+  const startTab = tabs.find(t => t.key === params.get('tab'))?.key ?? 'inventory';
+  const startStatus = params.get('status') ?? '';
+  return <LogisticsWorkspace key={`${startTab}-${startStatus}`} data={query.data} specialist={specialist} startTab={startTab} startStatus={startStatus} />;
 }
 
-function LogisticsWorkspace({ data }: { data: LogisticsData }) {
+function LogisticsWorkspace({ data, specialist, startTab, startStatus }: { data: LogisticsData; specialist: boolean; startTab: Tab; startStatus: string }) {
   const workspace = useCountry();
   const { t, i18n } = useTranslation();
   const number = new Intl.NumberFormat(i18n.resolvedLanguage, { maximumFractionDigits: 2 });
@@ -72,9 +77,9 @@ function LogisticsWorkspace({ data }: { data: LogisticsData }) {
   const [crisis, setCrisis] = useState('');
   const [depot, setDepot] = useState('');
   const [category, setCategory] = useState('');
-  const [status, setStatus] = useState('');
+  const [status, setStatus] = useState(startStatus);
   const [search, setSearch] = useState('');
-  const [tab, setTab] = useState<Tab>('inventory');
+  const [tab, setTab] = useState<Tab>(startTab);
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState<{ key: SortKey; descending: boolean }>({ key: 'name', descending: false });
   const [dialog, setDialog] = useState<LogisticsDialogState | null>(null);
@@ -82,6 +87,7 @@ function LogisticsWorkspace({ data }: { data: LogisticsData }) {
   const countries = new Map(data.countries.map(row => [row.code, row.name]));
   const depots = new Map(data.depots.map(row => [row.id, row]));
   const items = new Map(data.inventory.map(row => [row.id, row]));
+  const receipts = new Map(data.receipts?.map((receipt) => [receipt.allocationId ?? receipt.logisticsOrderId, receipt]));
   const countryLabel = (code: string) => countries.get(code) ?? code;
   const depotLabel = (item: InventoryItem) => depots.get(item.depotId ?? '')?.name || item.locationText || 'Unspecified location';
   const selected = country.workspace === workspace ? country.code : workspace;
@@ -112,7 +118,10 @@ function LogisticsWorkspace({ data }: { data: LogisticsData }) {
   const inventoryIds = new Set(inventory.map(item => item.id));
   const filteredOrders = ordersInScope.filter(order => tab === 'inventory'
     ? !status || inventoryIds.has(order.resourceId) || inventoryIds.has(order.destinationResourceId ?? '')
-    : !status || order.status === status);
+    : !status || order.status === status ||
+      status === 'Exception' && !!receipts.get(order.id)?.exceptionDetail ||
+      status === 'PendingDispatch' && !order.requestId && order.kind === 'Dispatch' && order.status === 'Reserved' ||
+      status === 'InTransit' && !order.requestId && order.status === 'Dispatched');
   const dispatches = filteredOrders.filter(row => row.kind === 'Dispatch');
   const transfers = filteredOrders.filter(row => row.kind === 'Transfer');
   const active = dispatches.filter(row => row.status === 'Reserved' || row.status === 'Dispatched');
@@ -121,7 +130,8 @@ function LogisticsWorkspace({ data }: { data: LogisticsData }) {
     const comparison = sort.key === 'name' ? a.name.localeCompare(b.name) : a[sort.key] - b[sort.key];
     return (sort.descending ? -comparison : comparison) || a.id.localeCompare(b.id);
   });
-  const orders = tab === 'transfers' ? transfers : dispatches;
+  const orders = tab === 'transfers' ? transfers : tab === 'reservations' && specialist
+    ? dispatches.filter(o => o.requestId) : status === 'Exception' || status === 'InTransit' ? filteredOrders : dispatches;
   const count = tab === 'inventory' ? inventory.length : orders.length;
   const lastPage = Math.max(1, Math.ceil(count / pageSize));
   const shown = Math.min(page, lastPage);
@@ -147,7 +157,8 @@ function LogisticsWorkspace({ data }: { data: LogisticsData }) {
     inventory: inventory.length, dispatches: dispatches.length, transfers: transfers.length, reservations: dispatches.length,
   };
   const statusOptions = tab === 'inventory' ? inventoryStatuses.map(value => [value, value])
-    : Object.keys(shipmentStatus).map(value => [value, labelFor(tab, value as Shipment['status'])]);
+    : [...Object.keys(shipmentStatus).map(value => [value, labelFor(tab, value as Shipment['status'])]),
+      ...(tab === 'dispatches' ? [['Exception', 'Delivery exceptions'], ['PendingDispatch', 'Dispatch queue'], ['InTransit', 'Non-case shipments in transit']] : [])];
   const summaries: Array<{ label: string; value: number; caption: string; detail?: string; Icon: LucideIcon; tone: string }> = [
     { label: 'Total resources', value: inventory.length, caption: `${new Set(inventory.map(item => item.countryCode)).size} countries with inventory`, Icon: Box, tone: 'blue' },
     { label: 'Available stock', ...summaryStock('available'), Icon: Layers, tone: 'green' },
@@ -278,6 +289,7 @@ function LogisticsWorkspace({ data }: { data: LogisticsData }) {
               <thead><tr>{['Reference', 'Resource', 'Origin → destination', 'Crisis', 'Quantity', 'Status', 'Actions'].map(label => <th scope="col" key={label}>{label}</th>)}</tr></thead>
               <tbody>{orders.slice(start, start + pageSize).map(order => {
                 const resource = items.get(order.resourceId);
+                const receipt = receipts.get(order.id);
                 const next: ShipmentAction | undefined = order.status === 'Reserved' ? 'dispatch' : order.status === 'Dispatched' ? 'deliver' : undefined;
                 return <tr key={order.id}>
                   <th scope="row"><span className="logistics-ref">{shipmentCode(order)}</span><small>{formatDate(order.createdAt)}</small></th>
@@ -289,6 +301,9 @@ function LogisticsWorkspace({ data }: { data: LogisticsData }) {
                   <td><div className="logistics-shipment-actions">
                     {next && <Button type="button" variant="secondary" onClick={() => open({ kind: 'transition', order, action: next })}>{actionLabels[next]}</Button>}
                     {order.status === 'Reserved' && <Button type="button" variant="ghost" onClick={() => open({ kind: 'transition', order, action: 'cancel' })}>Release</Button>}
+                    {receipt && <Button type="button" variant="ghost" onClick={() => open({ kind: 'receipt', receipt, order })}>
+                      {receipt.exceptionDetail ? 'View delivery exception' : 'View receipt'}
+                    </Button>}
                     {order.reason && <small>{order.reason}</small>}
                   </div></td>
                 </tr>;

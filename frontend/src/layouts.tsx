@@ -167,11 +167,12 @@ const adminNav = [
   ['/admin/crises', 'Crisis operations', Siren],
   ['/admin/resources', 'Resources', Boxes],
   ['/admin/shelters', 'Shelters', Tent],
+  ['/admin/partner-commitments', 'Partner commitments', Building2],
 ] as const;
 export function AppLayout({
   mode = 'citizen',
 }: {
-  mode?: 'citizen' | 'staff' | 'volunteer' | 'admin';
+  mode?: 'citizen' | 'staff' | 'volunteer' | 'admin' | 'partner';
 }) {
   const { user, logout } = useAuth(),
     { t } = useTranslation();
@@ -181,15 +182,16 @@ export function AppLayout({
   const hasPreviousPage = (window.history.state?.idx ?? 0) > 0;
   const atWorkspaceHome = location.pathname === home && !location.search;
   const effectiveMode = mode === 'citizen' && ['/app/notifications', '/app/profile'].includes(location.pathname)
-    ? home === '/staff' ? 'staff' : home === '/admin' ? 'admin' : home === '/volunteer' ? 'volunteer' : 'citizen'
+    ? home === '/staff' ? 'staff' : home === '/admin' ? 'admin' : home === '/volunteer' ? 'volunteer' : home === '/partner' ? 'partner' : 'citizen'
     : mode;
   const isAdmin = effectiveMode === 'admin';
+  const isPartner = effectiveMode === 'partner';
   const fixedCountry = isAdmin ? countryAdminCode(user) : undefined;
   const selectedCountry = useCountry();
   const country = fixedCountry ?? selectedCountry;
   const unread = useQuery({
-    queryKey: ['notifications', 'unread', country],
-    queryFn: () => get<{ count: number }>('/notifications/unread-count'),
+    queryKey: ['notifications', 'unread', country, isPartner],
+    queryFn: () => get<{ count: number }>(isPartner ? '/notifications/unread-count?partnerOnly=true' : '/notifications/unread-count'),
     enabled: !!user,
     refetchInterval: 15000,
   });
@@ -229,7 +231,7 @@ export function AppLayout({
       ? staffNav.filter(
           ([path]) =>
             path === '/staff' ||
-            path === '/staff/cases' ||
+            (path === '/staff/cases' && user?.roles.some((r) => ['CaseManager', 'Logistics', 'Coordinator'].includes(r))) ||
             (path.includes('resources') &&
               user?.roles.some((r) => ['Logistics', 'Coordinator'].includes(r))) ||
             (path.includes('shelters') &&
@@ -242,7 +244,13 @@ export function AppLayout({
         ? adminNav
         : effectiveMode === 'volunteer'
           ? ([['/volunteer', 'My assignments', Users]] as const)
-          : citizenNav;
+          : effectiveMode === 'partner' ? ([
+            ['/partner', 'Overview', LayoutDashboard],
+            ['/partner/work', 'Assigned work', ClipboardList],
+            ['/partner/contributions', 'Contributions & commitments', Boxes],
+            ['/partner/profile', 'Organisation profile', Building2],
+            ['/partner/notifications', t('notifications'), Bell],
+          ] as const) : citizenNav;
   return (
     <CountryScope.Provider value={fixedCountry}>
     <div className={workspaceClass}>
@@ -263,8 +271,8 @@ export function AppLayout({
             : effectiveMode === 'staff'
               ? 'OPERATIONS WORKSPACE'
               : effectiveMode === 'admin'
-                ? 'SYSTEM ADMINISTRATION'
-                : 'VOLUNTEER WORKSPACE'}
+                ? globalAdmin ? 'SYSTEM ADMINISTRATION' : 'COUNTRY ADMINISTRATION'
+                : effectiveMode === 'partner' ? 'PARTNER WORKSPACE' : 'VOLUNTEER WORKSPACE'}
         </div>
         <nav aria-label="Workspace navigation">
           {effectiveMode === 'admin' && adminSectionNav
@@ -285,6 +293,12 @@ export function AppLayout({
               <Icon size={20} /><span>{label}</span>
             </NavLink>
           ))}
+          {effectiveMode !== 'partner' && user?.roles.includes('Partner') && <NavLink to="/partner" end onClick={() => setOpen(false)}>
+            <Building2 size={20} /><span>Partner workspace</span>
+          </NavLink>}
+          {effectiveMode === 'partner' && home !== '/partner' && <NavLink to={home} end onClick={() => setOpen(false)}>
+            <LayoutDashboard size={20} /><span>Primary workspace</span>
+          </NavLink>}
         </nav>
         <div className="sidebar-bottom">
           <div className="care-note">
@@ -325,7 +339,7 @@ export function AppLayout({
             <ThemeToggle />
             <CountrySelector withFlag={isAdmin} /><Language />
             <Link
-              to="/app/notifications"
+              to={isPartner ? '/partner/notifications' : '/app/notifications'}
               className="notification-button"
               aria-label={t('notifications')}
             >

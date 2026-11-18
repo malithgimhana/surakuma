@@ -252,16 +252,19 @@ try {
   await page.goto(`${site}/staff/cases/${foodId}`);
   await page.getByLabel('Resource', { exact: true }).selectOption(resource.id);
   await page.getByLabel('Quantity', { exact: true }).fill('10');
-  await page.getByRole('button', { name: 'Approve reservation', exact: true }).click();
-  await expect(page.getByRole('alert')).toBeVisible();
+  expect(await page.getByLabel('Quantity', { exact: true }).evaluate((input: HTMLInputElement) => input.validity.rangeOverflow)).toBe(true);
   await caption(
-    'Only six packs exist. A ten-pack reservation is rejected by the server; stock remains protected.',
+    'Six packs are available. The reservation form limits the quantity to available stock.',
     2600,
   );
   await page.getByLabel('Quantity', { exact: true }).fill('6');
   await page.getByRole('button', { name: 'Approve reservation', exact: true }).click();
   await page.getByRole('button', { name: 'Dispatch', exact: true }).click();
   await page.getByRole('button', { name: 'Confirm delivery', exact: true }).click();
+  const receiptFirst = page.getByRole('dialog', { name: 'Confirm delivery' });
+  await receiptFirst.getByLabel('Delivery reference').fill('RECORDING-FIRST');
+  await receiptFirst.getByLabel('Receiving person or representative').fill('Synthetic receiving representative');
+  await receiptFirst.getByRole('button', { name: 'Record receipt' }).click();
   await expect(page.getByText('6 / 10', { exact: true })).toBeVisible();
   await caption(
     'Six of ten delivered. Four remain outstanding; reservation, dispatch and delivery are separate records.',
@@ -276,14 +279,15 @@ try {
   );
   await page.getByRole('button', { name: 'Approve household reservation', exact: true }).click();
   await caption('Reservation commits capacity before arrival. It is not occupancy.');
-  await page.getByRole('button', { name: 'CheckIn', exact: true }).click();
+  await page.getByRole('button', { name: 'Check in', exact: true }).click();
   await caption(
     'Check-in converts the reservation to occupancy. Departure will release the occupied spaces.',
   );
   await screenshot('shelter-check-in');
   await switchAccount('volunteers');
   await page.goto(`${site}/staff/volunteers`);
-  await page.getByLabel('Case ID', { exact: true }).fill(foodId);
+  await page.getByLabel('Search cases', { exact: true }).fill(`Synthetic recording ${stamp}`);
+  await page.getByLabel('Case', { exact: true }).selectOption(foodId);
   await page.getByLabel('Verified volunteer', { exact: true }).selectOption(volunteer.id);
   const taskTitle = `Recording household distribution ${stamp}`;
   await page.getByLabel('Task title', { exact: true }).fill(taskTitle);
@@ -300,6 +304,8 @@ try {
     .filter({ has: page.getByRole('heading', { name: taskTitle, exact: true }) });
   await taskCard.getByRole('button', { name: 'Accept', exact: true }).click();
   await taskCard.getByRole('button', { name: 'Start', exact: true }).click();
+  await taskCard.getByLabel('Work completed').fill('Coordinated food pack distribution at the collection point.');
+  await taskCard.getByLabel('Actual outcome').fill('The households on the list collected their packs.');
   await taskCard.getByRole('button', { name: 'Submit for verification', exact: true }).click();
   await caption(
     'The volunteer accepts, starts and reports completion. They cannot verify their own work.',
@@ -309,19 +315,17 @@ try {
   const staffTask = page
     .locator('.card')
     .filter({ has: page.getByRole('heading', { name: taskTitle, exact: true }) });
-  await staffTask.getByRole('button', { name: 'Verify', exact: true }).click();
+  await staffTask.getByLabel('Verification notes').fill('Reviewed the distribution report against the assignment.');
+  await staffTask.getByRole('button', { name: 'Verify report', exact: true }).click();
   await caption('The coordinator verifies completion and the activity remains auditable.');
   await switchAccount('logistics');
   await page.goto(`${site}/staff/resources`);
-  const stock = page
-    .locator('.card')
-    .filter({ has: page.getByRole('heading', { name: resource.name, exact: true }) });
-  await stock.getByLabel(`Replenish ${resource.name} quantity`, { exact: true }).fill('4');
-  await stock
-    .getByLabel('Replenishment reason', { exact: true })
-    .fill('Synthetic incoming aid resolves the shortage.');
-  await stock.getByRole('button', { name: 'Add stock', exact: true }).click();
-  await expect(stock.locator('.stock-numbers')).toContainText('4');
+  await page.getByRole('button', { name: 'Record stock', exact: true }).click();
+  await page.getByLabel('Resource', { exact: true }).selectOption(resource.id);
+  await page.getByLabel('Quantity (packs)', { exact: true }).fill('4');
+  await page.getByLabel('Reason', { exact: true }).fill('Synthetic incoming aid resolves the shortage.');
+  await page.getByRole('button', { name: 'Save stock movement', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Stock movement recorded.' })).toBeVisible();
   await caption(
     'Replenishment is recorded with a reason. It does not erase the earlier shortage or delivery history.',
   );
@@ -331,6 +335,10 @@ try {
   await page.getByRole('button', { name: 'Approve reservation', exact: true }).click();
   await page.getByRole('button', { name: 'Dispatch', exact: true }).click();
   await page.getByRole('button', { name: 'Confirm delivery', exact: true }).click();
+  const receiptRemainder = page.getByRole('dialog', { name: 'Confirm delivery' });
+  await receiptRemainder.getByLabel('Delivery reference').fill('RECORDING-REMAINDER');
+  await receiptRemainder.getByLabel('Receiving person or representative').fill('Synthetic receiving representative');
+  await receiptRemainder.getByRole('button', { name: 'Record receipt' }).click();
   await expect(page.getByText('10 / 10', { exact: true })).toBeVisible();
   await caption('The remaining four packs are delivered. The requested quantity is now fulfilled.');
   await switchAccount('case');

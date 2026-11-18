@@ -1,16 +1,18 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { expect, it, vi } from 'vitest';
 import '../i18n';
 import AdminLogistics from '../AdminLogistics';
-import { get } from '../api';
+import { api, get } from '../api';
 import { CountryScope } from '../geography';
 import type { InventoryItem, LogisticsData } from '../logistics';
 
-vi.mock('../api', () => ({ get: vi.fn(), errorMessage: (e: Error) => e.message }));
+vi.mock('../api', () => ({ get: vi.fn(), api: { request: vi.fn().mockResolvedValue({ data: {} }) }, errorMessage: (e: Error) => e.message }));
 
 it('filters inventory by scope and crisis and counts mixed units without summing them', async () => {
+  HTMLDialogElement.prototype.showModal ??= function () { this.setAttribute('open', ''); };
+  HTMLDialogElement.prototype.close ??= function () { this.removeAttribute('open'); };
   const packs: InventoryItem = { id: 'food', name: 'Family packs', code: 'FAMILY', countryCode: 'LK', organisationId: 'org',
     depotId: 'colombo', category: 'FoodWater', unit: 'packs', stock: 500, reserved: 200, available: 300,
     lowStockThreshold: 350, locationText: 'Colombo', suitability: '', transportAvailable: true };
@@ -47,4 +49,17 @@ it('filters inventory by scope and crisis and counts mixed units without summing
   expect(dispatches.getByText('In transit')).toBeVisible();
   expect(dispatches.getByText('Duty administrator')).toBeVisible();
   expect(dispatches.getByRole('button', { name: 'Confirm receipt' })).toBeEnabled();
+  fireEvent.click(dispatches.getByRole('button', { name: 'Confirm receipt' }));
+  const receipt = within(screen.getByRole('dialog', { name: 'Confirm receipt' }));
+  fireEvent.change(receipt.getByLabelText('Delivery reference'), { target: { value: 'QA-RECEIPT' } });
+  fireEvent.change(receipt.getByLabelText('Confirmed quantity (packs)'), { target: { value: '195' } });
+  fireEvent.change(receipt.getByLabelText('Receiving person or representative'), { target: { value: 'Receiving officer' } });
+  expect(receipt.getByLabelText('Delivery exception details')).toBeRequired();
+  fireEvent.change(receipt.getByLabelText('Delivery exception details'), { target: { value: 'Five packs damaged in transit.' } });
+  fireEvent.click(receipt.getByRole('button', { name: 'Confirm receipt' }));
+  await waitFor(() => expect(api.request).toHaveBeenCalledWith(expect.objectContaining({
+    url: '/logistics/orders/dispatch/deliver',
+    data: { delivery: { reference: 'QA-RECEIPT', confirmedQuantity: 195, receivedAt: null, receivedBy: 'Receiving officer',
+      method: 'RecipientAcknowledgment', exceptionDetail: 'Five packs damaged in transit.', note: '' } },
+  })));
 });

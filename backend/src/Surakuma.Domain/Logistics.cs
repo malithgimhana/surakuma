@@ -24,3 +24,17 @@ public sealed class LogisticsOrder : Record
     public string ActorId { get; set; } = "";
     public string Reason { get; set; } = "";
 }
+
+public sealed class DeliveryConfirmation : Record
+{
+    public Guid? AllocationId { get; set; }
+    public Guid? LogisticsOrderId { get; set; }
+    public string Reference { get; set; } = "";
+    public decimal ConfirmedQuantity { get; set; }
+    public DateTimeOffset ReceivedAt { get; set; }
+    public string ReceivedBy { get; set; } = "";
+    public string Method { get; set; } = "";
+    public string ActorId { get; set; } = "";
+    public string Note { get; set; } = "";
+    public string ExceptionDetail { get; set; } = "";
+}

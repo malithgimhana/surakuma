@@ -8,8 +8,8 @@ import { get } from '../api';
 
 vi.mock('../auth', () => ({ useAuth: () => ({ user: { id: 'coordinator', memberships: [] } }) }));
 vi.mock('../api', () => ({
-  get: vi.fn((path: string) => Promise.resolve(path.startsWith('/requests?')
-    ? { items: path.includes('Gampaha') ? [{ id: 'case-1', reference: 'SK-TEST', locationText: 'Gampaha Flyover', status: 'Approved' }] : [], total: path.includes('Gampaha') ? 1 : 0, page: 1, pageSize: 20 }
+  get: vi.fn((path: string) => Promise.resolve(path.startsWith('/volunteer-tasks/cases?')
+    ? (path.includes('Gampaha') ? [{ id: 'case-1', reference: 'SK-TEST', locationText: 'Gampaha Flyover', organisationId: 'org-1' }] : [])
     : path === '/volunteers' ? { profiles: [], tasks: [], names: {} } : { organisations: [], crises: [] })),
   api: { request: vi.fn() },
   errorMessage: () => 'Error',
@@ -30,7 +30,7 @@ it('keeps the form stable while searching and shows a selectable case by locatio
   expect(select).toBeDisabled();
   expect(screen.getByText('Searching cases…')).toBeVisible();
   await waitFor(() => expect(within(select).getByRole('option', { name: /SK-TEST.*Gampaha Flyover/ })).toBeInTheDocument());
-  expect(get).toHaveBeenCalledWith('/requests?search=Gampaha&page=1');
+  expect(get).toHaveBeenCalledWith('/volunteer-tasks/cases?search=Gampaha');
   fireEvent.change(select, { target: { value: 'case-1' } });
   expect(select).toHaveValue('case-1');
   fireEvent.change(search, { target: { value: 'No match' } });

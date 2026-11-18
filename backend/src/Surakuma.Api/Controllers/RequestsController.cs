@@ -20,8 +20,8 @@ public sealed class RequestsController(Operations operations, AccessService acce
     }
     [HttpGet]
     public Task<Page<AssistanceRequest>> List(string? status, string? search, CancellationToken ct, int page = 1,
-        bool assignedToMe = false, string? view = null, Guid? crisisId = null) =>
-        operations.Requests(false, status, search, page, ct, assignedToMe, view, crisisId);
+        bool assignedToMe = false, string? view = null, Guid? crisisId = null, string? staffRole = null) =>
+        operations.Requests(false, status, search, page, ct, assignedToMe, view, crisisId, staffRole);
     [HttpGet("mine")] public Task<Page<AssistanceRequest>> Mine(string? status, string? search, CancellationToken ct, int page = 1) => operations.Requests(true, status, search, page, ct);
     [HttpGet("triage")] public Task<List<AssistanceRequest>> Triage(CancellationToken ct, Guid? crisisId = null) => operations.Triage(ct, crisisId);
     [HttpGet("escalated")] public Task<List<AssistanceRequest>> Escalated(CancellationToken ct) => operations.EscalatedRequests(ct);

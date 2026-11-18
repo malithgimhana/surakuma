@@ -144,6 +144,7 @@ test('real three-country submission, scoped triage, allocation and delivery', as
     await staff.locator('input[name=password]').fill(password);
     await staff.getByRole('button', { name: 'Log in', exact: true }).click();
     await staff.waitForURL('**/staff');
+    await expect(staff.getByRole('heading', { name: 'Crisis Coordinator overview' })).toBeVisible();
     await staff.goto(`http://127.0.0.1:5192/staff/cases/${aid.id}`);
     for (const action of ['Begin review', 'Verify request', 'Approve case']) {
       await staff.getByLabel('Reason / case note').fill('Acceptance verification');
@@ -158,6 +159,10 @@ test('real three-country submission, scoped triage, allocation and delivery', as
     await staff.getByRole('button', { name: 'Approve reservation', exact: true }).click();
     await staff.getByRole('button', { name: 'Dispatch', exact: true }).click();
     await staff.getByRole('button', { name: 'Confirm delivery', exact: true }).click();
+    const receipt = staff.getByRole('dialog', { name: 'Confirm delivery' });
+    await receipt.getByLabel('Delivery reference').fill(`ACCEPTANCE-${countryCode}`);
+    await receipt.getByLabel('Receiving person or representative').fill('Synthetic receiving representative');
+    await receipt.getByRole('button', { name: 'Record receipt' }).click();
     await expect(staff.getByText('Assistance delivered', { exact: true }).first()).toBeVisible();
     const staffLogin = await (
       await request.post(api + '/auth/login', { data: { email, password } })
@@ -248,6 +253,93 @@ test('real three-country submission, scoped triage, allocation and delivery', as
 });
 
 
+test('volunteer reports, partner assignments and independent alert review work in their own workspaces', async ({ browser, request }) => {
+  const password = process.env.SURAKUMA_ACCEPTANCE_PASSWORD;
+  if (!password) throw new Error('Run only through the isolated acceptance script.');
+  const api = 'https://localhost:7143/api/v1';
+  const origin = 'http://127.0.0.1:5192';
+  const admin = await request.post(api + '/auth/login', { data: { email: 'admin@surakuma.test', password } });
+  expect(admin.ok()).toBeTruthy();
+  const headers = { Authorization: `Bearer ${(await admin.json()).accessToken}` };
+  const pageOfCases = await (await request.get(api + '/requests?countryCode=LK&status=Approved', { headers })).json();
+  const food = pageOfCases.items.find((row: { category: string }) => row.category === 'FoodWater');
+  expect(food).toBeTruthy();
+
+  async function signIn(email: string, path: string) {
+    const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 390, height: 844 } });
+    const page = await context.newPage();
+    await page.goto(origin + '/login');
+    await page.getByLabel('Email address', { exact: true }).fill(email);
+    await page.locator('input[name=password]').fill(password!);
+    await page.getByRole('button', { name: 'Log in', exact: true }).click();
+    await page.waitForURL(origin + path);
+    return { context, page };
+  }
+
+  const volunteer = await signIn('volunteer@surakuma.test', '/volunteer');
+  await volunteer.page.getByRole('button', { name: 'Accept', exact: true }).click();
+  await volunteer.page.getByRole('button', { name: 'Start', exact: true }).click();
+  await volunteer.page.getByLabel('Work completed', { exact: true }).fill('Prepared the collection point and distributed family food packs.');
+  await volunteer.page.getByLabel('Actual outcome', { exact: true }).fill('Four households collected their packs during the shift.');
+  await volunteer.page.getByLabel('People assisted (if applicable)', { exact: true }).fill('4');
+  await volunteer.page.getByRole('button', { name: 'Submit for verification' }).click();
+  await expect(volunteer.page.getByText(/^Awaiting verification$/i)).toBeVisible();
+  await volunteer.context.close();
+  const coordinator = await signIn('volunteers@surakuma.test', '/staff');
+  await coordinator.page.getByRole('link', { name: 'Reports awaiting verification', exact: true }).click();
+  await expect(coordinator.page.getByText(/Four households collected their packs/)).toBeVisible();
+  await coordinator.page.getByLabel('Verification notes').fill('Checked the report against the assignment and shift record.');
+  await coordinator.page.getByRole('button', { name: 'Verify report' }).click();
+  await expect(coordinator.page.getByText('No tasks match this queue')).toBeVisible();
+  await coordinator.context.close();
+
+  const partnerEmail = 'phase-partner@acceptance.test';
+  expect((await request.post(api + '/admin/users', { headers, data: {
+    email: partnerEmail, password, name: 'Acceptance partner', role: 'Partner', organisationId: food.organisationId, countryCode: 'LK',
+  } })).ok()).toBeTruthy();
+  expect((await request.put(`${api}/partner/cases/${food.id}/shares/${food.organisationId}?countryCode=LK`, { headers, data: {
+    title: 'Coordinate collection', instructions: 'Confirm the collection window with the response team.',
+  } })).ok()).toBeTruthy();
+  const partner = await signIn(partnerEmail, '/partner');
+  await partner.page.getByRole('main').getByRole('link', { name: 'Assigned work', exact: true }).click();
+  await expect(partner.page.getByRole('heading', { name: 'Coordinate collection' })).toBeVisible();
+  await expect(partner.page.getByText('Confirm the collection window with the response team.')).toBeVisible();
+  expect(await partner.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
+  const partnerAxe = await new AxeBuilder({ page: partner.page }).withTags(['wcag2a', 'wcag2aa']).analyze();
+  expect(partnerAxe.violations.filter((violation) => violation.impact === 'critical' || violation.impact === 'serious')).toEqual([]);
+  await partner.page.goto(origin + '/partner/notifications');
+  await expect(partner.page.getByText(/New partner assignment/)).toBeVisible();
+  await partner.context.close();
+
+  const reviewerEmail = 'phase-reviewer@acceptance.test';
+  expect((await request.post(api + '/admin/users', { headers, data: {
+    email: reviewerEmail, password, name: 'Alert reviewer', role: 'CountryAdministrator', countryCode: 'LK',
+  } })).ok()).toBeTruthy();
+  const draft = await request.post(api + '/alerts?countryCode=LK', { headers, data: {
+    crisisId: food.crisisId, title: 'Synthetic cleanup notice', message: 'Follow the instructions of the response team.',
+    sinhalaTitle: 'පරීක්ෂණ නිවේදනය', sinhalaMessage: 'පරීක්ෂණ පණිවිඩය',
+    tamilTitle: 'சோதனை அறிவிப்பு', tamilMessage: 'சோதனைச் செய்தி',
+    area: 'Test area', authority: 'Isolated acceptance team', severity: 'Information',
+    expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+  } });
+  expect(draft.ok()).toBeTruthy();
+  const { id } = await draft.json();
+  expect((await request.post(`${api}/alerts/${id}/submit?countryCode=LK`, { headers })).ok()).toBeTruthy();
+  const reviewer = await signIn(reviewerEmail, '/admin');
+  await reviewer.page.goto(origin + '/admin/crises');
+  await reviewer.page.getByRole('button', { name: 'Review queue' }).click();
+  await reviewer.page.getByRole('button', { name: 'View alert: Synthetic cleanup notice' }).click();
+  const review = reviewer.page.getByRole('dialog', { name: 'Synthetic cleanup notice' });
+  await review.getByRole('button', { name: 'Approve alert' }).click();
+  await review.getByLabel('Reason', { exact: true }).fill('Checked the duty team, area and translated wording.');
+  await review.getByRole('button', { name: 'Approve alert' }).click();
+  await expect(review).toHaveCount(0);
+  expect((await request.post(`${api}/alerts/${id}/publish?countryCode=LK`, { headers })).ok()).toBeTruthy();
+  const feed = await (await request.get(api + '/alerts?countryCode=LK')).json();
+  expect(feed.some((alert: { id: string }) => alert.id === id)).toBeTruthy();
+  await reviewer.context.close();
+});
+
 test('country administrator sees only authorised reporting and cannot verify partners', async ({ browser, request }) => {
   const password = process.env.SURAKUMA_ACCEPTANCE_PASSWORD;
   if (!password) throw new Error('Run only through the isolated acceptance script.');
@@ -266,6 +358,7 @@ test('country administrator sees only authorised reporting and cannot verify par
   await page.locator('input[name=password]').fill(password);
   await page.getByRole('button', { name: 'Log in', exact: true }).click();
   await page.waitForURL('**/admin');
+  await expect(page.locator('.sidebar-caption')).toHaveText('COUNTRY ADMINISTRATION');
   await expect(page.getByRole('combobox', { name: 'Country', exact: true })).toHaveCount(0);
   await expect(page.locator('.workspace-country')).toHaveText('Country Sri Lanka');
   await expect(page.getByRole('list', { name: 'Response figures' })).toBeVisible();
