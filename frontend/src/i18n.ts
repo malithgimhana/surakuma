@@ -425,9 +425,9 @@ const entries: string[][] = [
   ],
   [
     'routeResult',
-    'Route: {{km}} km · estimated {{minutes}} minutes',
-    'මාර්ගය: කි.මී. {{km}} · ඇස්තමේන්තුගත විනාඩි {{minutes}}',
-    'வழி: {{km}} கி.மீ. · சுமார் {{minutes}} நிமிடங்கள்',
+    'Standard driving estimate: {{km}} km · {{minutes}} minutes. Verify current road and emergency conditions before travelling.',
+    'සාමාන්‍ය රිය පැදවීමේ ඇස්තමේන්තුව: කි.මී. {{km}} · විනාඩි {{minutes}}. ගමනට පෙර මාර්ග සහ හදිසි තත්ත්වය පරීක්ෂා කරන්න.',
+    'சாதாரண வாகனப் பயண மதிப்பீடு: {{km}} கி.மீ. · {{minutes}} நிமிடங்கள். பயணிக்கும் முன் சாலை மற்றும் அவசர நிலைமைகளைச் சரிபார்க்கவும்.',
   ],
   [
     'mapHint',

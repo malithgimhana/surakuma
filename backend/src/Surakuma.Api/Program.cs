@@ -71,6 +71,9 @@ builder.Services.AddScoped<IStore, EfStore>();
 builder.Services.AddScoped<ICurrentActor, CurrentActor>();
 builder.Services.AddScoped<AccessService>();
 builder.Services.AddScoped<Operations>();
+builder.Services.AddScoped<FundingService>();
+builder.Services.AddScoped<DecisionSupportService>();
+builder.Services.AddScoped<SupplySupportService>();
 builder.Services.AddScoped<InternalNotifications>();
 builder.Services.AddScoped<AuthenticationService>();
 builder.Services.AddScoped<IAllocationPolicy, ConstraintAllocationPolicy>();
@@ -84,15 +87,17 @@ if (!builder.Environment.IsEnvironment("Testing")) { builder.Services.AddHostedS
 builder.Services.AddMemoryCache();
 builder.Services.AddControllers().AddJsonOptions(o => o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter(null, false)));
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(options => options.CustomSchemaIds(SchemaId));
 var origins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>() ?? ["http://localhost:5173", "http://127.0.0.1:5173", "https://localhost:5173"];
 builder.Services.AddCors(o => o.AddDefaultPolicy(p => p.WithOrigins(origins).AllowAnyHeader().AllowAnyMethod().AllowCredentials()));
 builder.Services.AddRateLimiter(o =>
 {
     o.RejectionStatusCode = 429;
-    o.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(ctx => RateLimitPartition.GetFixedWindowLimiter(ctx.Connection.RemoteIpAddress?.ToString() ?? "local", _ => new FixedWindowRateLimiterOptions { PermitLimit = 240, Window = TimeSpan.FromMinutes(1) }));
+    int globalPermitLimit = builder.Configuration.GetValue("RateLimits:GlobalPermitLimit", 240);
+    o.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(ctx => RateLimitPartition.GetFixedWindowLimiter(ctx.Connection.RemoteIpAddress?.ToString() ?? "local", _ => new FixedWindowRateLimiterOptions { PermitLimit = globalPermitLimit, Window = TimeSpan.FromMinutes(1) }));
     o.AddFixedWindowLimiter("auth", x => { x.PermitLimit = builder.Configuration.GetValue("RateLimits:AuthPermitLimit", 20); x.Window = TimeSpan.FromMinutes(1); });
     o.AddFixedWindowLimiter("maps", x => { x.PermitLimit = 30; x.Window = TimeSpan.FromMinutes(1); });
+    o.AddFixedWindowLimiter("ai-drafts", x => { x.PermitLimit = 20; x.Window = TimeSpan.FromMinutes(1); });
 });
 builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = 5 * 1024 * 1024);
 var app = builder.Build();
@@ -175,4 +180,11 @@ app.MapGet("/api/v1/ready", async (CrisisDbContext db, CancellationToken ct) =>
 }).AllowAnonymous();
 app.MapControllers();
 app.Run();
+
+static string SchemaId(Type type)
+{
+    if (type.IsGenericType)
+        return string.Concat(type.GetGenericArguments().Select(SchemaId)) + type.Name.Split('`')[0];
+    return type.IsNested ? type.DeclaringType!.Name + "." + type.Name : type.Name.Replace("[]", "Array");
+}
 public partial class Program;

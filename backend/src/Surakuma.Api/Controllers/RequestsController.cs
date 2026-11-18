@@ -7,8 +7,11 @@ using Microsoft.EntityFrameworkCore;
 namespace Surakuma.Api.Controllers;
 
 [ApiController, Authorize, Route("api/v1/requests")]
-public sealed class RequestsController(Operations operations, AccessService access, CrisisDbContext db, IWebHostEnvironment environment) : ControllerBase
+public sealed class RequestsController(Operations operations, AccessService access, CrisisDbContext db, IWebHostEnvironment environment,
+    IConfiguration configuration) : ControllerBase
 {
+    private string EvidenceDirectory => Path.GetFullPath(configuration["Storage:EvidencePath"] ??
+        Path.Combine(environment.ContentRootPath, "../../data/evidence"));
     [HttpPost, Authorize(Roles = Roles.Citizen)]
     public async Task<IActionResult> Submit(CreateRequestInput input, CancellationToken ct)
     {
@@ -37,6 +40,8 @@ public sealed class RequestsController(Operations operations, AccessService acce
                       orderby user.DisplayName select new { user.Id, Name = user.DisplayName, membership.AvailableForAssignment }).ToListAsync(ct);
     }
     [HttpGet("{id:guid}")] public Task<object> Detail(Guid id, CancellationToken ct) => operations.Detail(id, ct);
+    [HttpPost("{id:guid}/consolidate")]
+    public Task<CaseConsolidation> Consolidate(Guid id, ConsolidateCaseInput input, CancellationToken ct) => operations.Consolidate(id, input, ct);
     [HttpPatch("{id:guid}/status")] public Task<AssistanceRequest> Status(Guid id, StatusInput input, CancellationToken ct) => operations.ChangeStatus(id, input, ct);
     [HttpPost("{id:guid}/escalate")]
     public async Task<IActionResult> Escalate(Guid id, TaskUpdateInput input, CancellationToken ct)
@@ -88,7 +93,7 @@ public sealed class RequestsController(Operations operations, AccessService acce
         string? type = header[0] == 0xFF && header[1] == 0xD8 && header[2] == 0xFF ? "image/jpeg" : header.SequenceEqual(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }) ? "image/png" : null;
         if (type is null)
             throw new RuleException("Only JPEG and PNG evidence is accepted. File content must match its format.");
-        string directory = Path.GetFullPath(Path.Combine(environment.ContentRootPath, "../../data/evidence"));
+        string directory = EvidenceDirectory;
         Directory.CreateDirectory(directory);
         var attachment = new Attachment { RequestId = id, StoredName = Guid.NewGuid().ToString("N"), OriginalName = Path.GetFileName(file.FileName)[..Math.Min(150, Path.GetFileName(file.FileName).Length)], ContentType = type, Size = file.Length };
         string target = Path.Combine(directory, attachment.StoredName);
@@ -113,7 +118,7 @@ public sealed class RequestsController(Operations operations, AccessService acce
     {
         await access.Request(id, ct: ct);
         var a = await db.Set<Attachment>().SingleOrDefaultAsync(x => x.Id == attachmentId && x.RequestId == id, ct) ?? throw new MissingException();
-        string path = Path.GetFullPath(Path.Combine(environment.ContentRootPath, "../../data/evidence", a.StoredName));
+        string path = Path.Combine(EvidenceDirectory, a.StoredName);
         if (!System.IO.File.Exists(path))
             throw new MissingException();
         return PhysicalFile(path, a.ContentType, a.OriginalName);

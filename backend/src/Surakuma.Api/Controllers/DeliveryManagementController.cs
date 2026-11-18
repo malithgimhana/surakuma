@@ -39,7 +39,7 @@ public sealed class DeliveryManagementController(CrisisDbContext db, AccessServi
         }
         else throw new RuleException("Choose Retry or Accepted.");
         if (delivery != null) delivery.State = m.State;
-        var countryCode = await (from r in db.Set<AssistanceRequest>() join c in db.Set<Crisis>() on r.CrisisId equals c.Id
+        var countryCode = m.FundingCountryCode ?? await (from r in db.Set<AssistanceRequest>() join c in db.Set<Crisis>() on r.CrisisId equals c.Id
                                  where r.Id == m.RequestId select c.CountryCode).SingleAsync(ct);
         ops.Audit("Delivery" + input.Action, m, input.Reason, countryCode); await db.SaveChangesAsync(ct); await tx.CommitAsync(ct); return NoContent();
     }

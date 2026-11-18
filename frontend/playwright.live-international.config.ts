@@ -2,7 +2,7 @@ import { defineConfig } from '@playwright/test';
 export default defineConfig({
   outputDir: './test-results/live-international',
   testDir: './e2e',
-  testMatch: 'international-live.spec.ts',
+  testMatch: '**/*.spec.ts',
   workers: 1,
   timeout: 240000,
   use: {
@@ -10,6 +10,7 @@ export default defineConfig({
     channel: 'msedge',
     ignoreHTTPSErrors: true,
     trace: 'retain-on-failure',
+    video: process.env.SURAKUMA_DEMO_VIDEO === '1' ? 'on' : 'off',
     actionTimeout: 15000,
   },
   webServer: {

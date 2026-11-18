@@ -90,7 +90,7 @@ test('citizen submits, staff review AI, logistics deliver partial aid and close 
   await page.getByLabel('Depot location', { exact: true }).fill('Synthetic Colombo depot');
   await page.getByRole('button', { name: 'Save depot', exact: true }).click();
   await page.getByRole('button', { name: 'Add resource', exact: true }).click();
-  await page.getByLabel('Depot', { exact: true }).selectOption({ label: depotName });
+  await page.getByRole('dialog', { name: 'Add resource' }).getByLabel('Depot', { exact: true }).selectOption({ label: depotName });
   await expect(page.getByLabel('Latitude', { exact: true })).toHaveValue('');
   await expect(page.getByLabel('Longitude', { exact: true })).toHaveValue('');
   await page.getByLabel('Latitude', { exact: true }).fill('6.92');

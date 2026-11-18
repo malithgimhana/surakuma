@@ -1,4 +1,4 @@
-param([switch]$SkipBuild, [string]$TestFilter = "")
+param([switch]$SkipBuild, [string]$TestFilter = "", [string]$ApiDll = "")
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 $database = 'Surakuma_Acceptance_' + [Guid]::NewGuid().ToString('N')
@@ -11,15 +11,21 @@ $env:Seed__Password = 'Acceptance!' + [Guid]::NewGuid().ToString('N') + 'a9'
 $env:SURAKUMA_ACCEPTANCE_PASSWORD = $env:Seed__Password
 $env:Jwt__Key = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(64))
 $env:Email__Provider = 'Capture'
+$env:Ai__ApiKey = ''
+$env:Mapping__ApiKey = ''
+$env:Ai__OperationalBriefingsEnabled = 'false'
+$env:Ai__PublicTranslationEnabled = 'false'
+$env:Storage__EvidencePath = Join-Path $logs 'evidence'
 $env:Cors__Origins__0 = 'http://127.0.0.1:5192'
 $env:RateLimits__AuthPermitLimit = '100'
+$env:RateLimits__GlobalPermitLimit = '1500'
 $env:VITE_API_URL = '/api/v1'
 $env:SURAKUMA_API_PROXY = 'https://localhost:7143'
 $project = Join-Path $repo 'backend/src/Surakuma.Api'
-$dll = Join-Path $project 'bin/Release/net10.0/Surakuma.Api.dll'
+$dll = if ($ApiDll) { (Resolve-Path -LiteralPath $ApiDll).Path } else { Join-Path $project 'bin/Release/net10.0/Surakuma.Api.dll' }
 $apiProcess = $null
 try {
-    if (!$SkipBuild) {
+    if (!$SkipBuild -and !$ApiDll) {
         & dotnet build $project -c Release --no-restore -m:1
         if ($LASTEXITCODE) { throw 'API build failed.' }
     }
@@ -34,6 +40,7 @@ try {
         Start-Sleep -Seconds 1
     }
     if (!$ready) { throw 'Acceptance API did not become ready.' }
+    Invoke-WebRequest 'https://localhost:7143/swagger/v1/swagger.json' -SkipCertificateCheck -OutFile (Join-Path $logs 'openapi.json')
     Push-Location (Join-Path $repo 'frontend')
     try {
         if ($TestFilter) { & npx playwright test --config playwright.live-international.config.ts --grep $TestFilter }

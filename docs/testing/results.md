@@ -1,5 +1,15 @@
 # Executed validation
 
+## Coursework implementation, 18 November 2026
+
+- Backend build and **140/140** backend tests passed on isolated SQL Server LocalDB databases.
+- TypeScript and Vite production build passed. Standalone Vitest passed **67/67** in 23 files.
+- Final Edge Playwright run passed **16/16**. Scenarios covered scoped workflows in all three countries, the funding ledger, keyboard and contrast, mobile and desktop layouts, and Swagger.
+- Both migrations applied successfully to newly created databases and to a synthetic Phase 1 rehearsal after a checksum-verified backup. Selected operational record counts and field checksums matched. EF reported no pending model changes.
+- Synthetic browser captures decoded successfully. Provider checks used capture, mocks and labelled fallback. Live Gemini, Brevo and HeiGIT and participant review remain pending.
+
+See [full workflow results](full-workflow-results.md), [requirements traceability](requirements-traceability.md), [completion audit](final-completion-audit.md) and [remaining blockers](remaining-blockers.md).
+
 ## Local assessment preparation 22 October 2026
 
 - Expanded Playwright suite: **7 passed together in 58.6 seconds**, including the existing public/language, citizen review/delivery/closure, admin and axe scans, plus keyboard navigation with doubled root text and a real Swagger GET execution.

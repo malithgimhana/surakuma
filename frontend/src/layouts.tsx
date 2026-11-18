@@ -168,11 +168,13 @@ const adminNav = [
   ['/admin/resources', 'Resources', Boxes],
   ['/admin/shelters', 'Shelters', Tent],
   ['/admin/partner-commitments', 'Partner commitments', Building2],
+  ['/admin/funding', 'Funding', HeartHandshake],
+  ['/admin/supply-support', 'Supply support', Boxes],
 ] as const;
 export function AppLayout({
   mode = 'citizen',
 }: {
-  mode?: 'citizen' | 'staff' | 'volunteer' | 'admin' | 'partner';
+  mode?: 'citizen' | 'staff' | 'volunteer' | 'admin' | 'partner' | 'funding';
 }) {
   const { user, logout } = useAuth(),
     { t } = useTranslation();
@@ -198,6 +200,7 @@ export function AppLayout({
   const globalAdmin = !!user?.roles.includes('Administrator');
   const administrativeAlerts = useQuery({ queryKey: ['admin-alerts-bell', country], enabled: isAdmin, queryFn: () => get<{ id: string; acknowledgedAt?: string; resolvedAt?: string }[]>(`/admin/alerts?countryCode=${country}`), refetchInterval: 60000 });
   const alertCount = Array.isArray(administrativeAlerts.data) ? administrativeAlerts.data.filter(a => !a.acknowledgedAt && !a.resolvedAt).length : 0;
+  const notificationCount = (unread.data?.count || 0) + alertCount;
   const currentAdminSection = isAdmin && matchPath('/admin', location.pathname)
     ? getAdminSection(new URLSearchParams(location.search).get('section'), globalAdmin)
     : null;
@@ -248,9 +251,10 @@ export function AppLayout({
             ['/partner', 'Overview', LayoutDashboard],
             ['/partner/work', 'Assigned work', ClipboardList],
             ['/partner/contributions', 'Contributions & commitments', Boxes],
+            ['/partner/supply-support', 'Supply support', ClipboardList],
             ['/partner/profile', 'Organisation profile', Building2],
             ['/partner/notifications', t('notifications'), Bell],
-          ] as const) : citizenNav;
+          ] as const) : effectiveMode === 'funding' ? ([['/funding', 'Donor workspace', HeartHandshake]] as const) : citizenNav;
   return (
     <CountryScope.Provider value={fixedCountry}>
     <div className={workspaceClass}>
@@ -272,7 +276,7 @@ export function AppLayout({
               ? 'OPERATIONS WORKSPACE'
               : effectiveMode === 'admin'
                 ? globalAdmin ? 'SYSTEM ADMINISTRATION' : 'COUNTRY ADMINISTRATION'
-                : effectiveMode === 'partner' ? 'PARTNER WORKSPACE' : 'VOLUNTEER WORKSPACE'}
+                : effectiveMode === 'partner' ? 'PARTNER WORKSPACE' : effectiveMode === 'funding' ? 'FUNDING WORKSPACE' : 'VOLUNTEER WORKSPACE'}
         </div>
         <nav aria-label="Workspace navigation">
           {effectiveMode === 'admin' && adminSectionNav
@@ -295,6 +299,19 @@ export function AppLayout({
           ))}
           {effectiveMode !== 'partner' && user?.roles.includes('Partner') && <NavLink to="/partner" end onClick={() => setOpen(false)}>
             <Building2 size={20} /><span>Partner workspace</span>
+          </NavLink>}
+          {effectiveMode !== 'funding' && user?.roles.includes('Citizen') && <NavLink to="/funding" end onClick={() => setOpen(false)}>
+            <HeartHandshake size={20} /><span>Donor workspace</span>
+          </NavLink>}
+          {user?.roles.includes('FundingOfficer') && <NavLink to="/funding/manage" end onClick={() => setOpen(false)}>
+            <HeartHandshake size={20} /><span>Funding management</span>
+          </NavLink>}
+          {effectiveMode === 'staff' && user?.roles.some(r => ['Coordinator', 'Logistics', 'ShelterAdmin'].includes(r)) &&
+            <NavLink to="/staff/supply-support" end onClick={() => setOpen(false)}>
+              <Boxes size={20} /><span>Supply support</span>
+            </NavLink>}
+          {effectiveMode === 'funding' && home !== '/funding/manage' && <NavLink to={home} end onClick={() => setOpen(false)}>
+            <LayoutDashboard size={20} /><span>Primary workspace</span>
           </NavLink>}
           {effectiveMode === 'partner' && home !== '/partner' && <NavLink to={home} end onClick={() => setOpen(false)}>
             <LayoutDashboard size={20} /><span>Primary workspace</span>
@@ -341,10 +358,10 @@ export function AppLayout({
             <Link
               to={isPartner ? '/partner/notifications' : '/app/notifications'}
               className="notification-button"
-              aria-label={t('notifications')}
+              aria-label={notificationCount ? `${t('notifications')}, ${notificationCount}` : t('notifications')}
             >
               <Bell size={21} />
-              {!!((unread.data?.count || 0) + alertCount) && <span className="notification-count">{(unread.data?.count || 0) + alertCount}</span>}
+              {!!notificationCount && <span className="notification-count" aria-hidden="true">{notificationCount}</span>}
             </Link>
             <span className="avatar">{user?.name[0]}</span>
             <div className="user-meta">

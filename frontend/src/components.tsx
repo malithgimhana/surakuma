@@ -7,14 +7,16 @@ import { Link } from 'react-router-dom';
 import { errorMessage } from './api';
 import type { Category } from './types';
 export function Brand() {
+  const name = useId();
   return (
-    <Link to="/" className="brand" aria-label="Surakuma home">
-      <span className="brand-mark">
+    <Link to="/" className="brand" aria-labelledby={name}>
+      <span className="brand-mark" aria-hidden="true">
         <HeartHandshake size={28} strokeWidth={2.3} />
       </span>
-      <span>
+      <span id={name}>
         <strong lang="si">සුරැකුම</strong>
         <small>SURAKUMA</small>
+        <span className="sr-only"> home</span>
       </span>
     </Link>
   );

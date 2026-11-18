@@ -85,15 +85,13 @@ Log in as `admin@surakuma.test` and open Administration → **Integration readin
 
 Backend integration tests create a uniquely named `Surakuma_Test_<guid>` database, apply real SQL Server migrations, and delete only that fixture database afterward. They never reset the demonstration database. Set `SURAKUMA_TEST_SERVER` if the test instance differs from `.\SQLEXPRESS`.
 
-Browser tests require both servers above. For the API terminal, use `./scripts/Start-Api.ps1 -BrowserTests` for the automated suite: it temporarily raises only the authentication request allowance for rapid synthetic role switching. Normal startup retains the application's default limit. Restart normally after the suite.
+The isolated browser runner creates a unique SQL Server LocalDB database, starts the API and Vite, and uses generated credentials and captured email. The runner retains the synthetic database and writes its OpenAPI snapshot and logs under `tmp/acceptance`.
 
 ```powershell
-cd frontend
-npx playwright install chromium
-npm run test:e2e
+pwsh -NoProfile -File scripts/Test-InternationalAcceptance.ps1
 ```
 
-The browser tests read the ignored local demo password themselves and create synthetic requests in the demonstration database. Start the API with `Email__Provider=Capture` for browser testing.
+The isolated suite uses Microsoft Edge on Windows. The runner raises the authentication and global request allowances for its temporary API process so automated role switching shares a single loopback address. Normal API startup retains its configured limits.
 
 Create a source-only submission archive with `.\scripts\Package.ps1`. It excludes generated settings, evidence/runtime data, dependencies, build outputs, logs and test traces. Add the reviewed final report and demonstration link separately before institutional submission.
 
@@ -120,6 +118,8 @@ Create a source-only submission archive with `.\scripts\Package.ps1`. It exclude
 
 The local assessment materials are indexed in [docs/submission/README.md](docs/submission/README.md). `output/docx/Surakuma-technical-report.docx` and `output/pdf/Surakuma-technical-report.pdf` contain deliberately blank identity/contribution fields. `output/demo/index.html` plays the captioned local browser recording. Translation/UAT/contribution templates have blank approval fields. Rebuild the combined source/report/video archive with `./scripts/Package-Submission.ps1` after completing reviews and edits. From `frontend`, `npm run demo:record` records the synthetic walkthrough when both servers are available and the API uses explicit `-BrowserTests` mode; restart normally afterward.
 
-See `docs/implementation-plan.md`, `docs/architecture/decisions.md` and `docs/testing/results.md`. Human language review, participant UAT, live provider account checks, identity/contribution details and final student editorial review remain outstanding. A captioned local demonstration and an editable report/PDF are prepared. Optional donations, payments, forecasting and offline capture are excluded from the core release. Git history should reflect the actual solo build and subsequent testing/documentation contributions.
+Citizens can register a donor profile and use **Donor workspace**. A scoped Funding Officer signs in to **Funding management**. Administrators audit funding from **Funding**. Staff record external financial receipts, and authorized logistics staff confirm material stock receipts. Coordinators open decision support from the crisis page, and staff report shortages through **Supply support**.
+
+See the [completion audit](docs/testing/final-completion-audit.md), [executed workflows](docs/testing/full-workflow-results.md), [API contracts](docs/api/contracts.md) and [remaining blockers](docs/testing/remaining-blockers.md). Human language review, participant UAT, provider checks and individual contribution records are separate assessment tasks.
 
 International administration now connects country reports, staff lifecycle, partner verification, sensitive-change approvals, notification recovery and administrator alerts. See [administration workflows and operator setup](docs/administration-workflows.md) for permissions, metric definitions and migration instructions.

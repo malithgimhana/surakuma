@@ -100,6 +100,7 @@ export interface Placement extends Entity {
   status: 'Reserved' | 'CheckedIn' | 'Departed' | 'Cancelled';
 }
 export interface RequestDetail {
+  consolidations?: { originalId: string; originalReference: string; primaryId: string; primaryReference: string; createdAt: string }[];
   feedback?: {
     id: string;
     rating: number;
@@ -214,6 +215,7 @@ export interface Volunteer extends Entity {
   available: boolean;
 }
 export interface VolunteerTask extends Entity {
+  startsAt?: string;
   requestId: string;
   volunteerId: string;
   title: string;

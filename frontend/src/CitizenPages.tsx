@@ -315,6 +315,7 @@ const requestSchema = z.object({
 type RequestForm = z.infer<typeof requestSchema>;
 const icons = [Utensils, Stethoscope, House, Bus, Accessibility, MoreHorizontal];
 export function NewRequest() {
+  const country = useCountry();
   const { t } = useTranslation(),
     { user } = useAuth(),
     navigate = useNavigate(),
@@ -423,7 +424,7 @@ export function NewRequest() {
     setReverseResults(false);
     try {
       const result = await get<{ features: typeof geoResults }>(
-        `/maps/geocode?query=${encodeURIComponent(geoSearch)}`,
+        `/maps/geocode?query=${encodeURIComponent(geoSearch)}&countryCode=${encodeURIComponent(country)}`,
       );
       setGeoResults(result.features);
     } catch {
@@ -436,7 +437,7 @@ export function NewRequest() {
     setError('');
     setReverseSearching(true);
     try {
-      const result = await api.post<{ features: typeof geoResults }>('/maps/reverse-geocode', {
+      const result = await api.post<{ features: typeof geoResults }>(`/maps/reverse-geocode?countryCode=${encodeURIComponent(country)}`, {
         latitude,
         longitude,
       });
@@ -827,6 +828,9 @@ export function RequestTracking() {
         description={r.reference}
         action={<Badge value={r.status} />}
       />
+      {data.consolidations?.map(link => link.originalId === r.id
+        ? <p key={link.originalId}>Follow the active request <Link to={`/app/requests/${link.primaryId}`}>{link.primaryReference}</Link>.</p>
+        : <p key={link.originalId}>Consolidated original request <Link to={`/app/requests/${link.originalId}`}>{link.originalReference}</Link>.</p>)}
       <div className="two-column">
         <div className="stack">
           <Card>

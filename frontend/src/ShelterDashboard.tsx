@@ -433,11 +433,12 @@ function ShelterDialog({
           <section>
             <h3>Resources &amp; shortages</h3>
             <p className="muted">
-              Inventory is tracked by depot. There is no shelter-specific stock or shortage record
-              for this shelter.
+              Use supply support to request essentials from a verified organisation. Confirmed receipts are recorded in depot inventory.
             </p>
-            <Link className="text-link" to="/admin/resources">
-              Open resources <ArrowRight size={15} aria-hidden="true" />
+            <Link className="text-link" to={`${window.location.pathname.startsWith('/admin') ? '/admin' : '/staff'}/supply-support?${new URLSearchParams({
+              shelter: s.id, organisation: s.organisationId,
+            })}`}>
+              Report a supply shortage <ArrowRight size={15} aria-hidden="true" />
             </Link>
           </section>
           <section>

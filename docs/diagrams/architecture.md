@@ -176,3 +176,56 @@ erDiagram
 Outbox event IDs and notification delivery keys are correlated application identifiers, not all enforced as foreign keys. Audit events intentionally preserve actor/entity references without cascading deletion. Identity's standard role/login/claim tables are provided by ASP.NET Identity and abbreviated above.
 
 `NullableDouble` above represents C# `double?`. Rendered SVG/PNG figures for the report are in `rendered/`; `scripts/build_assessment.py` and `scripts/render_diagrams.cjs` regenerate them. The two relational figures are selected views with explicit FK labels, not a claim that every relationship is drawn. `StockMovement.ResourceId` refers to Resource.
+
+
+## Funding and supply architecture
+
+```mermaid
+sequenceDiagram
+    actor Donor
+    actor Officer as Funding or logistics staff
+    participant API as Scoped ASP.NET API
+    participant Ledger as FundingService and SQL Server
+    participant Worker as NotificationWorker
+    Donor->>API: Record pledge with operation ID
+    API->>Ledger: Persist pledge, event and audit
+    Officer->>API: Confirm external receipt
+    API->>Ledger: Verify scope, reference and eligibility
+    opt Material receipt with logistics grant
+        Ledger->>Ledger: Credit physical stock and append stock movement
+    end
+    Ledger->>Ledger: Write confirmation and outbox in the same transaction
+    Officer->>API: Allocate and reconcile confirmed funds or delivery
+    API->>Ledger: Check balance, budget and receipt uniqueness
+    Worker->>Ledger: Claim queued email event
+    Worker->>Worker: Check active citizen role and configured provider
+    Worker->>Ledger: Persist outcome, attempt and retry state
+```
+
+```mermaid
+erDiagram
+    AppUser ||--o| DonorProfile : owns
+    Organisation ||--o{ FundingCampaign : operates
+    Country ||--o{ FundingCampaign : scopes
+    FundingCampaign ||--o{ Donation : receives
+    DonorProfile ||--o{ Donation : pledges
+    Donation ||--o{ DonationEvent : records
+    Donation ||--o{ DonationAllocation : commits
+    AssistanceRequest ||--o{ DonationAllocation : benefits
+    DonationAllocation ||--o{ DonationExpenditure : reconciles
+    StockMovement o|--o| Donation : confirms_material
+    DeliveryConfirmation o|--o| DonationExpenditure : confirms_distribution
+    Shelter o|--o{ SupplyRequest : raises
+    AssistanceRequest o|--o{ SupplyRequest : raises
+    SupplyRequest o|--o{ PartnerContribution : receives_offer
+    PartnerContribution ||--o{ PartnerStockReceipt : receives
+    StockMovement ||--o| PartnerStockReceipt : credits
+    Crisis ||--o{ DemandForecast : scopes
+    Crisis ||--o{ CrisisBriefing : scopes
+    AssistanceRequest o|--o{ InvestigationFlag : subject
+    Donation o|--o{ InvestigationFlag : subject
+    AssistanceRequest ||--o| CaseConsolidation : original
+    AssistanceRequest ||--o{ CaseConsolidation : primary
+```
+
+A flag references one case or one donation. Receipt ID uniqueness, row versions and serializable write transactions protect against replays and concurrent allocation. Funding email uses a donation event ID as its outbox ID. The application correlates scoped staff inbox events separately.

@@ -343,6 +343,11 @@ export function CaseDetails() {
     queryFn: () => get<Shelter[]>(`/requests/${id}/shelters`),
     enabled: canShelter,
   });
+  const shelterRanking = useQuery({
+    queryKey: ['shelter-recommendations', id, country],
+    queryFn: () => get<{ id: string; distanceKm?: number; explanation: string }[]>(`/requests/${id}/shelter-recommendations`),
+    enabled: !!canShelter && q.data?.request.category === 'Shelter',
+  });
   const shares = useQuery({
     queryKey: ['partner-case-shares', country, id],
     queryFn: () => get<string[]>(countryPath(`/partner/cases/${id}/shares`, country)),
@@ -370,7 +375,10 @@ export function CaseDetails() {
   const delivery = d.allocations.find((a) => a.id === deliveryId && a.status === 'Dispatched');
   const canReserveShelter = ['Approved', 'InProgress'].includes(r.status) && r.quantity === 1 && r.deliveredQuantity === 0 &&
     !d.placements.some((p) => p.status === 'Reserved' || p.status === 'CheckedIn');
-  const suitableShelters = shelters.data?.filter((s) => s.open && s.available >= r.householdSize && (!r.accessibilityNeeds || s.accessible)) ?? [];
+  const compatibleShelters = shelters.data?.filter((s) => s.open && s.available >= r.householdSize && (!r.accessibilityNeeds || s.accessible)) ?? [];
+  const suitableShelters = shelterRanking.data
+    ? shelterRanking.data.flatMap(candidate => compatibleShelters.filter(s => s.id === candidate.id))
+    : compatibleShelters;
   const reservationStatus = ['Submitted', 'UnderReview', 'Verified'].includes(r.status)
     ? `Current status: ${r.status}. The case must be verified and approved before reserving.`
     : `Current status: ${r.status}. There is no eligible outstanding reservation for this case.`;
@@ -394,6 +402,12 @@ export function CaseDetails() {
         action={<Badge value={r.status} />}
       />
       <MutationMessage mutation={write} />
+      {canLogistics && activeFulfilment && r.organisationId && <Link to={`${adminCase ? '/admin' : '/staff'}/supply-support?${new URLSearchParams({
+        case: r.id, organisation: r.organisationId, category: r.category,
+      })}`}>Request additional supplies for this case</Link>}
+      {d.consolidations?.map(link => <p key={link.originalId}>{link.originalId === r.id ? 'Active case ' : 'Consolidated case '}
+        <Link to={`${adminCase ? '/admin' : '/staff'}/cases/${link.originalId === r.id ? link.primaryId : link.originalId}`}>
+          {link.originalId === r.id ? link.primaryReference : link.originalReference}</Link></p>)}
       <div className="case-grid">
         <div className="stack">
           <Card>
@@ -652,6 +666,19 @@ export function CaseDetails() {
                             </Button>
                           ))}
                       </div>
+                      {['Pending', 'Confirmed'].includes(duplicate.state) && ['Submitted', 'UnderReview', 'Verified', 'Approved'].includes(r.status) &&
+                        <details>
+                          <summary>Consolidate this case into the candidate</summary>
+                          <p>Review both requests and verify they describe the same need. Staff retain the original record and stop its separate fulfilment.</p>
+                          <form className="stack" onSubmit={event => {
+                            event.preventDefault();
+                            const values = new FormData(event.currentTarget);
+                            write.mutate({ path: `/requests/${id}/consolidate`, data: { primaryRequestId: duplicate.candidateId, reason: values.get('reason') } });
+                          }}>
+                            <Field label="Consolidation reason"><textarea name="reason" maxLength={1000} required /></Field>
+                            <Button busy={write.isPending}>Confirm consolidation</Button>
+                          </form>
+                        </details>}
                     </div>
                   ))}
                   {ai.data?.decisions.length ? (
@@ -798,10 +825,13 @@ export function CaseDetails() {
                         <option value={s.id} key={s.id}>
                           {s.name} · {s.available} spaces ·{' '}
                           {s.accessible ? 'accessible' : 'standard'}
+                          {shelterRanking.data?.find(candidate => candidate.id === s.id)?.distanceKm != null &&
+                            ` · ${shelterRanking.data.find(candidate => candidate.id === s.id)?.distanceKm} km straight-line`}
                         </option>
                       ))}
                   </select>
                 </Field>
+                {shelterRanking.data?.[0] && <p>{shelterRanking.data[0].explanation}</p>}
                 <Button busy={write.isPending}>Approve household reservation</Button>
               </form>}
               {d.placements.map((p) => (

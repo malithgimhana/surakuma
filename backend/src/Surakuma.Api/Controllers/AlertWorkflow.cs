@@ -1,6 +1,8 @@
 using System.Data;
+using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Surakuma.Application;
 using Surakuma.Domain;
@@ -10,7 +12,28 @@ namespace Surakuma.Api.Controllers;
 public sealed partial class OperationsController
 {
     public sealed record AlertActionInput(string? Reason = null);
+    public sealed record TranslationDraftInput(Guid CrisisId, [Required, MaxLength(12)] string Language,
+        [Required, MaxLength(150)] string Title, [Required, MaxLength(2000)] string Message, bool PublicWordingConfirmed);
+    public sealed record TranslationDraftResult(string State, string? Source = null, string? Title = null, string? Message = null);
     private static readonly JsonSerializerOptions AlertJson = new(JsonSerializerDefaults.Web);
+
+    [HttpPost("alerts/translation-draft"), EnableRateLimiting("ai-drafts")]
+    public async Task<TranslationDraftResult> TranslationDraft([FromServices] IAiProvider provider,
+        TranslationDraftInput input, CancellationToken ct)
+    {
+        var crisis = await CoordinatedCrisis(input.CrisisId, ct);
+        var country = await db.Set<Country>().SingleAsync(x => x.Code == crisis.CountryCode, ct);
+        if (input.Language == "en" || !(country.Languages + "," + country.RequiredAlertLanguages)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Contains(input.Language))
+            throw new RuleException("Choose a non-English language from this country's alert policy.");
+        if (!input.PublicWordingConfirmed) throw new RuleException("Confirm the source is intended for public use and excludes personal details.");
+        var title = await provider.DraftTranslationAsync(input.Title, input.Language, ct);
+        if (title is null) return new("ManualTranslationRequired");
+        var message = await provider.DraftTranslationAsync(input.Message, input.Language, ct);
+        if (message is null || title.Text.Length > 150 || message.Text.Length > 2000)
+            return new("ManualTranslationRequired");
+        return new("Draft", title.Source, title.Text, message.Text);
+    }
 
     [HttpPost("alerts")]
     public async Task<PublicAlert> CreateAlert(PublicAlert input, CancellationToken ct)

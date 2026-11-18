@@ -69,7 +69,7 @@ export function landing(user: User) {
       ? '/volunteer'
       : user.roles.some((r) => ['Coordinator', 'CaseManager', 'Logistics', 'ShelterAdmin', 'VolunteerCoordinator'].includes(r))
         ? '/staff'
-        : user.roles.includes('Partner') ? '/partner' : '/app';
+        : user.roles.includes('Partner') ? '/partner' : user.roles.includes('FundingOfficer') ? '/funding/manage' : '/app';
 }
 export function Protected({ children, roles }: { children: ReactNode; roles?: string[] }) {
   const { user, loading } = useAuth();
@@ -90,6 +90,7 @@ export function loginDestination(user: User, requested?: string) {
   if (!requested || !requested.startsWith('/') || requested.startsWith('//')) return landing(user);
   const home = landing(user);
   if (requested === '/app/profile' || requested === '/app/notifications') return requested;
+  if (requested === '/funding' || requested.startsWith('/funding/')) return requested;
   if ((requested === '/partner' || requested.startsWith('/partner/')) && user.roles.includes('Partner')) return requested;
   return requested === home || requested.startsWith(home + '/') ? requested : home;
 }

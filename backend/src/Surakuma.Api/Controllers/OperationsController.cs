@@ -23,6 +23,8 @@ public sealed partial class OperationsController(Operations ops, AccessService a
     [HttpGet("reports/metrics")] public Task<object> Metrics(CancellationToken ct) => ops.Metrics(ct);
     [HttpGet("requests/{id:guid}/resources")] public Task<List<Resource>> CaseResources(Guid id, CancellationToken ct) => ops.CaseResources(id, ct);
     [HttpGet("requests/{id:guid}/shelters")] public Task<List<Shelter>> CaseShelters(Guid id, CancellationToken ct) => ops.CaseShelters(id, ct);
+    [HttpGet("requests/{id:guid}/shelter-recommendations")]
+    public Task<List<ShelterCandidate>> ShelterRecommendations(Guid id, CancellationToken ct) => ops.ShelterRecommendations(id, ct);
     [HttpGet("resources")] public Task<List<Resource>> Resources(CancellationToken ct) => ops.Resources(ct);
     [HttpPost("resources")] public Task<Resource> Resource(ResourceInput input, CancellationToken ct) => ops.AddResource(input, ct);
     [HttpPost("resources/{id:guid}/replenish")]
@@ -55,6 +57,10 @@ public sealed partial class OperationsController(Operations ops, AccessService a
     }
     [HttpPost("volunteers")] public Task<VolunteerProfile> Volunteer(VolunteerProfile input, CancellationToken ct) => ops.SaveVolunteer(input, ct);
     [HttpGet("volunteer-tasks/cases")] public Task<List<VolunteerCase>> VolunteerCases(string? search, CancellationToken ct) => ops.VolunteerCases(search, ct);
+    [HttpGet("volunteer-tasks/candidates")]
+    public Task<List<VolunteerCandidate>> VolunteerRecommendations(Guid requestId,
+        DateTimeOffset startsAt, DateTimeOffset dueAt, string? skill, CancellationToken ct)
+        => ops.VolunteerRecommendations(requestId, startsAt, dueAt, skill, ct);
     [HttpPost("volunteer-tasks")] public Task<VolunteerTask> Task(TaskInput input, CancellationToken ct) => ops.AssignTask(input, ct);
     [HttpPost("volunteer-tasks/{id:guid}")] public Task<VolunteerTask> UpdateTask(Guid id, TaskUpdateInput input, CancellationToken ct) => ops.UpdateTask(id, input, ct);
     [HttpGet("notifications")]
@@ -254,21 +260,23 @@ public sealed partial class OperationsController(Operations ops, AccessService a
     }
 
     [AllowAnonymous, EnableRateLimiting("maps"), HttpGet("maps/geocode")]
-    public async Task<IActionResult> Geocode(string query, CancellationToken ct)
+    public async Task<IActionResult> Geocode(string query, CancellationToken ct, string countryCode = "LK")
     {
-        if (string.IsNullOrWhiteSpace(query) || query.Length > 150)
+        if (string.IsNullOrWhiteSpace(query) || query.Length > 150 || countryCode is not ("LK" or "IN" or "NP"))
             return BadRequest();
-        var result = await cache.GetOrCreateAsync("geo:" + query.Trim().ToLowerInvariant(), async entry => { entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(12); return await maps.GeocodeAsync(query, ct); });
+        var result = await cache.GetOrCreateAsync("geo:" + countryCode + ":" + query.Trim().ToLowerInvariant(),
+            async entry => { entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(12); return await maps.GeocodeAsync(query, ct, countryCode); });
         return result is null ? StatusCode(503, new ProblemDetails { Title = "Location search unavailable. Enter a location or select a map point.", Status = 503 }) : Ok(result);
     }
     [EnableRateLimiting("maps"), HttpPost("maps/reverse-geocode")]
-    public async Task<IActionResult> ReverseGeocode(ReverseGeocodeInput input, CancellationToken ct)
+    public async Task<IActionResult> ReverseGeocode(ReverseGeocodeInput input, CancellationToken ct, string? countryCode = null)
     {
         if (input.Latitude is not double lat || input.Longitude is not double lng ||
-            !double.IsFinite(lat) || !double.IsFinite(lng) || lat is < -90 or > 90 || lng is < -180 or > 180)
+            !double.IsFinite(lat) || !double.IsFinite(lng) || lat is < -90 or > 90 || lng is < -180 or > 180 ||
+            countryCode is not (null or "LK" or "IN" or "NP"))
             return BadRequest();
         Response.Headers.CacheControl = "no-store";
-        var result = await maps.ReverseGeocodeAsync(lat, lng, ct);
+        var result = await maps.ReverseGeocodeAsync(lat, lng, ct, countryCode);
         return result is null ? StatusCode(503, new ProblemDetails { Title = "Reverse geocoding unavailable. Enter a location manually.", Status = 503 }) : Ok(result);
     }
     [EnableRateLimiting("maps"), HttpGet("maps/route")]
@@ -278,6 +286,7 @@ public sealed partial class OperationsController(Operations ops, AccessService a
             startLat is < -90 or > 90 || endLat is < -90 or > 90 || startLng is < -180 or > 180 || endLng is < -180 or > 180)
             return BadRequest();
         var result = await maps.RouteAsync(startLat, startLng, endLat, endLng, ct);
+        Response.Headers["X-Surakuma-Route-Type"] = "ordinary-driving";
         return result is null ? StatusCode(503, new ProblemDetails { Title = "Routing unavailable. No route or safe-travel estimate is being assumed.", Status = 503 }) : Ok(result);
     }
     private async Task Admin(CancellationToken ct)
@@ -392,7 +401,8 @@ public sealed partial class OperationsController(Operations ops, AccessService a
         }
         else if (grant.Suspended)
             throw new RuleException("Reactivate the existing grant from Account actions.");
-        if (input.CrisisId.HasValue && !await db.Set<CrisisAssignment>().AnyAsync(x => x.UserId == user.Id && x.CrisisId == input.CrisisId, ct))
+        if (input.CrisisId.HasValue && input.Role != Roles.FundingOfficer &&
+            !await db.Set<CrisisAssignment>().AnyAsync(x => x.UserId == user.Id && x.CrisisId == input.CrisisId, ct))
             db.Add(new CrisisAssignment { UserId = user.Id, CrisisId = input.CrisisId.Value });
         if (!(await users.UpdateSecurityStampAsync(user)).Succeeded) throw new RuleException("Could not invalidate sessions.");
         foreach (var session in await db.Set<RefreshSession>().Where(x => x.UserId == user.Id && !x.Revoked).ToListAsync(ct)) session.Revoked = true;

@@ -14,6 +14,7 @@ test('country selection resets public information and scopes crisis and country 
   const partnerId = '12345678-1234-1234-1234-123456789abc';
   const organisations: { id: string; name: string; enabled: boolean; primaryCrises: []; verification?: { verificationState: string } }[] =
     [{ id: partnerId, name: 'Response organisation', enabled: false, primaryCrises: [] }];
+  const crises: { id: string; countryCode: string; name: string; active: boolean }[] = [];
   const countries = [
     {
       code: 'LK',
@@ -64,6 +65,14 @@ test('country selection resets public information and scopes crisis and country 
     else if (path === '/countries') data = countries;
     else if (path === '/countries/NP/divisions')
       data = [{ id: 'province', name: 'Bagmati', levelName: 'Province', parentId: null }];
+    else if (path === '/crises') {
+      if (route.request().method() === 'POST') {
+        const input = route.request().postDataJSON();
+        const created = { id: 'np-response', ...input, active: true };
+        crises.push(created);
+        data = created;
+      } else data = crises.filter(crisis => crisis.countryCode === url.searchParams.get('countryCode'));
+    } else if (path === '/admin/crisis-operations/alerts') data = emptyCrisisAlerts;
     else if (path === '/countries/NP/services' && route.request().method() === 'PUT') {
       const { languages, requiredAlertLanguages, contacts } = route.request().postDataJSON();
       Object.assign(countries.find(country => country.code === 'NP')!, {
@@ -104,8 +113,9 @@ test('country selection resets public information and scopes crisis and country 
   await page.getByRole('button', { name: 'Create response event' }).click();
   await expect.poll(() => writes.find((w) => w.path === '/crises')?.body.countryCode).toBe('NP');
   expect(writes.find((w) => w.path === '/crises')?.body.administrativeDivisionId).toBe('province');
-  await expect(page.locator('[name=sinhalaTitle]')).toHaveCount(0);
-  await expect(page.locator('[name=neTitle]')).toBeVisible();
+  await expect(page.locator('input[lang=si]')).toHaveCount(0);
+  await page.getByText('Optional translations (Nepali)', { exact: true }).click();
+  await expect(page.getByLabel('Nepali title', { exact: true })).toBeEnabled();
   await page.goto('/admin?section=organisations');
   const existing = page.getByRole('button', { name: /Response organisation.*Verified/ });
   await expect(existing).toHaveCount(0);

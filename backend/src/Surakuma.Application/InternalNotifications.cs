@@ -29,7 +29,7 @@ public sealed class InternalNotifications(IStore store)
                     && (m.Role == Roles.CountryAdministrator ||
                         (n.TaskId != null && tasks.Any(t => t.Id == n.TaskId && volunteers.Any(v => v.Id == t.VolunteerId
                                 && v.UserId == userId && v.CountryCode == c.CountryCode && v.OrganisationId == m.OrganisationId && m.Role == Roles.Volunteer))
-                            || (n.TaskId == null && n.RequestId != null && requests.Any(r => r.Id == n.RequestId && m.Role != Roles.Volunteer && m.Role != Roles.Partner
+                            || (n.TaskId == null && n.RequestId != null && requests.Any(r => r.Id == n.RequestId && m.Role != Roles.Volunteer && m.Role != Roles.Partner && m.Role != Roles.FundingOfficer
                                     && (r.OrganisationId == m.OrganisationId ||
                                         (m.Role == Roles.Coordinator && assignments.Any(a => a.CrisisId == c.Id && a.UserId == userId)))))
                             || (n.TaskId == null && n.RequestId == null && m.Role == Roles.Coordinator))))))));
@@ -40,7 +40,7 @@ public sealed class InternalNotifications(IStore store)
         var crisis = await store.FindAsync<Crisis>(request.CrisisId, ct) ?? throw new MissingException();
         var assignments = store.Query<CrisisAssignment>();
         var recipients = await store.ListAsync(store.Query<Membership>().Where(m =>
-            m.Role != Roles.Citizen && m.Role != Roles.Volunteer && m.Role != Roles.Partner
+            m.Role != Roles.Citizen && m.Role != Roles.Volunteer && m.Role != Roles.Partner && m.Role != Roles.FundingOfficer
             && m.CountryCode == crisis.CountryCode && (m.CrisisId == null || m.CrisisId == crisis.Id)
             && (m.Role == Roles.CountryAdministrator || m.OrganisationId == request.OrganisationId
                 || (m.Role == Roles.Coordinator && assignments.Any(a => a.CrisisId == crisis.Id && a.UserId == m.UserId))))
@@ -115,6 +115,16 @@ public sealed class InternalNotifications(IStore store)
         Add(recipients, crisisId, null, null,
             hasException ? $"A shipment of {resource.Name} has a delivery exception." : $"A shipment of {resource.Name} was confirmed.",
             resource.OrganisationId, resource.CountryCode, Roles.Logistics);
+    }
+
+    public async Task FundingChanged(FundingCampaign campaign, string activity, CancellationToken ct)
+    {
+        var staff = store.Query<Membership>().Where(m => m.CountryCode == campaign.CountryCode &&
+            (m.Role == Roles.CountryAdministrator && m.CrisisId == null ||
+                m.Role == Roles.FundingOfficer && m.OrganisationId == campaign.OrganisationId &&
+                (m.CrisisId == null || m.CrisisId == campaign.CrisisId))).Select(m => m.UserId);
+        var recipients = await store.ListAsync(staff.Union(store.ActiveSystemAdministratorIds), ct);
+        Add(recipients, campaign.CrisisId, null, null, activity, campaign.OrganisationId, campaign.CountryCode, Roles.FundingOfficer);
     }
 
     private void Add(IEnumerable<string> recipients, Guid? crisisId, Guid? requestId, Guid? taskId, string message,

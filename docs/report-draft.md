@@ -44,4 +44,4 @@ The implementation is a solo build. Add actual Git references, test execution, t
 
 ## Future work
 
-Donation management, advanced inter-organisation support requests, recurring volunteer scheduling, demand forecasting, optimisation, offline capture and payment processing remain extension areas after core acceptance. Hosting and production operations require a separate rollout assessment.
+The coursework implementation adds a verified-receipt donation ledger, scoped inter-organisation handoffs, volunteer assignment windows and weekly demand estimation. Recurring schedules, more advanced optimisation, offline capture and optional payments remain extension areas. Hosting and production operations require a separate rollout assessment. The [completion audit](testing/final-completion-audit.md) records the evidence used to evaluate the current code.

@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
 import { get } from './api';
-import { Badge, Button, Card, Empty, ErrorState, Field, formatDate, Loading, PageHeader } from './components';
+import { Badge, Button, Card, Empty, ErrorState, Field, formatDate, Loading, PageHeader, categories } from './components';
+import { ContributionReceipt } from './SupplySupport';
 import { countryPath, useCrisisOperationsWrite } from './crisisOperationsApi';
 import { useCountry } from './geography';
 
@@ -16,6 +17,8 @@ interface Contribution {
   quantity: number;
   fulfilledQuantity: number;
   status: string;
+  category?: string;
+  supportRequestId?: string;
 }
 interface Workspace {
   organisations: { id: string; name: string; countryCode: string; verificationState: string; canOffer: boolean }[];
@@ -86,12 +89,16 @@ export default function PartnerWorkspace() {
           const data = Object.fromEntries(new FormData(event.currentTarget));
           write.mutate({ path: editing ? `/partner/contributions/${editing.id}` : '/partner/contributions',
             method: editing ? 'put' : 'post', data: { ...data, operationId: editing ? undefined : operationId,
-              organisationId: editing?.organisationId ?? data.organisationId, quantity: Number(data.quantity) } },
+              organisationId: editing?.organisationId ?? data.organisationId, quantity: Number(data.quantity),
+              category: data.category || null, supportRequestId: editing?.supportRequestId } },
             { onSuccess: () => setDraft(undefined) });
         }}>
           {!editing && <Field label="Organisation"><select name="organisationId" required>{offering.map((org) => <option key={org.id} value={org.id}>{org.name}</option>)}</select></Field>}
           <Field label="Offer title"><input name="title" required maxLength={160} defaultValue={editing?.title} /></Field>
           <Field label="Contribution type"><select name="kind" defaultValue={editing?.kind}><option>Resource</option><option>Service</option></select></Field>
+          <Field label="Category for inventory receipts"><select name="category" defaultValue={editing?.category ?? ''}>
+            <option value="">No category selected</option>{categories.map(c => <option key={c}>{c}</option>)}
+          </select></Field>
           <Field label="Unit"><input name="unit" required maxLength={40} defaultValue={editing?.unit} /></Field>
           <Field label="Offered quantity"><input name="quantity" type="number" min={0.01} step={0.01} max={10000000} required defaultValue={editing?.quantity} /></Field>
           <Field label="Offer description"><textarea name="description" required maxLength={2000} defaultValue={editing?.description} /></Field>
@@ -147,6 +154,8 @@ export function PartnerCommitments() {
         <h2>{c.title}</h2><p>{organisation} · {c.kind} · <Badge value={c.status} /></p><p>{c.description}</p>
         <p>{c.fulfilledQuantity} of {c.quantity} {c.unit} recorded as fulfilled</p>
         {c.status === 'Offered' && <ContributionForm contribution={c} country={country} admin />}
+        {c.category && c.kind === 'Resource' && ['Accepted', 'InProgress', 'Fulfilled'].includes(c.status) &&
+          <details><summary>Record inventory receipt</summary><ContributionReceipt id={c.id} country={country} /></details>}
       </Card>)}</div>}
   </div>;
 }

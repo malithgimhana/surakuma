@@ -12,6 +12,42 @@ namespace Surakuma.Api.Controllers;
 [ApiController, Route("api/v1"), Authorize]
 public sealed class GeographyController(CrisisDbContext db, AccessService access, Operations operations, InternalNotifications notifications) : ControllerBase
 {
+    public sealed record RegionCoverage(string Region, int OpenShelters, long AvailablePlaces, int TransportReadyStockItems, int ActiveCrises);
+
+    [HttpGet("countries/{code}/coverage"), ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    public async Task<List<RegionCoverage>> Coverage(string code, CancellationToken ct)
+    {
+        if ((access.SelectedCountry is { } selected && selected != code) || !await access.CountryAccess(code, [], ct))
+            throw new AccessDeniedException();
+        if (!await db.Set<Country>().AnyAsync(c => c.Code == code, ct)) throw new MissingException();
+        var divisions = await db.Set<AdministrativeDivision>().Where(d => d.CountryCode == code)
+            .Select(d => new { d.Id, d.ParentId, d.Name }).ToDictionaryAsync(d => d.Id, ct);
+        var shelters = await db.Set<Shelter>().Where(s => s.CountryCode == code && s.Open)
+            .Select(s => new { s.AdministrativeDivisionId, Places = s.Capacity - s.Occupancy - s.Reserved }).ToListAsync(ct);
+        var stock = await db.Set<Resource>().Where(r => r.CountryCode == code && r.TransportAvailable && r.Stock > r.Reserved)
+            .Select(r => r.AdministrativeDivisionId).ToListAsync(ct);
+        var crises = await db.Set<Crisis>().Where(c => c.CountryCode == code && c.Active)
+            .Select(c => c.AdministrativeDivisionId).ToListAsync(ct);
+
+        Guid Root(Guid? id)
+        {
+            for (int level = 0; level < 10 && id.HasValue && divisions.TryGetValue(id.Value, out var division); level++)
+            {
+                if (!division.ParentId.HasValue) return division.Id;
+                id = division.ParentId;
+            }
+            return Guid.Empty;
+        }
+        var shelterByRegion = shelters.ToLookup(s => Root(s.AdministrativeDivisionId));
+        var stockByRegion = stock.ToLookup(Root);
+        var crisesByRegion = crises.ToLookup(Root);
+        return divisions.Values.Where(d => d.ParentId == null).OrderBy(d => d.Name).Select(d => Group(d.Id, d.Name))
+            .Append(Group(Guid.Empty, "Region unrecorded")).ToList();
+
+        RegionCoverage Group(Guid id, string name) => new(name, shelterByRegion[id].Count(),
+            shelterByRegion[id].Sum(s => (long)Math.Max(0, s.Places)), stockByRegion[id].Count(), crisesByRegion[id].Count());
+    }
+
     [HttpPut("countries/{code}/services")]
     public async Task<IActionResult> Configure(string code, CountryServices input, CancellationToken ct)
     {

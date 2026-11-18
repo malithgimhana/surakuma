@@ -42,6 +42,9 @@ const ShelterManagement = lazy(() =>
 );
 const StaffOverview = lazy(() => import('./StaffOverview'));
 const PartnerWorkspace = lazy(() => import('./PartnerWorkspace'));
+const FundingWorkspace = lazy(() => import('./FundingWorkspace'));
+const DecisionSupport = lazy(() => import('./DecisionSupport'));
+const SupplySupport = lazy(() => import('./SupplySupport'));
 const PartnerCommitments = lazy(() => import('./PartnerWorkspace').then((m) => ({ default: m.PartnerCommitments })));
 const AdminPage = lazy(() => import('./StaffSupport').then((m) => ({ default: m.AdminPage })));
 const CrisesPage = lazy(() => import('./StaffSupport').then((m) => ({ default: m.CrisesPage })));
@@ -103,6 +106,8 @@ function App() {
         }
       >
         <Route index element={<StaffOverview />} />
+        <Route path="crises/:id/decision-support" element={<Protected roles={['Coordinator', 'Administrator', 'CountryAdministrator']}><DecisionSupport /></Protected>} />
+        <Route path="supply-support" element={<Protected roles={['Coordinator', 'Logistics', 'ShelterAdmin', 'Administrator', 'CountryAdministrator']}><SupplySupport /></Protected>} />
         <Route path="cases" element={<CaseQueue />} />
         <Route path="cases/:id" element={<CaseDetails />} />
         <Route
@@ -138,9 +143,15 @@ function App() {
           }
         />
       </Route>
+      <Route path="funding" element={<Protected><AppLayout mode="funding" /></Protected>}>
+        <Route index element={<FundingWorkspace />} />
+        <Route path=":section" element={<FundingWorkspace />} />
+        <Route path="manage/:section?" element={<Protected roles={['FundingOfficer']}><FundingWorkspace manage /></Protected>} />
+      </Route>
       <Route path="partner" element={<Protected roles={['Partner']}><AppLayout mode="partner" /></Protected>}>
         <Route index element={<PartnerWorkspace />} />
         <Route path="notifications" element={<NotificationsPage partner />} />
+        <Route path="supply-support" element={<SupplySupport />} />
         <Route path=":section" element={<PartnerWorkspace />} />
       </Route>
       <Route
@@ -165,9 +176,12 @@ function App() {
         <Route path="cases" element={<CaseQueue />} />
         <Route path="cases/:id" element={<CaseDetails />} />
         <Route path="crises" element={<CrisisOperationsPage />} />
+        <Route path="crises/:id/decision-support" element={<DecisionSupport />} />
         <Route path="resources" element={<AdminLogistics />} />
         <Route path="shelters" element={<ShelterManagement />} />
         <Route path="partner-commitments" element={<PartnerCommitments />} />
+        <Route path="funding/:section?" element={<FundingWorkspace manage admin />} />
+        <Route path="supply-support" element={<SupplySupport />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

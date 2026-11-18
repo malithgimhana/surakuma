@@ -4,8 +4,9 @@ public static class Roles
 {
     public const string Citizen = "Citizen", Coordinator = "Coordinator", CaseManager = "CaseManager",
         Logistics = "Logistics", ShelterAdmin = "ShelterAdmin", VolunteerCoordinator = "VolunteerCoordinator",
-        Volunteer = "Volunteer", Partner = "Partner", Administrator = "Administrator", CountryAdministrator = "CountryAdministrator";
-    public static readonly string[] All = [Citizen, Coordinator, CaseManager, Logistics, ShelterAdmin, VolunteerCoordinator, Volunteer, Partner, Administrator, CountryAdministrator];
+        Volunteer = "Volunteer", Partner = "Partner", Administrator = "Administrator", CountryAdministrator = "CountryAdministrator",
+        FundingOfficer = "FundingOfficer";
+    public static readonly string[] All = [Citizen, Coordinator, CaseManager, Logistics, ShelterAdmin, VolunteerCoordinator, Volunteer, Partner, Administrator, CountryAdministrator, FundingOfficer];
 }
 public enum RequestStatus
 {
@@ -480,6 +481,7 @@ public sealed class VolunteerProfile : Record
 }
 public sealed class VolunteerTask : Record
 {
+    public DateTimeOffset? StartsAt { get; set; }
     public Guid RequestId
     {
         get; set;
@@ -552,6 +554,7 @@ public sealed class Notification : Record
 }
 public sealed class OutboxMessage : Record
 {
+    public string? FundingCountryCode { get; set; }
     public int CycleAttempts { get; set; }
     public string UserId { get; set; } = ""; public Guid RequestId
     {

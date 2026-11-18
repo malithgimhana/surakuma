@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   ArrowRight,
   ChartNoAxesColumnIncreasing,
@@ -335,6 +335,7 @@ function CountryCrisisDashboard({
           )}
         </Card>
       </div>
+      <CountryCoverage country={country} />
       {create && (
         <WorkspaceDialog
           title="New crisis"
@@ -430,6 +431,27 @@ function CountryCrisisDashboard({
   );
 }
 
+function CountryCoverage({ country }: { country: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const query = useQuery({
+    queryKey: ['service-coverage', country],
+    enabled: expanded,
+    queryFn: () => get<{ region: string; openShelters: number; availablePlaces: number; transportReadyStockItems: number; activeCrises: number }[]>(
+      countryPath(`/countries/${country}/coverage`, country)),
+  });
+  return <Card><details onToggle={event => setExpanded(event.currentTarget.open)}>
+    <summary>Geographical service coverage</summary>
+    <p>Counts use recorded administrative regions. A count of zero means no matching records in the platform for that region.</p>
+    {expanded && (query.isPending ? <Loading /> : query.error ? <ErrorState error={query.error} retry={() => void query.refetch()} /> :
+      <div className="table-scroll"><table>
+        <caption>Registered coverage by region</caption>
+        <thead><tr><th>Region</th><th>Open shelters</th><th>Available places</th><th>Transport-ready inventory items</th><th>Active crises</th></tr></thead>
+        <tbody>{query.data?.map(row => <tr key={row.region}><th scope="row">{row.region}</th><td>{row.openShelters}</td>
+          <td>{row.availablePlaces}</td><td>{row.transportReadyStockItems}</td><td>{row.activeCrises}</td></tr>)}</tbody>
+      </table></div>)}
+  </details></Card>;
+}
+
 function ActiveResponse({
   country,
   countryName,
@@ -491,6 +513,7 @@ function ActiveResponse({
         <h3 id={`crisis-${crisis.id}`} tabIndex={-1}>
           {crisis.name}
         </h3>
+        <Link to={`/admin/crises/${crisis.id}/decision-support`}>Forecasts, briefings and investigations</Link>
         <p className="crisis-location">
           <Cloud size={16} aria-hidden="true" />
           {[crisis.type, crisis.district, countryName].filter(Boolean).join(' · ')}

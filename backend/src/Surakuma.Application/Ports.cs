@@ -47,7 +47,7 @@ public sealed class AccessService(IStore store, ICurrentActor actor)
         var crisis = await store.FindAsync<Crisis>(crisisId, ct) ?? throw new MissingException();
         return (await Memberships(ct)).Any(x => x.CountryCode == crisis.CountryCode &&
             (!x.CrisisId.HasValue || x.CrisisId == crisisId) &&
-            (x.Role == Roles.CountryAdministrator || ((roles == null ? x.Role != Roles.Citizen && x.Role != Roles.Volunteer && x.Role != Roles.Partner : roles.Contains(x.Role)) &&
+            (x.Role == Roles.CountryAdministrator || ((roles == null ? x.Role != Roles.Citizen && x.Role != Roles.Volunteer && x.Role != Roles.Partner && x.Role != Roles.FundingOfficer : roles.Contains(x.Role)) &&
             (!organisationId.HasValue || x.OrganisationId == organisationId))));
     }
     public async Task RequireLocation(Guid organisationId, string country, string[] roles, CancellationToken ct, Guid? crisisId = null)
@@ -60,7 +60,7 @@ public sealed class AccessService(IStore store, ICurrentActor actor)
     public async Task<IQueryable<T>> Located<T>(CancellationToken ct, Guid? crisisId = null, string[]? roles = null) where T : Record
     {
         bool global = await IsAdmin(ct);
-        var grants = store.Query<Membership>().Where(m => m.UserId == actor.Id && m.Role != Roles.Citizen && m.Role != Roles.Volunteer && m.Role != Roles.Partner && (m.CrisisId == null || (crisisId.HasValue && m.CrisisId == crisisId)));
+        var grants = store.Query<Membership>().Where(m => m.UserId == actor.Id && m.Role != Roles.Citizen && m.Role != Roles.Volunteer && m.Role != Roles.Partner && m.Role != Roles.FundingOfficer && (m.CrisisId == null || (crisisId.HasValue && m.CrisisId == crisisId)));
         if (roles != null) grants = grants.Where(m => roles.Contains(m.Role) || m.Role == Roles.CountryAdministrator);
         if (typeof(T) == typeof(Resource)) return (IQueryable<T>)store.Query<Resource>().Where(r => actor.SelectedCountry == null || r.CountryCode == actor.SelectedCountry).Where(r => global || grants.Any(m => m.CountryCode == r.CountryCode && (m.Role == Roles.CountryAdministrator || m.OrganisationId == r.OrganisationId)));
         if (typeof(T) == typeof(Shelter)) return (IQueryable<T>)store.Query<Shelter>().Where(r => actor.SelectedCountry == null || r.CountryCode == actor.SelectedCountry).Where(r => global || grants.Any(m => m.CountryCode == r.CountryCode && (m.Role == Roles.CountryAdministrator || m.OrganisationId == r.OrganisationId)));
@@ -75,7 +75,7 @@ public sealed class AccessService(IStore store, ICurrentActor actor)
     public async Task<IQueryable<AssistanceRequest>> Visible(CancellationToken ct = default)
     {
         if (await IsAdmin(ct)) return store.Query<AssistanceRequest>().Where(r => actor.SelectedCountry == null || store.Query<Crisis>().Any(c => c.Id == r.CrisisId && c.CountryCode == actor.SelectedCountry));
-        var grants = store.Query<Membership>().Where(x => x.UserId == actor.Id && x.Role != Roles.Citizen && x.Role != Roles.Volunteer && x.Role != Roles.Partner);
+        var grants = store.Query<Membership>().Where(x => x.UserId == actor.Id && x.Role != Roles.Citizen && x.Role != Roles.Volunteer && x.Role != Roles.Partner && x.Role != Roles.FundingOfficer);
         var crises = store.Query<Crisis>();
         var assignments = store.Query<CrisisAssignment>().Where(x => x.UserId == actor.Id);
         return store.Query<AssistanceRequest>().Where(r => actor.SelectedCountry == null || crises.Any(c => c.Id == r.CrisisId && c.CountryCode == actor.SelectedCountry)).Where(r => r.CitizenId == actor.Id || grants.Any(m =>

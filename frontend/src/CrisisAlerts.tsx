@@ -1,8 +1,8 @@
 import { useEffect, useId, useState } from 'react';
 import type { FormEvent } from 'react';
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
 import { ArrowRight, FileText, Info, Megaphone } from 'lucide-react';
-import { errorMessage, get } from './api';
+import { api, errorMessage, get } from './api';
 import { Badge, Button, Card, ErrorState, Field, Loading } from './components';
 import { WorkspaceDialog } from './OrganisationDialog';
 import {
@@ -93,6 +93,13 @@ export function CrisisAlertComposer({
   const [reviewed, setReviewed] = useState(false);
   const [validation, setValidation] = useState('');
   const [published, setPublished] = useState(false);
+  const [allowTranslation, setAllowTranslation] = useState(false);
+  const translation = useMutation({
+    mutationFn: async ({ code, source }: { code: string; source: Translation }) => (await api.post<
+      { state: string; source?: string; title?: string; message?: string }
+    >(countryPath('/alerts/translation-draft', country), { crisisId: selected?.id, language: code, ...source,
+      publicWordingConfirmed: allowTranslation })).data,
+  });
   const write = useCrisisOperationsWrite(country);
   const required = policy ? requiredAlertLanguages(policy) : [];
   const optional = policy
@@ -299,6 +306,28 @@ export function CrisisAlertComposer({
           </Field>
         </div>
         {(required.length ? required : ['en']).map((code) => translationFields(code, true))}
+        {!disabled && [...required, ...optional].some(code => code !== 'en') && <details>
+          <summary>Draft a translation</summary>
+          <label><input type="checkbox" checked={allowTranslation} onChange={event => setAllowTranslation(event.target.checked)} />
+            The English wording is intended for public release and contains no personal details.</label>
+          <div className="button-row">{[...required, ...optional].filter(code => code !== 'en').map(code =>
+            <Button key={code} type="button" variant="secondary" disabled={!allowTranslation || !draft.translations.en?.title.trim() ||
+              !draft.translations.en?.message.trim()} busy={translation.isPending}
+              onClick={() => translation.mutate({ code, source: draft.translations.en })}>Draft {languageNames.of(code)}</Button>)}</div>
+          {translation.error && <p role="alert">{errorMessage(translation.error)}</p>}
+          {translation.data?.state === 'ManualTranslationRequired' && <p role="status">Translation unavailable. Enter the wording manually.</p>}
+          {translation.data?.state === 'Draft' && <div>
+            <p>Machine draft for {translation.variables?.code} · {translation.data.source} · Human review required</p>
+            <p>{translation.data.title}</p><p>{translation.data.message}</p>
+            <Button type="button" variant="secondary" onClick={() => {
+              const code = translation.variables?.code;
+              if (code && translation.data?.title && translation.data.message) setField('translations', {
+                ...draft.translations, [code]: { title: translation.data.title, message: translation.data.message },
+              });
+              translation.reset();
+            }}>Copy draft into wording</Button>
+          </div>}
+        </details>}
         {optional.length > 0 && (
           <details className="crisis-optional-translations">
             <summary>

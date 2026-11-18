@@ -48,7 +48,7 @@ public sealed class RankedAllocationStrategy : IAllocationStrategy
         return new(outstanding, candidates, shortage, index < 0 ? 0 : index + 1, queue.Count, explanation);
     }
     private static HashSet<string> Tokens(string text) => text.ToLowerInvariant().Split([' ', ',', '.', ';', ':', '/', '-', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries).Where(x => x.Length >= 4).ToHashSet();
-    private static double Distance(double lat1, double lon1, double lat2, double lon2)
+    internal static double Distance(double lat1, double lon1, double lat2, double lon2)
     {
         const double radius = 6371;
         double a = Math.Pow(Math.Sin((lat2 - lat1) * Math.PI / 360), 2) + Math.Cos(lat1 * Math.PI / 180) * Math.Cos(lat2 * Math.PI / 180) * Math.Pow(Math.Sin((lon2 - lon1) * Math.PI / 360), 2);

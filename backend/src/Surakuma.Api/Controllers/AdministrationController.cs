@@ -96,6 +96,9 @@ public sealed class AdministrationController(CrisisDbContext db, AccessService a
             throw new RuleException("This account is linked to assistance requests or feedback. Disable the account to block sign-in while keeping those records.");
         if (await db.Set<AssistanceRequest>().AnyAsync(r => r.AssignedCaseManagerId == id, ct))
             throw new RuleException("Reassign cases linked to this staff account before deleting it.");
+        var donorProfiles = db.Set<DonorProfile>().Where(p => p.UserId == id);
+        if (await db.Set<Donation>().AnyAsync(d => donorProfiles.Any(p => p.Id == d.DonorId), ct))
+            throw new RuleException("This account is linked to the donation ledger. Disable the account to preserve its history.");
 
         var volunteerProfiles = db.Set<VolunteerProfile>().Where(p => p.UserId == id);
         if (await db.Set<VolunteerTask>().AnyAsync(t => volunteerProfiles.Any(p => p.Id == t.VolunteerId), ct))
@@ -108,6 +111,7 @@ public sealed class AdministrationController(CrisisDbContext db, AccessService a
         await db.Set<Notification>().Where(n => n.UserId == id).ExecuteDeleteAsync(ct);
         await db.Set<Household>().Where(h => h.UserId == id).ExecuteDeleteAsync(ct);
         await volunteerProfiles.ExecuteDeleteAsync(ct);
+        await donorProfiles.ExecuteDeleteAsync(ct);
 
         if (!(await users.DeleteAsync(user)).Succeeded)
             throw new RuleException("The account could not be deleted. Refresh the user list and try again.");

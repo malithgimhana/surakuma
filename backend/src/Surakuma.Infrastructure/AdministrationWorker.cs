@@ -49,7 +49,9 @@ public sealed class AdministrationWorker(IServiceScopeFactory scopes, ILogger<Ad
                          join c in db.Set<Crisis>() on r.CrisisId equals c.Id
                          where m.State == "Failed" || m.State == "Review"
                          select new { m.Id, m.State, c.CountryCode };
-        foreach (var m in await deliveries.ToListAsync(ct))
+        var fundingDeliveries = db.Set<OutboxMessage>().Where(m => m.FundingCountryCode != null && (m.State == "Failed" || m.State == "Review"))
+            .Select(m => new { m.Id, m.State, CountryCode = m.FundingCountryCode! });
+        foreach (var m in await deliveries.Concat(fundingDeliveries).ToListAsync(ct))
             Add("delivery:" + m.Id, m.CountryCode, "Citizen email needs attention: " + m.State, "/admin?section=activity");
         var observations = await db.Set<ServiceObservation>().Where(o => o.CreatedAt >= now.AddMinutes(-10)).ToListAsync(ct);
         foreach (var group in observations.GroupBy(o => new { o.Service, o.ActorId }))

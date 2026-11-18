@@ -20,6 +20,7 @@ namespace Surakuma.Tests;
 public sealed class ApiFixture : IAsyncLifetime
 {
     public string DatabaseName { get; } = "Surakuma_Test_" + Guid.NewGuid().ToString("N");
+    private string EvidenceDirectory => Path.Combine(Path.GetTempPath(), DatabaseName + "_evidence");
     public string Password { get; } = "Sk!" + Convert.ToHexString(RandomNumberGenerator.GetBytes(12)) + "a9";
     public WebApplicationFactory<Program> Factory { get; private set; } = null!;
     public async Task InitializeAsync()
@@ -35,6 +36,7 @@ public sealed class ApiFixture : IAsyncLifetime
             ["Email:Provider"] = "Capture",
             ["Ai:ApiKey"] = "",
             ["Mapping:ApiKey"] = "",
+            ["Storage:EvidencePath"] = EvidenceDirectory,
             ["RateLimits:AuthPermitLimit"] = "1000"
         })).ConfigureServices(services => { var worker = services.SingleOrDefault(d => d.ServiceType == typeof(IHostedService) && d.ImplementationType == typeof(NotificationWorker)); if (worker is not null) services.Remove(worker); }));
         using var scope = Factory.Services.CreateScope();
@@ -67,6 +69,11 @@ public sealed class ApiFixture : IAsyncLifetime
             throw new InvalidOperationException("Unsafe test database name.");
         await using var db = new CrisisDbContext(new DbContextOptionsBuilder<CrisisDbContext>().UseSqlServer(connection).Options);
         await db.Database.EnsureDeletedAsync();
+        if (Directory.Exists(EvidenceDirectory))
+        {
+            foreach (var evidence in Directory.EnumerateFiles(EvidenceDirectory)) File.Delete(evidence);
+            Directory.Delete(EvidenceDirectory);
+        }
     }
 }
 public sealed partial class IntegrationTests(ApiFixture fixture) : IClassFixture<ApiFixture>

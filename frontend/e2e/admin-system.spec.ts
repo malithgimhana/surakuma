@@ -4,12 +4,12 @@ import { readFileSync } from 'node:fs';
 test('administrator sees truthful integration modes and responsive queue status', async ({
   page,
 }) => {
-  const settings = JSON.parse(
+  const password = process.env.SURAKUMA_ACCEPTANCE_PASSWORD ?? (JSON.parse(
     readFileSync(new URL('../../backend/data/development-settings.json', import.meta.url), 'utf8'),
-  ) as { Seed: { Password: string } };
+  ) as { Seed: { Password: string } }).Seed.Password;
   await page.goto('/login');
   await page.getByLabel('Email address', { exact: true }).fill('admin@surakuma.test');
-  await page.getByLabel('Password', { exact: true }).fill(settings.Seed.Password);
+  await page.getByLabel('Password', { exact: true }).fill(password);
   await page.getByRole('button', { name: 'Log in', exact: true }).click();
   await page.waitForURL('/admin');
   await page.getByRole('navigation', { name: 'Workspace navigation' }).getByRole('link', { name: 'Integrations' }).click();

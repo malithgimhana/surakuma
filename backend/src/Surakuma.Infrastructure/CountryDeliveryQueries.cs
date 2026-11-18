@@ -9,10 +9,8 @@ public static class CountryDeliveryQueries
         var deliveries = db.Set<OutboxMessage>();
         if (countryCode == null) return deliveries;
 
-        return from delivery in deliveries
-               join request in db.Set<AssistanceRequest>() on delivery.RequestId equals request.Id
-               join crisis in db.Set<Crisis>() on request.CrisisId equals crisis.Id
-               where crisis.CountryCode == countryCode
-               select delivery;
+        return deliveries.Where(delivery => delivery.FundingCountryCode == countryCode ||
+            db.Set<AssistanceRequest>().Any(request => request.Id == delivery.RequestId &&
+                db.Set<Crisis>().Any(crisis => crisis.Id == request.CrisisId && crisis.CountryCode == countryCode)));
     }
 }

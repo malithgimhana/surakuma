@@ -44,3 +44,27 @@ Case shares no longer grant partner access: case information is restricted to th
 400: validation/business rule. 401: missing/expired authentication. 403: insufficient authority. 404: absent or invisible case. 409: concurrency/uniqueness conflict requiring refresh. 429: rate limiting. 503: unavailable readiness/map integration. Error bodies use Problem Details with traceId where handled centrally.
 
 `GET /admin/system` requires an active administrator membership and returns `demonstrationMode`, `checkedAt`, `integrations` and `notificationQueue`. Integration entries contain `id`, `name`, `mode`, `state`, `detail` and missing setting **names** only. Configuration is inspected locally without provider calls. `Configured` means required values exist, not that credentials, sender activation, quotas or connectivity have passed a live test. Keys, sender addresses, connection strings and signing secrets are omitted. Queue counts are grouped directly from SQL outbox state. The response uses `Cache-Control: no-store`.
+
+## Funding, decision support and supply handoffs
+
+All routes below are relative to `/api/v1`. The generated [OpenAPI document](openapi.json) contains the request and response schemas. Use the current selected country for scoped writes. File storage may use a dedicated `Storage__EvidencePath` during isolated testing.
+
+| Operation | Contract and authorization |
+| --- | --- |
+| `GET /funding/{country}/workspace?manage=false`, `PUT /funding/profile` | Signed-in donor view, own profile and status events, campaign aggregates. `manage=true` requires a scoped Funding Officer or administrator. |
+| `GET /funding/{country}/options` | Campaign scopes for staff. With `campaignId`, return scoped approved case references, eligible logistics items and identifiable confirmed deliveries. |
+| `POST /funding/{country}/campaigns`, `PUT /funding/{country}/campaigns/{id}/state` | Create and open/close campaigns for a verified organisation. Currency derives from the country. |
+| `POST /funding/{country}/donations`, `POST /funding/{country}/donations/{id}/cancel` | Donor-owned pledges or cancellation before confirmation. Retain the original operation UUID for retries. |
+| `POST /funding/{country}/donations/{id}/confirm` | Approving officer checks unique external reference. Material confirmation also needs receiving logistics access and a compatible inventory ID. |
+| `POST /funding/{country}/donations/{id}/allocations`, `POST /funding/{country}/allocations/{id}/expenses` | Authorized allocation and reconciliation. Material reconciliation requires a confirmed delivery ID for the same resource and case. Amounts and decimal scale checked. |
+| `POST /funding/{country}/campaigns/{id}/scan`, `POST /funding/{country}/investigations/{id}/review` | Checks ledger indicators and records a scoped human outcome and reason. |
+| `GET /crises/{id}/decision-support`, `POST …/forecasts`, `POST …/briefings` | Authorized crisis coordinators and administrators. Forecast returns null estimate when history is insufficient. Briefings separate facts and source-labelled draft. |
+| `POST /crises/{id}/decision-support/briefings/{briefingId}/review` | Independent administrator review. Drafts and review outcomes are internal. |
+| `POST /crises/{id}/decision-support/investigations/scan`, `POST …/investigations/{flagId}/review` | Scoped advisory flags and human outcome history. |
+| `POST /requests/{id}/consolidate` | Staff provide `primaryRequestId` and reason. Conflicting commitments are rejected. Both request detail pages retain visible references. |
+| `GET/POST /supply-support/{country}`, `POST /supply-support/{country}/{id}/cancel` | Scoped operational shortage records. Can link a case or shelter. A target verified partner sees request counts/reason without case or shelter IDs. |
+| `GET/POST /supply-support/{country}/contributions/{id}/receipts` | Receiving inventory and remaining balance. Physical receipt requires compatible authorized stock, accepted commitment and operation UUID. |
+| `POST /partner/contributions`, `PUT /partner/contributions/{id}` | Optional `category` and `supportRequestId` identify a resource offer eligible for receipt. Legacy uncategorized offers retain existing progress actions. |
+| `GET /requests/{id}/shelter-recommendations`, `GET /volunteer-tasks/candidates` | Ranked scoped matches and explanation. Candidate lookup needs request ID, start and due times and optional skill. `POST /volunteer-tasks` now accepts optional `startsAt`. |
+| `POST /alerts/translation-draft` | Scoped coordinator, supported target language and confirmation of public source wording. Returns `ManualTranslationRequired` if no draft is available. |
+| `GET /countries/{code}/coverage`, `GET /maps/geocode`, `POST /maps/reverse-geocode` | Administrator coverage totals and country-limited forward and reverse geocoding. Mapping keeps the legacy defaults when country is omitted. |

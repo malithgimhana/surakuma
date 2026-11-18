@@ -53,6 +53,15 @@ Executed results belong in `testing/results.md`; implementation checkboxes alone
 - [x] Create a source-only ZIP excluding credentials, runtime evidence data, dependencies and build outputs. Add reviewed report/video materials separately before submission.
 - [x] Provide a combined assessment preparation ZIP with source, report, recording, review forms and a file-hash manifest. Human approvals and live integration checks remain pending.
 
-## Expansion after core acceptance
+## Coursework completion work
 
-Donations/campaigns, structured inter-organisation support requests, recurring availability calendars, advanced matching/forecasting, online payments, offline capture and hosted deployment are deliberately deferred.
+- [x] Donor profiles, campaigns, verified receipts, ledger allocations, expense reconciliation and transparency.
+- [x] Demand forecast history, scoped crisis briefing drafts, independent review and case/funding investigation queues.
+- [x] Same-citizen case consolidation preserving both references and audit trails.
+- [x] Partner and shelter supply requests with approved, explicit physical stock intake.
+- [x] Volunteer time windows and candidate conflict checks, ranked shelter suitability and regional coverage reporting.
+- [x] Country-specific geocoding and optional alert translation drafts.
+- [ ] Expand recurring volunteer availability, consented travel/location data, citizen AI help and delivery channels.
+- [ ] Complete live integration verification, multilingual wording review and participant acceptance.
+
+The [requirements traceability matrix](testing/requirements-traceability.md) links each coursework bullet to the implementation and its verification limits.

@@ -43,6 +43,10 @@ Restart the local API with `./scripts/Start-Api.ps1`. The script loads the mappi
 
 After restart, refresh Administration → Integration readiness and confirm the mapping card says `Configured`. Search for a public Sri Lankan location such as Colombo Fort to verify the key, then generate a short driving route between public points. Record success or explicit unavailability without private household coordinates. The backend uses the [HeiGIT API endpoints](https://playground.heigit.org/). Driving output does not certify a safe evacuation route. OpenStreetMap tiles and routing are separate integrations.
 
+Forward and reverse geocoding apply the selected country's Pelias boundary. Verify public test landmarks independently for each configured country. [Pelias search parameters](https://github.com/pelias/documentation/blob/master/search.md), [Pelias reverse geocoding](https://github.com/pelias/documentation/blob/master/reverse.md).
+
+Optional `Ai__OperationalBriefingsEnabled=true` lets the Gemini adapter draft an internal interpretation from aggregate counts. Optional `Ai__PublicTranslationEnabled=true` supports draft translations of explicitly confirmed public wording. Both require `Ai__ApiKey` and use the configured `Ai__Model`. Failure returns labelled local suggestions or manual translation. Approval and publication still use the existing authorized human workflows.
+
 ## Evidence to complete after account setup
 
 | Service | Configuration | Live synthetic check | Evidence |

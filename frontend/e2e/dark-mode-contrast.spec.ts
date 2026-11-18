@@ -28,6 +28,12 @@ const request = {
   organisationId: 'o',
 };
 const fixtures: Record<string, unknown> = {
+  '/staff/overview/Coordinator': {
+    hasAccess: true,
+    metrics: { crises: 1, unassigned: 2, critical: 1, overdue: 3, escalated: 0, shortages: 1, pressure: 0, assignments: 2 },
+    crises: [{ id: 'c', name: 'Demo crisis', active: true }],
+    decisions: [{ id: 'r', reference: 'SK-DEMO', action: 'Approve', createdAt: '2026-01-01' }],
+  },
   '/public/lookups': {
     crises: [{ id: 'c', name: 'Demo crisis', active: true }],
     organisations: [{ id: 'o', name: 'Demo organisation' }],
@@ -72,6 +78,10 @@ const fixtures: Record<string, unknown> = {
     decisions: [],
     duplicates: [],
   },
+  '/requests/r/allocation-recommendations': {
+    outstanding: 6, candidates: [], shortage: false, queuePosition: 0, competingRequests: 0,
+    shortageExplanation: 'The request is awaiting review.',
+  },
   '/resources': [
     {
       id: 'i',
@@ -103,7 +113,7 @@ test('dark mode keeps request and staff screens readable', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('surakuma.theme', 'dark'));
   for (const [path, visible] of [
     ['/app/requests/new', 'What do you need help with?'],
-    ['/staff', 'Operational pulse'],
+    ['/staff', 'Crisis Coordinator overview'],
     ['/staff/cases/r', 'AI decision support'],
     ['/staff/resources', 'Family food packs'],
     ['/shelters', 'Find a shelter'],

@@ -66,6 +66,9 @@ export function VolunteerPage({ self = false }: { self?: boolean }) {
   const [add, setAdd] = useState(false), [caseSearch, setCaseSearch] = useState('');
   const [debouncedCaseSearch, setDebouncedCaseSearch] = useState('');
   const [selectedCase, setSelectedCase] = useState('');
+  const [taskStart, setTaskStart] = useState('');
+  const [taskDue, setTaskDue] = useState('');
+  const [taskSkill, setTaskSkill] = useState('');
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedCaseSearch(caseSearch.trim()), 300);
     return () => window.clearTimeout(timer);
@@ -79,7 +82,18 @@ export function VolunteerPage({ self = false }: { self?: boolean }) {
   const searchingCases = caseSearch.trim() !== debouncedCaseSearch || cases.isFetching;
   const availableCases = cases.data ?? [];
   const selectedOrganisation = availableCases.find((r) => r.id === selectedCase)?.organisationId;
-  const availableVolunteers = query.data?.profiles.filter((v) => v.verified && v.available && v.organisationId === selectedOrganisation) ?? [];
+  const candidateWindow = !!selectedCase && !!taskStart && !!taskDue && Date.parse(taskStart) < Date.parse(taskDue);
+  const candidates = useQuery({
+    queryKey: ['volunteer-candidates', selectedCase, taskStart, taskDue, taskSkill],
+    enabled: candidateWindow && !self,
+    queryFn: () => get<{ id: string; openCommitments: number; explanation: string }[]>(`/volunteer-tasks/candidates?${new URLSearchParams({
+      requestId: selectedCase, startsAt: new Date(taskStart).toISOString(), dueAt: new Date(taskDue).toISOString(), skill: taskSkill,
+    })}`),
+  });
+  const scopedVolunteers = query.data?.profiles.filter((v) => v.verified && v.available && v.organisationId === selectedOrganisation) ?? [];
+  const availableVolunteers = candidateWindow && candidates.data
+    ? candidates.data.flatMap(c => scopedVolunteers.filter(v => v.id === c.id))
+    : scopedVolunteers;
   const lookups = useQuery({
     queryKey: ['lookups'],
     queryFn: () => get<Lookups>('/public/lookups'),
@@ -216,7 +230,8 @@ export function VolunteerPage({ self = false }: { self?: boolean }) {
                   const f = values(e.currentTarget);
                   write.mutate({
                     path: '/volunteer-tasks',
-                    data: { ...f, dueAt: new Date(String(f.dueAt)).toISOString() },
+                    data: { ...f, dueAt: new Date(String(f.dueAt)).toISOString(),
+                      startsAt: taskStart ? new Date(taskStart).toISOString() : null },
                   });
                 }}
               >
@@ -237,6 +252,7 @@ export function VolunteerPage({ self = false }: { self?: boolean }) {
                       .map((v) => (
                         <option key={v.id} value={v.id}>
                           {query.data?.names?.[v.userId] || v.id.slice(0, 8)} · {v.skills}
+                          {candidates.data?.some(c => c.id === v.id) ? ' · schedule match' : ''}
                         </option>
                       ))}
                   </select>
@@ -245,11 +261,16 @@ export function VolunteerPage({ self = false }: { self?: boolean }) {
                   <input name="title" required />
                 </Field>
                 <Field label="Required skill">
-                  <input name="requiredSkill" placeholder="distribution" />
+                  <input name="requiredSkill" placeholder="distribution" value={taskSkill} onChange={e => setTaskSkill(e.target.value)} />
+                </Field>
+                <Field label="Start date and time" hint="Leave blank for immediate assignment. Enter a window to rank candidates by commitments.">
+                  <input type="datetime-local" value={taskStart} onChange={e => setTaskStart(e.target.value)} />
                 </Field>
                 <Field label="Due date and time">
-                  <input type="datetime-local" name="dueAt" required />
+                  <input type="datetime-local" name="dueAt" required value={taskDue} onChange={e => setTaskDue(e.target.value)} />
                 </Field>
+                {candidateWindow && candidates.error && <p role="status">Scheduling recommendations are unavailable. Assignments still check recorded conflicts.</p>}
+                {candidates.data?.[0] && <p>{candidates.data[0].explanation}</p>}
                 <Button busy={write.isPending} disabled={searchingCases || !!cases.error || !availableVolunteers.length}>Assign task</Button>
               </form>
             </Card>
@@ -263,7 +284,7 @@ export function VolunteerPage({ self = false }: { self?: boolean }) {
                 </div>
                 <h3>{task.title}</h3>
                 <p className="muted">
-                  Due {formatDate(task.dueAt)} · {task.requiredSkill}
+                  {task.startsAt && `Starts ${formatDate(task.startsAt)} · `}Due {formatDate(task.dueAt)} · {task.requiredSkill}
                 </p>
                 {task.note && <p>{task.note}</p>}
                 {!!query.data?.history?.some((event) => event.taskId === task.id) && (
@@ -405,6 +426,7 @@ export function CrisesPage() {
             <Card key={c.id}>
               <Badge value={c.active ? 'Open' : 'Closed'} />
               <h3 id={`crisis-${c.id}`} tabIndex={-1}>{c.name}</h3>
+              <Link to={`/staff/crises/${c.id}/decision-support`}>Forecasts, briefings and investigations</Link>
               <p>
                 {c.type} · {c.district}
               </p>
@@ -733,7 +755,7 @@ export function AdminPage() {
             <input type="search" aria-label="Search users" placeholder="Search by name or email" value={userSearch} onChange={(e) => setUserSearch(e.target.value)} />
             <select aria-label="Filter by role" value={roleFilter} onChange={(e) => { setRoleFilter(e.target.value); setUserPage(1); }}>
               <option value="">All roles</option>
-              {['Coordinator', 'CaseManager', 'Logistics', 'ShelterAdmin', 'VolunteerCoordinator', 'Volunteer', 'Partner', 'CountryAdministrator', ...(globalAdmin ? ['Administrator'] : [])].map((role) => <option key={role} value={role}>{role.replace(/([a-z])([A-Z])/g, '$1 $2')}</option>)}
+              {['Coordinator', 'CaseManager', 'Logistics', 'ShelterAdmin', 'VolunteerCoordinator', 'Volunteer', 'Partner', 'FundingOfficer', 'CountryAdministrator', ...(globalAdmin ? ['Administrator'] : [])].map((role) => <option key={role} value={role}>{role.replace(/([a-z])([A-Z])/g, '$1 $2')}</option>)}
               <option value="NoStaffRoles">No staff roles</option>
             </select>
             <Button type="button" aria-expanded={showStaffForm} onClick={() => setShowStaffForm(!showStaffForm)}><Plus size={18} />{showStaffForm ? 'Close form' : 'Create staff account'}</Button>
@@ -761,7 +783,7 @@ export function AdminPage() {
             </Field>
             <Field label="Role">
               <select name="role" value={staffRole} onChange={(event) => setStaffRole(event.target.value)}>
-                {['Coordinator', 'CaseManager', 'Logistics', 'ShelterAdmin', 'VolunteerCoordinator', 'Volunteer', 'Partner',
+                {['Coordinator', 'CaseManager', 'Logistics', 'ShelterAdmin', 'VolunteerCoordinator', 'Volunteer', 'Partner', 'FundingOfficer',
                   ...(globalAdmin ? ['CountryAdministrator', 'Administrator'] : []),
                 ].map((role) => <option value={role} key={role}>{role === 'Administrator' ? 'System Administrator' : role.replace(/([a-z])([A-Z])/g, '$1 $2')}</option>)}
               </select>

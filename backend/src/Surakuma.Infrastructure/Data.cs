@@ -146,6 +146,9 @@ public sealed class CrisisDbContext(DbContextOptions<CrisisDbContext> options) :
         b.Entity<NotificationDelivery>().HasIndex(x => new { x.EventId, x.RecipientId }).IsUnique();
         b.Entity<PotentialDuplicate>().HasIndex(x => new { x.RequestId, x.CandidateId }).IsUnique();
         b.Entity<OutboxMessage>().HasIndex(x => new { x.State, x.NextAttemptAt });
+        b.Entity<OutboxMessage>().Property(x => x.FundingCountryCode).HasMaxLength(2).IsUnicode(false);
+        b.Entity<OutboxMessage>().HasOne<Country>().WithMany().HasForeignKey(x => x.FundingCountryCode)
+            .HasPrincipalKey(x => x.Code).OnDelete(DeleteBehavior.Restrict);
         b.Entity<Resource>().ToTable(t => t.HasCheckConstraint("CK_Resource_Stock", "[Stock] >= 0 AND [Reserved] >= 0 AND [Reserved] <= [Stock]"));
         b.Entity<Shelter>().ToTable(t => t.HasCheckConstraint("CK_Shelter_Capacity", "[Capacity] >= 1 AND [Reserved] >= 0 AND [Occupancy] >= 0 AND [Reserved] + [Occupancy] <= [Capacity]"));
         b.Entity<AssistanceRequest>().ToTable(t => t.HasCheckConstraint("CK_Request_Quantity", "[Quantity] > 0 AND [DeliveredQuantity] >= 0 AND [DeliveredQuantity] <= [Quantity] AND [HouseholdSize] >= 1"));
@@ -182,12 +185,101 @@ public sealed class CrisisDbContext(DbContextOptions<CrisisDbContext> options) :
         Fk<VolunteerProfile, Organisation>(b, nameof(VolunteerProfile.OrganisationId));
         Fk<VolunteerTask, VolunteerProfile>(b, nameof(VolunteerTask.VolunteerId));
         Fk<VolunteerTask, AssistanceRequest>(b, nameof(VolunteerTask.RequestId));
+        b.Entity<VolunteerTask>().HasIndex(x => new { x.VolunteerId, x.Status, x.DueAt });
+        b.Entity<VolunteerTask>().ToTable(t => t.HasCheckConstraint("CK_VolunteerTask_Window", "[StartsAt] IS NULL OR [StartsAt] < [DueAt]"));
         Fk<VolunteerTaskEvent, VolunteerTask>(b, nameof(VolunteerTaskEvent.TaskId));
         b.Entity<VolunteerTaskEvent>().HasIndex(x => new { x.TaskId, x.CreatedAt });
         Fk<PublicAlert, Crisis>(b, nameof(PublicAlert.CrisisId));
         Fk<Notification, AppUser>(b, nameof(Notification.UserId));
         Fk<Feedback, AssistanceRequest>(b, nameof(Feedback.RequestId));
         Fk<Feedback, AppUser>(b, nameof(Feedback.UserId));
+        ConfigureFunding(b);
+        ConfigureDecisionSupport(b);
+        ConfigureSupplySupport(b);
+    }
+    private static void ConfigureSupplySupport(ModelBuilder b)
+    {
+        b.Entity<SupplyRequest>().Property(x => x.CountryCode).HasMaxLength(2).IsUnicode(false);
+        b.Entity<SupplyRequest>().HasOne<Country>().WithMany().HasForeignKey(x => x.CountryCode)
+            .HasPrincipalKey(x => x.Code).OnDelete(DeleteBehavior.Restrict);
+        Fk<SupplyRequest, Organisation>(b, nameof(SupplyRequest.RequestingOrganisationId));
+        Fk<SupplyRequest, Organisation>(b, nameof(SupplyRequest.TargetOrganisationId));
+        Fk<SupplyRequest, Shelter>(b, nameof(SupplyRequest.ShelterId));
+        Fk<SupplyRequest, AssistanceRequest>(b, nameof(SupplyRequest.CaseId));
+        Fk<SupplyRequest, Crisis>(b, nameof(SupplyRequest.CrisisId));
+        b.Entity<SupplyRequest>().HasIndex(x => new { x.CountryCode, x.RequestingOrganisationId, x.CreatedAt });
+        b.Entity<SupplyRequest>().HasIndex(x => new { x.CountryCode, x.TargetOrganisationId, x.CreatedAt });
+        b.Entity<SupplyRequest>().ToTable(t => t.HasCheckConstraint("CK_SupplyRequest_Balance",
+            "[Quantity] > 0 AND [ReceivedQuantity] BETWEEN 0 AND [Quantity] AND [RequestingOrganisationId] <> [TargetOrganisationId] AND ([ShelterId] IS NULL OR [CaseId] IS NULL)"));
+        Fk<PartnerContribution, SupplyRequest>(b, nameof(PartnerContribution.SupportRequestId));
+        b.Entity<PartnerContribution>().Property(x => x.Category).HasConversion<string>().HasMaxLength(50);
+        Fk<PartnerStockReceipt, PartnerContribution>(b, nameof(PartnerStockReceipt.ContributionId));
+        Fk<PartnerStockReceipt, StockMovement>(b, nameof(PartnerStockReceipt.StockMovementId));
+        b.Entity<PartnerStockReceipt>().Property(x => x.Reference).HasMaxLength(100);
+        b.Entity<PartnerStockReceipt>().HasIndex(x => x.StockMovementId).IsUnique();
+        b.Entity<PartnerStockReceipt>().HasIndex(x => new { x.ContributionId, x.Reference }).IsUnique();
+        b.Entity<PartnerStockReceipt>().ToTable(t => t.HasCheckConstraint("CK_PartnerStockReceipt_Quantity", "[Quantity] > 0"));
+    }
+    private static void ConfigureDecisionSupport(ModelBuilder b)
+    {
+        Fk<DemandForecast, Crisis>(b, nameof(DemandForecast.CrisisId));
+        Fk<DemandForecast, AdministrativeDivision>(b, nameof(DemandForecast.RegionId));
+        b.Entity<DemandForecast>().Property(x => x.Model).HasMaxLength(100);
+        b.Entity<DemandForecast>().Property(x => x.Estimate).HasPrecision(12, 2);
+        b.Entity<DemandForecast>().Property(x => x.InputsJson).HasColumnType("nvarchar(max)");
+        b.Entity<DemandForecast>().HasIndex(x => new { x.CrisisId, x.Category, x.CreatedAt });
+        Fk<CrisisBriefing, Crisis>(b, nameof(CrisisBriefing.CrisisId));
+        b.Entity<CrisisBriefing>().Property(x => x.FactsJson).HasColumnType("nvarchar(max)");
+        b.Entity<CrisisBriefing>().HasIndex(x => new { x.CrisisId, x.CreatedAt });
+        Fk<InvestigationFlag, AssistanceRequest>(b, nameof(InvestigationFlag.RequestId));
+        Fk<InvestigationFlag, Donation>(b, nameof(InvestigationFlag.DonationId));
+        b.Entity<InvestigationFlag>().Property(x => x.Category).HasMaxLength(100);
+        b.Entity<InvestigationFlag>().Property(x => x.Outcome).HasConversion<string>().HasMaxLength(50);
+        b.Entity<InvestigationFlag>().HasIndex(x => new { x.RequestId, x.Category }).IsUnique().HasFilter("[RequestId] IS NOT NULL");
+        b.Entity<InvestigationFlag>().HasIndex(x => new { x.DonationId, x.Category }).IsUnique().HasFilter("[DonationId] IS NOT NULL");
+        b.Entity<InvestigationFlag>().ToTable(t => t.HasCheckConstraint("CK_InvestigationFlag_Subject",
+            "([RequestId] IS NOT NULL AND [DonationId] IS NULL) OR ([RequestId] IS NULL AND [DonationId] IS NOT NULL)"));
+        Fk<CaseConsolidation, AssistanceRequest>(b, nameof(CaseConsolidation.OriginalRequestId));
+        Fk<CaseConsolidation, AssistanceRequest>(b, nameof(CaseConsolidation.PrimaryRequestId));
+        b.Entity<CaseConsolidation>().HasIndex(x => x.OriginalRequestId).IsUnique();
+        b.Entity<CaseConsolidation>().ToTable(t => t.HasCheckConstraint("CK_CaseConsolidation_Distinct", "[OriginalRequestId] <> [PrimaryRequestId]"));
+    }
+    private static void ConfigureFunding(ModelBuilder b)
+    {
+        Fk<DonorProfile, AppUser>(b, nameof(DonorProfile.UserId));
+        b.Entity<DonorProfile>().HasIndex(x => x.UserId).IsUnique();
+        b.Entity<DonorProfile>().Property(x => x.DisplayName).HasMaxLength(100);
+        b.Entity<DonorProfile>().Property(x => x.OrganisationName).HasMaxLength(150);
+        b.Entity<FundingCampaign>().Property(x => x.CountryCode).HasMaxLength(2).IsUnicode(false);
+        b.Entity<FundingCampaign>().Property(x => x.Currency).HasMaxLength(3).IsUnicode(false);
+        b.Entity<FundingCampaign>().Property(x => x.Name).HasMaxLength(150);
+        b.Entity<FundingCampaign>().Property(x => x.Purpose).HasMaxLength(1000);
+        b.Entity<FundingCampaign>().HasIndex(x => new { x.CountryCode, x.OrganisationId });
+        b.Entity<FundingCampaign>().HasOne<Country>().WithMany().HasForeignKey(x => x.CountryCode)
+            .HasPrincipalKey(x => x.Code).OnDelete(DeleteBehavior.Restrict);
+        b.Entity<FundingCampaign>().HasOne<Crisis>().WithMany().HasForeignKey(x => new { x.CrisisId, x.CountryCode })
+            .HasPrincipalKey(x => new { x.Id, x.CountryCode }).OnDelete(DeleteBehavior.Restrict);
+        Fk<FundingCampaign, Organisation>(b, nameof(FundingCampaign.OrganisationId));
+        Fk<Donation, FundingCampaign>(b, nameof(Donation.CampaignId));
+        Fk<Donation, DonorProfile>(b, nameof(Donation.DonorId));
+        Fk<Donation, StockMovement>(b, nameof(Donation.StockMovementId));
+        Fk<Donation, Resource>(b, nameof(Donation.ResourceId));
+        b.Entity<Donation>().Property(x => x.ReceiptReference).HasMaxLength(100);
+        b.Entity<Donation>().Property(x => x.Unit).HasMaxLength(30);
+        b.Entity<Donation>().HasIndex(x => x.StockMovementId).IsUnique();
+        b.Entity<Donation>().HasIndex(x => new { x.CampaignId, x.ReceiptReference });
+        Fk<DonationAllocation, Donation>(b, nameof(DonationAllocation.DonationId));
+        Fk<DonationAllocation, AssistanceRequest>(b, nameof(DonationAllocation.RequestId));
+        Fk<DonationExpenditure, DonationAllocation>(b, nameof(DonationExpenditure.AllocationId));
+        Fk<DonationExpenditure, DeliveryConfirmation>(b, nameof(DonationExpenditure.DeliveryConfirmationId));
+        b.Entity<DonationExpenditure>().HasIndex(x => x.DeliveryConfirmationId).IsUnique();
+        b.Entity<DonationExpenditure>().Property(x => x.Reference).HasMaxLength(100);
+        Fk<DonationEvent, Donation>(b, nameof(DonationEvent.DonationId));
+        b.Entity<DonationEvent>().HasIndex(x => new { x.DonationId, x.CreatedAt });
+        b.Entity<FundingCampaign>().ToTable(t => t.HasCheckConstraint("CK_FundingCampaign_Budget", "[Budget] > 0"));
+        b.Entity<Donation>().ToTable(t => t.HasCheckConstraint("CK_Donation_Amount", "[Amount] > 0"));
+        b.Entity<DonationAllocation>().ToTable(t => t.HasCheckConstraint("CK_DonationAllocation_Amount", "[Amount] > 0"));
+        b.Entity<DonationExpenditure>().ToTable(t => t.HasCheckConstraint("CK_DonationExpenditure_Amount", "[Amount] > 0"));
     }
     private static void Fk<T, TParent>(ModelBuilder b, string field) where T : class where TParent : class => b.Entity<T>().HasOne<TParent>().WithMany().HasForeignKey(field).OnDelete(DeleteBehavior.Restrict);
     public override Task<int> SaveChangesAsync(CancellationToken ct = default)

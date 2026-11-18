@@ -4,6 +4,8 @@ public enum ContributionStatus { Offered, Accepted, InProgress, Fulfilled, Decli
 
 public sealed class PartnerContribution : Record
 {
+    public AidCategory? Category { get; set; }
+    public Guid? SupportRequestId { get; set; }
     public Guid OrganisationId { get; set; }
     public string CountryCode { get; set; } = "";
     public string Title { get; set; } = "";

@@ -16,8 +16,12 @@ test('public skip link and login controls support keyboard navigation and enlarg
   await page.getByLabel('Email address', { exact: true }).focus();
   await page.keyboard.type('keyboard@example.test');
   await page.keyboard.press('Tab');
+  await expect(page.getByRole('link', { name: 'Forgot password?' })).toBeFocused();
+  await page.keyboard.press('Tab');
   await expect(page.getByLabel('Password', { exact: true })).toBeFocused();
   await page.keyboard.type('SyntheticKeyboardTest!9');
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('button', { name: 'Show password' })).toBeFocused();
   await page.keyboard.press('Tab');
   await expect(page.getByRole('button', { name: 'Log in', exact: true })).toBeFocused();
   const originalInputSize = await page

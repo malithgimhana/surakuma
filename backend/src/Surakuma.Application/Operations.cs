@@ -11,6 +11,7 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
     private static readonly string[] VolunteerRoles = [Roles.VolunteerCoordinator, Roles.Coordinator];
     private static readonly RequestStatus[] ActiveFulfilment = [RequestStatus.Approved, RequestStatus.InProgress, RequestStatus.PartiallyFulfilled];
     private static readonly VolunteerTaskStatus[] OpenTasks = [VolunteerTaskStatus.Assigned, VolunteerTaskStatus.Accepted, VolunteerTaskStatus.InProgress, VolunteerTaskStatus.AwaitingVerification, VolunteerTaskStatus.Returned];
+    private static readonly VolunteerTaskStatus[] ScheduledTasks = [VolunteerTaskStatus.Assigned, VolunteerTaskStatus.Accepted, VolunteerTaskStatus.InProgress];
 
     public void Audit(string action, Record record, string detail = "", string? countryCode = null) =>
         store.Add(new AuditEvent
@@ -228,6 +229,14 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
         }), ct);
         var placements = await store.ListAsync(store.Query<ShelterAllocation>().Where(x => x.RequestId == id), ct);
         var feedback = await store.ListAsync(store.Query<Feedback>().Where(x => x.RequestId == id).OrderByDescending(x => x.CreatedAt), ct);
+        var visible = await access.Visible(ct);
+        var consolidations = await store.ListAsync(
+            from link in store.Query<CaseConsolidation>()
+            join original in visible on link.OriginalRequestId equals original.Id
+            join primary in visible on link.PrimaryRequestId equals primary.Id
+            where original.Id == id || primary.Id == id
+            select new { OriginalId = original.Id, OriginalReference = original.Reference, PrimaryId = primary.Id,
+                PrimaryReference = primary.Reference, link.CreatedAt }, ct);
         return new
         {
             Request = r,
@@ -235,9 +244,43 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
             Attachments = attachments,
             Allocations = allocations,
             Placements = placements,
-            Feedback = feedback
+            Feedback = feedback,
+            Consolidations = consolidations
         };
     }
+
+    public Task<CaseConsolidation> Consolidate(Guid id, ConsolidateCaseInput input, CancellationToken ct) => store.TransactionAsync(async () =>
+    {
+        var original = await access.Request(id, CaseRoles, ct);
+        var primary = await access.Request(input.PrimaryRequestId, CaseRoles, ct);
+        var reason = input.Reason.Trim();
+        if (reason.Length == 0) throw new RuleException("Record why these cases represent the same request.");
+        if (primary.Id == original.Id || original.CrisisId != primary.CrisisId || original.OrganisationId != primary.OrganisationId ||
+            original.CitizenId != primary.CitizenId || original.Category != primary.Category || original.Quantity != primary.Quantity ||
+            original.HouseholdSize != primary.HouseholdSize || original.RequestedForSomeoneElse || primary.RequestedForSomeoneElse)
+            throw new RuleException("Consolidate only equivalent requests by the same citizen within the same crisis and response organisation. Cases filed for another person require separate review.");
+        var links = store.Query<CaseConsolidation>();
+        if ((await store.ListAsync(links.Where(x => x.OriginalRequestId == id || x.PrimaryRequestId == id ||
+            x.OriginalRequestId == primary.Id).Take(1), ct)).Count > 0)
+            throw new RuleException("These cases already have a consolidation relationship that prevents this action.");
+        if (primary.Status is RequestStatus.Rejected or RequestStatus.Cancelled or RequestStatus.Closed or RequestStatus.Fulfilled ||
+            original.DeliveredQuantity > 0 || original.Escalated ||
+            (await store.ListAsync(store.Query<ResourceAllocation>().Where(x => x.RequestId == id && x.Status != AllocationStatus.Cancelled).Take(1), ct)).Count > 0 ||
+            (await store.ListAsync(store.Query<ShelterAllocation>().Where(x => x.RequestId == id && x.Status != StayStatus.Cancelled).Take(1), ct)).Count > 0 ||
+            (await store.ListAsync(store.Query<VolunteerTask>().Where(x => x.RequestId == id && x.Status != VolunteerTaskStatus.Declined).Take(1), ct)).Count > 0 ||
+            (await store.ListAsync(store.Query<CaseShare>().Where(x => x.RequestId == id).Take(1), ct)).Count > 0 ||
+            (await store.ListAsync(store.Query<DonationAllocation>().Where(x => x.RequestId == id).Take(1), ct)).Count > 0 ||
+            (await store.ListAsync(store.Query<SupplyRequest>().Where(x => x.CaseId == id && !x.Cancelled).Take(1), ct)).Count > 0)
+            throw new RuleException("Resolve conflicting commitments or escalations before consolidating this case. Prior fulfilment must remain on the original case.");
+        var previous = original.Status;
+        original.Transition(RequestStatus.Cancelled, reason);
+        var link = new CaseConsolidation { OriginalRequestId = id, PrimaryRequestId = primary.Id, Reason = reason, ActorId = access.UserId };
+        store.Add(link);
+        await RecordChange(original, $"Consolidated into {primary.Reference}. {reason}", ct, previous);
+        await RecordChange(primary, $"Maintains active response for {original.Reference}. {reason}", ct, primary.Status);
+        Audit("CasesConsolidated", link, $"{original.Reference} → {primary.Reference}", await CrisisCountry(original.CrisisId, ct));
+        return link;
+    }, ct);
     private static string CitizenHistoryNote(string reference, string status) =>
         Enum.TryParse<RequestStatus>(status, out var state) && Enum.IsDefined(state)
             ? CitizenMessages.Status(reference, state, "en")
@@ -375,7 +418,7 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
     public async Task<Guid[]> OrgScope(CancellationToken ct)
     {
         var memberships = await access.Memberships(ct);
-        var own = memberships.Where(x => x.OrganisationId.HasValue && x.Role is not Roles.Citizen and not Roles.Volunteer).Select(x => x.OrganisationId!.Value);
+        var own = memberships.Where(x => x.OrganisationId.HasValue && x.Role is not Roles.Citizen and not Roles.Volunteer and not Roles.FundingOfficer).Select(x => x.OrganisationId!.Value);
         var crisisOrgs = memberships.Any(m => m.Role == Roles.Coordinator)
             ? await store.ListAsync((await access.Visible(ct)).Where(x => x.OrganisationId.HasValue).Select(x => x.OrganisationId!.Value).Distinct(), ct)
             : [];
@@ -450,6 +493,24 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
         var request = await access.Request(requestId, ShelterRoles, ct);
         var crisis = await store.FindAsync<Crisis>(request.CrisisId, ct) ?? throw new MissingException();
         return await store.ListAsync((await access.Located<Shelter>(ct, request.CrisisId, ShelterRoles)).Where(x => x.CountryCode == crisis.CountryCode && store.Query<OrganisationCountry>().Any(o => o.OrganisationId == x.OrganisationId && o.CountryCode == x.CountryCode && (o.VerificationState == "Verified" || o.VerificationState == "LegacyActive"))), ct);
+    }
+    public async Task<List<ShelterCandidate>> ShelterRecommendations(Guid requestId, CancellationToken ct)
+    {
+        var request = await access.Request(requestId, ShelterRoles, ct);
+        var shelters = await CaseShelters(requestId, ct);
+        return shelters.Where(s => s.Open && s.Available >= request.HouseholdSize &&
+            (string.IsNullOrWhiteSpace(request.AccessibilityNeeds) || s.Accessible))
+            .Select(s =>
+            {
+                double? distance = request.Latitude.HasValue && request.Longitude.HasValue
+                    ? Math.Round(RankedAllocationStrategy.Distance(request.Latitude.Value, request.Longitude.Value, s.Latitude, s.Longitude), 1)
+                    : null;
+                return new ShelterCandidate(s.Id, s.Name, s.Available, s.Accessible, distance,
+                    $"Capacity for {request.HouseholdSize} people. " +
+                    (distance.HasValue ? $"{distance:0.0} km straight-line distance. " : "Request location unavailable. ") +
+                    "Check facilities, accessibility needs, transport and arrival conditions before reserving.");
+            }).OrderBy(s => s.DistanceKm ?? double.MaxValue).ThenByDescending(s => s.Accessible)
+            .ThenByDescending(s => s.Available).ThenBy(s => s.Id).ToList();
     }
     public async Task<AllocationRecommendations> AllocationRecommendations(Guid requestId, CancellationToken ct)
     {
@@ -729,6 +790,31 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
             .Select(r => new VolunteerCase(r.Id, r.Reference, r.LocationText, r.OrganisationId!.Value)), ct);
     }
 
+    public async Task<List<VolunteerCandidate>> VolunteerRecommendations(Guid requestId, DateTimeOffset startsAt, DateTimeOffset dueAt, string? requiredSkill, CancellationToken ct)
+    {
+        var request = await access.Request(requestId, VolunteerRoles, ct);
+        var country = await CrisisCountry(request.CrisisId, ct);
+        if (!request.OrganisationId.HasValue || !ActiveFulfilment.Contains(request.Status) || request.DeliveredQuantity >= request.Quantity) return [];
+        await access.RequireLocation(request.OrganisationId.Value, country, VolunteerRoles, ct, request.CrisisId);
+        await access.RequirePartner(request.OrganisationId.Value, country, ct);
+        ValidateWindow(startsAt, dueAt);
+        var memberships = store.Query<Membership>().Where(m => m.Role == Roles.Volunteer && m.OrganisationId == request.OrganisationId &&
+            m.CountryCode == country && (m.CrisisId == null || m.CrisisId == request.CrisisId));
+        var eligible = await store.ListAsync(store.Query<VolunteerProfile>().Where(v => v.Verified && v.Available &&
+            v.OrganisationId == request.OrganisationId && v.CountryCode == country && memberships.Any(m => m.UserId == v.UserId)), ct);
+        var skill = requiredSkill?.Trim() ?? "";
+        var candidates = new List<VolunteerCandidate>();
+        foreach (var v in eligible.Where(v => HasSkill(v, skill)))
+        {
+            var commitments = await OpenVolunteerCommitments(v.UserId, ct);
+            if (commitments.Any(t => t.VolunteerId == v.Id && t.RequestId == request.Id || Overlaps(t, startsAt, dueAt))) continue;
+            // Only count the scoped profile's own commitments in the display.
+            candidates.Add(new(v.Id, v.Skills, v.Availability, commitments.Count(t => t.VolunteerId == v.Id),
+                "Verified, marked available and free of recorded conflicts in this window. Confirm actual travel and availability before assigning."));
+        }
+        return candidates.OrderBy(c => c.OpenCommitments).ThenBy(c => c.Id).ToList();
+    }
+
     public Task<VolunteerTask> AssignTask(TaskInput input, CancellationToken ct) => store.TransactionAsync(async () =>
     {
         var request = await access.Request(input.RequestId, VolunteerRoles, ct);
@@ -744,13 +830,17 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
             && m.OrganisationId == v.OrganisationId && m.CountryCode == v.CountryCode && (m.CrisisId == null || m.CrisisId == request.CrisisId)), ct)).Count == 0)
             throw new RuleException("This volunteer no longer has a membership for the case.");
         var skill = (input.RequiredSkill ?? "").Trim();
-        if (skill.Length > 0 && !v.Skills.Split(',', StringSplitOptions.TrimEntries).Contains(skill, StringComparer.OrdinalIgnoreCase))
+        if (!HasSkill(v, skill))
             throw new RuleException("The volunteer does not have the required skill.");
-        if (input.DueAt <= DateTimeOffset.UtcNow) throw new RuleException("Choose a future due date.");
-        if ((await store.ListAsync(store.Query<VolunteerTask>().Where(t => t.VolunteerId == v.Id && t.RequestId == request.Id
-            && OpenTasks.Contains(t.Status)).Take(1), ct)).Count > 0)
+        var startsAt = input.StartsAt ?? DateTimeOffset.UtcNow;
+        ValidateWindow(startsAt, input.DueAt);
+        var commitments = await OpenVolunteerCommitments(v.UserId, ct);
+        if (commitments.Any(t => t.VolunteerId == v.Id && t.RequestId == request.Id))
             throw new RuleException("This volunteer already has an open assignment for this case.");
-        var task = new VolunteerTask { RequestId = input.RequestId, VolunteerId = v.Id, Title = input.Title.Trim(), RequiredSkill = skill, DueAt = input.DueAt };
+        if (commitments.Any(t => Overlaps(t, startsAt, input.DueAt)))
+            throw new RuleException("The volunteer has another assignment that overlaps this scheduled window.");
+        var task = new VolunteerTask { RequestId = input.RequestId, VolunteerId = v.Id, Title = input.Title.Trim(),
+            RequiredSkill = skill, StartsAt = startsAt, DueAt = input.DueAt };
         store.Add(task);
         store.Add(new VolunteerTaskEvent { TaskId = task.Id, Action = "Assign", ActorId = access.UserId });
         Audit("VolunteerAssigned", task, countryCode: v.CountryCode);
@@ -758,6 +848,23 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
         await notifications.RequestChanged(request, $"Task assigned: {task.Title}.", ct);
         return task;
     }, ct);
+    private Task<List<VolunteerTask>> OpenVolunteerCommitments(string userId, CancellationToken ct)
+    {
+        var profiles = store.Query<VolunteerProfile>().Where(v => v.UserId == userId);
+        return store.ListAsync(store.Query<VolunteerTask>().Where(t => OpenTasks.Contains(t.Status) && profiles.Any(v => v.Id == t.VolunteerId)), ct);
+    }
+    private static bool HasSkill(VolunteerProfile volunteer, string skill) =>
+        skill.Length == 0 || volunteer.Skills.Split(',', StringSplitOptions.TrimEntries).Contains(skill, StringComparer.OrdinalIgnoreCase);
+    private static bool Overlaps(VolunteerTask task, DateTimeOffset startsAt, DateTimeOffset dueAt)
+    {
+        var windowStart = task.StartsAt;
+        if (!windowStart.HasValue && task.Status == VolunteerTaskStatus.InProgress) windowStart = task.CreatedAt;
+        return ScheduledTasks.Contains(task.Status) && windowStart < dueAt && startsAt < task.DueAt;
+    }
+    private static void ValidateWindow(DateTimeOffset startsAt, DateTimeOffset dueAt)
+    {
+        if (dueAt <= DateTimeOffset.UtcNow || startsAt >= dueAt) throw new RuleException("Choose a future due date after the start.");
+    }
     public Task<VolunteerTask> UpdateTask(Guid id, TaskUpdateInput input, CancellationToken ct) => store.TransactionAsync(async () =>
     {
         var task = await store.FindAsync<VolunteerTask>(id, ct) ?? throw new MissingException();
@@ -788,6 +895,12 @@ public sealed class Operations(IStore store, AccessService access, IAiProvider a
             if (v.UserId != access.UserId || !v.Verified)
                 throw new AccessDeniedException();
             await access.RequireLocation(v.OrganisationId, v.CountryCode, [Roles.Volunteer], ct, request.CrisisId);
+            if (input.Action == "Start" && task.Status == VolunteerTaskStatus.Accepted)
+            {
+                if (task.StartsAt > DateTimeOffset.UtcNow) throw new RuleException("The scheduled assignment has not started.");
+                if ((await OpenVolunteerCommitments(v.UserId, ct)).Any(t => t.Id != id && t.Status == VolunteerTaskStatus.InProgress))
+                    throw new RuleException("Complete the current in-progress assignment before starting another.");
+            }
             if (input.Action == "Complete" && (description.Length < 10 || outcome.Length < 10))
                 throw new RuleException("Describe the work and actual outcome in at least 10 characters each.");
             task.Status = (input.Action, task.Status) switch

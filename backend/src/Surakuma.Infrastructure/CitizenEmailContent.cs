@@ -15,10 +15,15 @@ public sealed record CitizenEmailContent(string Subject, string Text, string Htm
         var heading = stage?.Heading ?? labels.Heading;
         var message = stage?.Message ?? update.Message;
         var hasRequest = update.RequestId != Guid.Empty;
-        var linkLabel = hasRequest ? labels.ViewRequest : labels.ViewRequests;
+        var linkLabel = update.Funding ? language switch
+        {
+            "si" => "පරිත්‍යාග යාවත්කාලීන බලන්න",
+            "ta" => "நன்கொடை புதுப்பிப்புகளைப் பார்க்கவும்",
+            _ => "View donation updates"
+        } : hasRequest ? labels.ViewRequest : labels.ViewRequests;
         var portal = GetPortalOrigin(portalBaseUrl);
         var requestUrl = portal is null ? null : new Uri(portal,
-            hasRequest ? $"/app/requests/{update.RequestId:D}" : "/app/requests").AbsoluteUri;
+            update.Funding ? "/funding/notifications" : hasRequest ? $"/app/requests/{update.RequestId:D}" : "/app/requests").AbsoluteUri;
 
         var summary = stage is not null && !string.IsNullOrWhiteSpace(update.Reference)
             ? $"\n\n{labels.Reference}: {update.Reference}\n{labels.Status}: {status}"

@@ -48,13 +48,16 @@ public sealed partial class IntegrationTests
         using var volunteers = await fixture.Login("volunteers");
         using var volunteer = await fixture.Login("volunteer");
         using var coordinator = await fixture.Login("coordinator");
-        Guid orgId, crisisId, volunteerId;
+        using var admin = await fixture.Login("admin");
+        using var anonymous = fixture.Client();
+        Guid orgId, crisisId, volunteerId, partnerId;
         using (var scope = fixture.Factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
             orgId = await db.Set<Membership>().Where(x => x.Role == Roles.Logistics).Select(x => x.OrganisationId!.Value).SingleAsync();
             crisisId = await db.Set<Crisis>().Where(x => x.Name == "Kelani River flood response").Select(x => x.Id).SingleAsync();
             volunteerId = await db.Set<VolunteerProfile>().Select(x => x.Id).SingleAsync();
+            partnerId = await db.Set<Organisation>().Where(o => o.Name == "Southern Relief Network (demo)").Select(o => o.Id).SingleAsync();
         }
         async Task<JsonElement> Post(HttpClient client, string path, object body)
         {
@@ -77,10 +80,37 @@ public sealed partial class IntegrationTests
             });
             response.EnsureSuccessStatusCode();
         }
+        await Post(admin, "admin/users", new { email = "coursework-lk-partner@surakuma.test", name = "Synthetic supplier",
+            password = fixture.Password, organisationId = partnerId, role = "Partner", countryCode = "LK" });
+        using var partner = await fixture.Login("coursework-lk-partner");
+        var area = await Post(coordinator, $"crises/{crisisId}/areas?countryCode=LK", new { name = "Synthetic flood response zone",
+            geoJson = """{"type":"Polygon","coordinates":[[[79.86,6.91],[79.95,6.91],[79.95,6.98],[79.86,6.91]]]}""" });
+        var alert = await Post(coordinator, "alerts?countryCode=LK", new PublicAlert
+        {
+            CrisisId = crisisId, Title = "Synthetic flood response notice", Message = "Test coordination notice.",
+            SinhalaTitle = "ආදර්ශ නිවේදනය", SinhalaMessage = "මෙය පරීක්ෂණයකි.",
+            TamilTitle = "மாதிரி அறிவிப்பு", TamilMessage = "இது ஒரு சோதனை.",
+            Severity = "Advisory", Area = area.GetProperty("name").GetString()!, Authority = "Synthetic test authority",
+            ExpiresAt = DateTimeOffset.UtcNow.AddHours(2)
+        });
+        var alertId = alert.GetProperty("id").GetGuid();
+        const string lk = "?countryCode=LK";
+        Assert.DoesNotContain((await anonymous.GetFromJsonAsync<List<PublicAlert>>("/api/v1/alerts" + lk))!, a => a.Id == alertId);
+        (await coordinator.PostAsync($"/api/v1/alerts/{alertId}/submit" + lk, null)).EnsureSuccessStatusCode();
+        await Post(admin, $"alerts/{alertId}/approve" + lk, new { reason = "Verified synthetic alert wording and reporting zone." });
+        (await coordinator.PostAsync($"/api/v1/alerts/{alertId}/publish" + lk, null)).EnsureSuccessStatusCode();
+        Assert.Contains((await anonymous.GetFromJsonAsync<List<PublicAlert>>("/api/v1/alerts" + lk))!, a => a.Id == alertId);
         // A candidate with identical wording must remain accessible after being marked distinct.
         string description = "Synthetic flood household acceptance " + Guid.NewGuid() + " needs food packs and clean drinking water.";
         Guid candidateId = await Submit(AidCategory.FoodWater, 10, description);
         Guid foodId = await Submit(AidCategory.FoodWater, 10, description);
+        const string pixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jv1sAAAAASUVORK5CYII=";
+        using var image = new MultipartFormDataContent();
+        image.Add(new ByteArrayContent(Convert.FromBase64String(pixel)), "file", "synthetic-evidence.png");
+        using var uploaded = await citizen.PostAsync($"/api/v1/requests/{foodId}/attachments", image);
+        uploaded.EnsureSuccessStatusCode();
+        var attachmentId = (await uploaded.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+        Assert.Equal(HttpStatusCode.NotFound, (await partner.GetAsync($"/api/v1/requests/{foodId}/attachments/{attachmentId}")).StatusCode);
         await Transition(foodId, "UnderReview");
         await Transition(foodId, "Verified");
         var recommendation = await Post(manager, $"requests/{foodId}/recommendations/generate", new
@@ -91,6 +121,13 @@ public sealed partial class IntegrationTests
         await Post(manager, $"requests/{foodId}/decisions", new DecisionInput(recommendation.GetProperty("id").GetGuid(), "Modify", Priority.High, AidCategory.FoodWater, "Staff verified an elderly household member needs priority support."));
         var ai = await manager.GetFromJsonAsync<JsonElement>($"/api/v1/requests/{foodId}/recommendations");
         Guid duplicateId = ai.GetProperty("duplicates").EnumerateArray().Single(x => x.GetProperty("candidateId").GetGuid() == candidateId).GetProperty("id").GetGuid();
+        var decisionPath = $"crises/{crisisId}/decision-support";
+        await Post(coordinator, decisionPath + "/investigations/scan", new { });
+        var review = await coordinator.GetFromJsonAsync<JsonElement>("/api/v1/" + decisionPath);
+        var flag = review.GetProperty("flags").EnumerateArray().Single(f => f.GetProperty("requestId").GetGuid() == foodId &&
+            f.GetProperty("category").GetString() == "Potential duplicate");
+        await Post(coordinator, decisionPath + $"/investigations/{flag.GetProperty("id").GetGuid()}/review",
+            new { outcome = "Dismissed", reason = "Household confirmed the requests describe separate aid needs." });
         (await manager.PostAsJsonAsync($"/api/v1/requests/{foodId}/duplicates/{duplicateId}", new
         {
             action = "Distinct"
@@ -129,6 +166,18 @@ public sealed partial class IntegrationTests
         Assert.True(metrics.GetProperty("resourceStock").GetDecimal() >= 0);
         Assert.True(metrics.GetProperty("aiApprovedCount").GetInt32() >= 0);
         Assert.Contains(metrics.GetProperty("shortages").EnumerateArray(), x => x.GetProperty("id").GetGuid() == foodId && x.GetProperty("outstanding").GetDecimal() == 4);
+        var ranking = await logistics.GetFromJsonAsync<JsonElement>($"/api/v1/requests/{foodId}/allocation-recommendations");
+        Assert.True(ranking.GetProperty("shortage").GetBoolean());
+        var support = await Post(logistics, "supply-support/LK", new { operationId = Guid.NewGuid(), requestingOrganisationId = orgId,
+            targetOrganisationId = partnerId, caseId = foodId, category = "FoodWater", unit = "packs", quantity = 4,
+            reason = "Synthetic flood response requires four more family packs." });
+        var commitment = await Post(partner, "partner/contributions" + lk, new { operationId = Guid.NewGuid(), organisationId = partnerId,
+            supportRequestId = support.GetProperty("id").GetGuid(), title = "Synthetic family packs", kind = "Resource",
+            category = "FoodWater", unit = "packs", quantity = 4, description = "Verified partner has four packs ready." });
+        var commitmentId = commitment.GetProperty("id").GetGuid();
+        await Post(admin, $"partner/contributions/{commitmentId}/accept" + lk, new { note = "Approved partner stock handoff for the remaining demand." });
+        var handoff = await Post(logistics, $"supply-support/LK/contributions/{commitmentId}/receipts", new { operationId = Guid.NewGuid(),
+            resourceId, quantity = 4, reference = "SYNTHETIC-FLOOD-HANDOFF" });
 
         // Each request has one category; the same household submits a separate shelter need.
         Guid shelterCaseId = await Submit(AidCategory.Shelter, 1, "Synthetic flood household requires accessible shelter for four people.");
@@ -156,11 +205,17 @@ public sealed partial class IntegrationTests
         Assert.Equal(HttpStatusCode.Forbidden, (await volunteer.PostAsJsonAsync($"/api/v1/volunteer-tasks/{taskId}", new TaskUpdateInput("Verify"))).StatusCode);
         var verified = await Post(volunteers, $"volunteer-tasks/{taskId}", new TaskUpdateInput("Verify", "Coordinator confirmed completion"));
         Assert.Equal("Completed", verified.GetProperty("status").GetString());
-        (await logistics.PostAsJsonAsync($"/api/v1/resources/{resourceId}/replenish", new MovementInput(4, "Synthetic shortage resolved"))).EnsureSuccessStatusCode();
         await Deliver(4);
         await Transition(foodId, "Closed");
         await Transition(shelterCaseId, "Closed");
         (await citizen.PostAsJsonAsync($"/api/v1/requests/{foodId}/feedback", new FeedbackInput(5, true, false, "Synthetic receipt confirmed"))).EnsureSuccessStatusCode();
+        var briefing = await Post(coordinator, decisionPath + "/briefings", new { days = 7 });
+        await Post(admin, decisionPath + $"/briefings/{briefing.GetProperty("record").GetProperty("id").GetGuid()}/review",
+            new { reason = "Compared recorded facts to the completed synthetic response." });
+        var forecast = await Post(coordinator, decisionPath + "/forecasts", new { category = "FoodWater" });
+        Assert.Equal(JsonValueKind.Null, forecast.GetProperty("record").GetProperty("estimate").ValueKind);
+        using var exported = await admin.GetAsync($"/api/v1/admin/reports/export?countryCode=LK&crisisId={crisisId}");
+        Assert.Equal("text/csv", exported.Content.Headers.ContentType?.MediaType);
 
         var worker = new NotificationWorker(fixture.Factory.Services.GetRequiredService<IServiceScopeFactory>(), NullLogger<NotificationWorker>.Instance);
         int pending;
@@ -207,6 +262,9 @@ public sealed partial class IntegrationTests
         Assert.Equal(0, finalShelter.Available);
         Assert.True(await database.Set<AuditEvent>().AnyAsync(x => x.Action == "AiDecision" && x.EntityId == recommendation.GetProperty("id").GetGuid()));
         Assert.True(await database.Set<AuditEvent>().AnyAsync(x => x.Action == "VolunteerTaskVerify" && x.EntityId == taskId));
+        Assert.True(await database.Set<AuditEvent>().AnyAsync(x => x.Action == "PartnerContributionStockReceived" &&
+            x.EntityId == handoff.GetProperty("id").GetGuid()));
+        Assert.True(await database.Set<AuditEvent>().AnyAsync(x => x.Action == "PublicAlertPublished" && x.EntityId == alertId));
         Assert.All(await database.Set<OutboxMessage>().Where(x => x.RequestId == foodId).ToListAsync(), x => Assert.Equal("Captured", x.State));
         Assert.True(await database.Set<RequestHistory>().CountAsync(x => x.RequestId == foodId) >= 8);
     }

@@ -67,6 +67,20 @@ public sealed class ProviderTests
         Assert.Null(handler.Uri);
     }
     [Theory]
+    [InlineData("IN", "IND")]
+    [InlineData("NP", "NPL")]
+    public async Task MappingRequestsUseTheSelectedCountry(string country, string boundary)
+    {
+        var handler = new CaptureMappingHandler();
+        using var http = new HttpClient(handler);
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Mapping:ApiKey"] = "test-key" }).Build();
+        var maps = new MappingProvider(http, config);
+        await maps.GeocodeAsync("Synthetic public landmark", default, country);
+        Assert.Contains("boundary.country=" + boundary, handler.Uri!.Query);
+        await maps.ReverseGeocodeAsync(27.7, 85.3, default, country);
+        Assert.Contains("boundary.country=" + boundary, handler.Uri!.Query);
+    }
+    [Theory]
     [InlineData(HttpStatusCode.ServiceUnavailable, "{}")]
     [InlineData(HttpStatusCode.OK, "{\"candidates\":[]}")]
     [InlineData(HttpStatusCode.OK, "not-json")]
@@ -87,6 +101,32 @@ public sealed class ProviderTests
         var result = await provider.RecommendAsync(new AssistanceRequest { Synthetic = false, Description = "Private personal information" }, default);
         Assert.True(result.Fallback);
         Assert.Equal(0, handler.Calls);
+    }
+    [Fact]
+    public async Task OptionalAiDraftsRequireConfigurationAndBriefingsSendOnlyAggregates()
+    {
+        const string response = """{"candidates":[{"content":{"parts":[{"text":"Review outstanding aid and stock records."}]}}]}""";
+        var handler = new Handler(HttpStatusCode.OK, response);
+        using var http = new HttpClient(handler);
+        var config = Config();
+        var provider = new AiProvider(http, config, NullLogger<AiProvider>.Instance);
+        var facts = new BriefingCounts(17, 2, 10, 3, 100, 40, 8, 5, 1);
+        Assert.Null(await provider.DraftBriefingAsync(facts, default));
+        Assert.Null(await provider.DraftTranslationAsync("Synthetic public text", "si", default));
+        Assert.Equal(0, handler.Calls);
+        config["Ai:OperationalBriefingsEnabled"] = "true";
+        var draft = await provider.DraftBriefingAsync(facts, default);
+        Assert.Equal("Review outstanding aid and stock records.", draft?.Text);
+        Assert.NotNull(handler.Body);
+        using var envelope = JsonDocument.Parse(handler.Body);
+        var prompt = envelope.RootElement.GetProperty("contents")[0].GetProperty("parts")[0].GetProperty("text").GetString()!;
+        Assert.Contains("\"ActiveCases\":17", prompt);
+        Assert.DoesNotContain("CitizenId", prompt);
+        Assert.DoesNotContain("Latitude", prompt);
+        config["Ai:PublicTranslationEnabled"] = "true";
+        using var unavailable = new HttpClient(new Handler(HttpStatusCode.ServiceUnavailable, "{}"));
+        Assert.Null(await new AiProvider(unavailable, config, NullLogger<AiProvider>.Instance)
+            .DraftTranslationAsync("Synthetic public text", "si", default));
     }
     [Theory]
     [InlineData(HttpStatusCode.TooManyRequests, "Retry")]

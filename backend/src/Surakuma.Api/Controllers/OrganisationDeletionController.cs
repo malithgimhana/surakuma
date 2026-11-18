@@ -105,6 +105,12 @@ public sealed class OrganisationDeletionController(CrisisDbContext db, AccessSer
     private async Task ArchiveOperations(Organisation organisation, CancellationToken ct, string? countryCode = null)
     {
         var id = organisation.Id;
+        foreach (var campaign in await db.Set<FundingCampaign>().Where(c => c.OrganisationId == id && c.Open
+            && (countryCode == null || c.CountryCode == countryCode)).ToListAsync(ct))
+        {
+            campaign.Open = false;
+            ops.Audit("FundingCampaignClosedWithOrganisation", campaign, countryCode: campaign.CountryCode);
+        }
         var grants = await db.Set<Membership>().IgnoreQueryFilters()
             .Where(m => m.OrganisationId == id && !m.Suspended && m.Role != Roles.Administrator && m.Role != Roles.CountryAdministrator
                 && (countryCode == null || m.CountryCode == countryCode)).ToListAsync(ct);
@@ -157,7 +163,10 @@ public sealed class OrganisationDeletionController(CrisisDbContext db, AccessSer
             Resources = db.Set<Resource>().Any(r => r.OrganisationId == o.Id && (countryCode == null || r.CountryCode == countryCode)),
             Depots = db.Set<Depot>().Any(d => d.OrganisationId == o.Id && (countryCode == null || d.CountryCode == countryCode)),
             Shelters = db.Set<Shelter>().Any(s => s.OrganisationId == o.Id && (countryCode == null || s.CountryCode == countryCode)),
-            Volunteers = db.Set<VolunteerProfile>().Any(v => v.OrganisationId == o.Id && (countryCode == null || v.CountryCode == countryCode))
+            Volunteers = db.Set<VolunteerProfile>().Any(v => v.OrganisationId == o.Id && (countryCode == null || v.CountryCode == countryCode)),
+            Funding = db.Set<FundingCampaign>().Any(c => c.OrganisationId == o.Id && (countryCode == null || c.CountryCode == countryCode)),
+            Supply = db.Set<SupplyRequest>().Any(r => (r.RequestingOrganisationId == o.Id || r.TargetOrganisationId == o.Id) &&
+                (countryCode == null || r.CountryCode == countryCode))
         }).SingleOrDefaultAsync(ct) ?? throw new MissingException();
 
         var blockers = new List<string>();
@@ -168,6 +177,8 @@ public sealed class OrganisationDeletionController(CrisisDbContext db, AccessSer
         if (linked.Depots) blockers.Add("This organisation has depot records.");
         if (linked.Shelters) blockers.Add("This organisation has shelter records.");
         if (linked.Volunteers) blockers.Add("This organisation has volunteer records.");
+        if (linked.Funding) blockers.Add("This organisation has a funding ledger.");
+        if (linked.Supply) blockers.Add("This organisation has supply support records.");
         return blockers;
     }
 }

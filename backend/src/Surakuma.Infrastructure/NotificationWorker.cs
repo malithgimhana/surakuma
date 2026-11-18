@@ -60,7 +60,8 @@ public sealed class NotificationWorker(IServiceScopeFactory scopeFactory, ILogge
             var users = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
             var roles = user is null ? Array.Empty<string>() : (await users.GetRolesAsync(user)).ToArray();
             citizen = NotificationChannels.ReceivesCitizenEmail(roles);
-            if (citizen && !await db.Set<Notification>().AnyAsync(x => x.EventId == message.Id && x.UserId == message.UserId, ct))
+            if (citizen && user?.Disabled == false && message.FundingCountryCode == null &&
+                !await db.Set<Notification>().AnyAsync(x => x.EventId == message.Id && x.UserId == message.UserId, ct))
                 db.Add(new Notification { EventId = message.Id, UserId = message.UserId,
                     RequestId = message.RequestId, Message = message.Message,
                     SinhalaMessage = message.SinhalaMessage, TamilMessage = message.TamilMessage });
@@ -85,8 +86,8 @@ public sealed class NotificationWorker(IServiceScopeFactory scopeFactory, ILogge
         }
         var result = user?.Email is null
             ? new DeliveryResult("Failed", Error: "Recipient email unavailable.")
-            : !citizen
-                ? new DeliveryResult("Skipped", Error: "Email notifications are reserved for citizen accounts.")
+            : !citizen || user.Disabled
+                ? new DeliveryResult("Skipped", Error: "Email notifications require an active citizen account.")
                 : await provider.SendAsync(user.Email, CitizenEmailUpdate.FromOutbox(message, user.Language), message.Id, ct);
         message.State = result.State == "Retry" && message.CycleAttempts >= 4 ? "Failed" : result.State;
         message.LastError = result.Error;
