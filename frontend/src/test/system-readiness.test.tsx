@@ -33,7 +33,7 @@ it('explains fallback and captured notifications without claiming live delivery'
         mode: 'Deterministic fallback',
         state: 'Fallback',
         detail: 'Development rules are active.',
-        missingSettings: ['Ai__ApiKey'],
+        missingSettings: ['Ai__OpenAiApiKey'],
       },
     ],
     notificationQueue: [
@@ -44,7 +44,7 @@ it('explains fallback and captured notifications without claiming live delivery'
   renderStatus();
   const ai = await screen.findByRole('region', { name: 'AI recommendations' });
   expect(within(ai).getByText('Fallback')).toBeVisible();
-  expect(within(ai).getByText('Ai__ApiKey')).toBeVisible();
+  expect(within(ai).getByText('Ai__OpenAiApiKey')).toBeVisible();
   expect(screen.getByText(/Captured means saved locally/)).toBeVisible();
   expect(screen.getByText(/configured service still needs a successful live test/)).toBeVisible();
   expect(get).toHaveBeenCalledWith('/admin/system?countryCode=LK');
