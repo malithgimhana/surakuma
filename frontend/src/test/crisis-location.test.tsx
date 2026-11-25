@@ -4,7 +4,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import '../i18n';
 import { CrisesPage } from '../StaffSupport';
-import { api } from '../api';
+import { CrisisCreationForm } from '../CrisisCreationForm';
+import { api, get } from '../api';
 
 vi.mock('../auth', () => ({ useAuth: () => ({ user: { id: 'coordinator', roles: ['Coordinator'] } }) }));
 vi.mock('../api', () => ({
@@ -56,4 +57,18 @@ it('offers manual entry when location access fails', () => {
   fireEvent.change(screen.getByLabelText('Longitude'), { target: { value: '79.88' } });
   expect(screen.getByLabelText('Latitude')).toHaveValue(6.93);
   expect(screen.getByLabelText('Longitude')).toHaveValue(79.88);
+});
+
+it('uses the geocoded result selected by the coordinator', async () => {
+  const onCreate = vi.fn();
+  vi.mocked(get).mockImplementation(path => Promise.resolve(path.startsWith('/maps/geocode?') ? {
+    features: [{ geometry: { coordinates: [79.91, 6.95] }, properties: { label: 'Kelaniya, Western Province' } }],
+  } : []));
+  render(<QueryClientProvider client={new QueryClient()}><CrisisCreationForm busy={false} onCreate={onCreate} showSearch /></QueryClientProvider>);
+  fireEvent.change(screen.getByLabelText('Search location'), { target: { value: 'Kelaniya' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Find location' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Kelaniya, Western Province' }));
+  expect(screen.getByLabelText('Latitude')).toHaveValue(6.95);
+  expect(screen.getByLabelText('Longitude')).toHaveValue(79.91);
+  expect(screen.getByLabelText('Local area')).toHaveValue('Kelaniya, Western Province');
 });
