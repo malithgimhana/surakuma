@@ -9,26 +9,39 @@ public sealed partial class OperationsController
 {
     private sealed record ShelterWarning(string Kind, string Severity);
     private static readonly string[] ShelterDashboardRoles = [Roles.ShelterAdmin, Roles.Coordinator];
+    private static readonly string[] ShelterPlacementRoles = [Roles.ShelterAdmin];
 
-    private async Task<(string Country, IQueryable<Shelter> Shelters)> ShelterScope(CancellationToken ct)
+    private async Task<(string Country, IQueryable<Shelter> Shelters, IQueryable<AssistanceRequest> Requests)> ShelterScope(CancellationToken ct)
     {
-        var country = access.SelectedCountry ?? throw new RuleException("Select a shelter country.");
-        if (!await access.CountryAccess(country, ShelterDashboardRoles, ct)) throw new AccessDeniedException();
-        return (country, (await access.Located<Shelter>(ct, roles: ShelterDashboardRoles)).Where(s => s.CountryCode == country));
+        if (access.IsCoordinatorWorkspace)
+        {
+            var coordinatorCountry = await access.CoordinatorCountry(ct);
+            return (coordinatorCountry, await access.Located<Shelter>(ct, roles: ShelterDashboardRoles),
+                await access.StaffCases(Roles.Coordinator, ct));
+        }
+        var country = access.IsShelterWorkspace ? await access.ShelterWorkspaceCountry(ct) :
+            access.SelectedCountry ?? throw new RuleException("Select a shelter country.");
+        var requests = db.Set<AssistanceRequest>();
+        if (await access.CountryAccess(country, ShelterDashboardRoles, ct))
+            return (country, (await access.Located<Shelter>(ct, roles: ShelterDashboardRoles)).Where(s => s.CountryCode == country), requests);
+        var grants = access.AssignedCoordinatorGrants(country);
+        if (access.IsLogisticsWorkspace || access.IsVolunteerWorkspace || !await grants.AnyAsync(ct))
+            throw new AccessDeniedException();
+        var shelters = db.Set<Shelter>().Where(s => s.CountryCode == country && grants.Any(m => m.OrganisationId == s.OrganisationId));
+        return (country, shelters, requests.Where(r => grants.Any(m => m.CrisisId == r.CrisisId)));
     }
 
     private async Task<object> ShelterDashboard(CancellationToken ct)
     {
-        var (country, scoped) = await ShelterScope(ct);
+        var (country, scoped, requests) = await ShelterScope(ct);
         var configuration = HttpContext.RequestServices.GetRequiredService<IConfiguration>();
         var near = Math.Clamp(configuration.GetValue("ShelterDashboard:NearPercent", 80), 1, 99);
         var critical = Math.Clamp(configuration.GetValue("ShelterDashboard:CriticalPercent", 95), near + 1, 100);
-        var staleHours = Math.Clamp(configuration.GetValue("ShelterDashboard:StaleAfterHours", 168), 1, 87600);
-        var staleBefore = DateTimeOffset.UtcNow.AddHours(-staleHours);
+        var staleBefore = HttpContext.RequestServices.GetRequiredService<ShelterOperationalPolicy>().ReviewCutoff;
         var shelters = await scoped.OrderBy(s => s.Name).ToListAsync(ct);
         var active = await (
             from stay in db.Set<ShelterAllocation>()
-            join request in db.Set<AssistanceRequest>() on stay.RequestId equals request.Id
+            join request in requests on stay.RequestId equals request.Id
             join crisis in db.Set<Crisis>() on request.CrisisId equals crisis.Id
             where scoped.Any(s => s.Id == stay.ShelterId) && crisis.CountryCode == country
                 && (stay.Status == StayStatus.Reserved || stay.Status == StayStatus.CheckedIn)
@@ -42,9 +55,11 @@ public sealed partial class OperationsController
         var entries = shelters.Select(s => new
         {
             Shelter = s,
-            Eligible = s.Open && eligible.Contains(s.OrganisationId) && s.Available > 0,
+            Eligible = s.Open && !s.PendingVerification && ShelterOperationalPolicy.IsCurrent(s, staleBefore) &&
+                eligible.Contains(s.OrganisationId) && s.Available > 0,
+            ReportedAvailable = Math.Max(0, s.Available),
             Crises = activeByShelter[s.Id].Select(x => x.Crisis).DistinctBy(c => c.Id).OrderBy(c => c.Name).ToArray(),
-            Warnings = Warnings(s, near, critical, staleBefore).ToArray(),
+            Warnings = Warnings(s, near, critical, staleBefore, eligible.Contains(s.OrganisationId), access.IsShelterWorkspace).ToArray(),
         }).ToArray();
 
         return new
@@ -53,6 +68,8 @@ public sealed partial class OperationsController
             Statistics = new
             {
                 Total = entries.Length,
+                Capacity = shelters.Sum(s => (long)s.Capacity),
+                ReportedAvailable = entries.Sum(e => (long)e.ReportedAvailable),
                 Available = entries.Where(e => e.Eligible).Sum(e => (long)e.Shelter.Available),
                 Occupied = shelters.Sum(s => (long)s.Occupancy),
                 // One shelter request represents one household, even when the same citizen files for others.
@@ -64,8 +81,17 @@ public sealed partial class OperationsController
         };
     }
 
-    private static IEnumerable<ShelterWarning> Warnings(Shelter shelter, int near, int critical, DateTimeOffset staleBefore)
+    private static IEnumerable<ShelterWarning> Warnings(Shelter shelter, int near, int critical, DateTimeOffset staleBefore,
+        bool eligibleOrganisation, bool showOperationalWarnings)
     {
+        if (shelter.PendingVerification) yield return new("pendingVerification", "warning");
+        else if (!shelter.Open && showOperationalWarnings && shelter.Occupancy == 0 && shelter.Reserved == 0)
+            yield return new("closed", "warning");
+        if (showOperationalWarnings && shelter.Open && string.IsNullOrWhiteSpace(shelter.Facilities))
+            yield return new("facilitiesUnknown", "warning");
+        if (showOperationalWarnings && shelter.Open && !eligibleOrganisation)
+            yield return new("partnerVerification", "critical");
+
         if (shelter.Available < 0) yield return new("overcapacity", "critical");
         else if (shelter.Capacity <= 0) yield return new("unknownCapacity", "warning");
         else if ((long)shelter.Occupancy * 100 >= (long)shelter.Capacity * critical)
@@ -75,25 +101,28 @@ public sealed partial class OperationsController
 
         if (!shelter.Open && (shelter.Occupancy > 0 || shelter.Reserved > 0))
             yield return new("closedWithPlacements", "critical");
-        if (shelter.Open && shelter.UpdatedAt < staleBefore)
+        if (shelter.Open && !ShelterOperationalPolicy.IsCurrent(shelter, staleBefore))
             yield return new("stale", "warning");
     }
 
     [HttpGet("staff/shelters/{id:guid}")]
     public async Task<object> ShelterDetails(Guid id, CancellationToken ct, bool allocation = false)
     {
-        var (country, scoped) = await ShelterScope(ct);
+        var (country, scoped, requests) = await ShelterScope(ct);
         var shelter = await scoped.SingleOrDefaultAsync(s => s.Id == id, ct)
             ?? throw new MissingException();
         if (allocation)
         {
-            if (!shelter.Open || shelter.Available <= 0 || !await access.PartnerEligible(shelter.OrganisationId, country, ct))
+            if (access.IsCoordinatorWorkspace || !await access.CountryAccess(country, ShelterPlacementRoles, ct))
+                throw new AccessDeniedException();
+            var shelterPolicy = HttpContext.RequestServices.GetRequiredService<ShelterOperationalPolicy>();
+            if (!shelterPolicy.AcceptsPlacements(shelter) || !await access.PartnerEligible(shelter.OrganisationId, country, ct))
                 throw new RuleException("This shelter is not currently accepting reservations.");
             var candidates = await access.Visible(ct);
-            if (!await access.CountryAccess(country, [], ct))
+            if (access.IsShelterWorkspace || !await access.CountryAccess(country, [], ct))
             {
                 var grants = db.Set<Membership>().Where(m => m.UserId == access.UserId && m.CountryCode == country &&
-                    ShelterDashboardRoles.Contains(m.Role));
+                    ShelterPlacementRoles.Contains(m.Role));
                 candidates = candidates.Where(r => r.OrganisationId == shelter.OrganisationId && grants.Any(m =>
                     m.OrganisationId == r.OrganisationId && (m.CrisisId == null || m.CrisisId == r.CrisisId)));
             }
@@ -114,7 +143,7 @@ public sealed partial class OperationsController
 
         var households = await (
             from stay in db.Set<ShelterAllocation>()
-            join request in db.Set<AssistanceRequest>() on stay.RequestId equals request.Id
+            join request in requests on stay.RequestId equals request.Id
             join crisis in db.Set<Crisis>() on request.CrisisId equals crisis.Id
             where stay.ShelterId == id && crisis.CountryCode == country
             orderby stay.CreatedAt descending
@@ -129,6 +158,7 @@ public sealed partial class OperationsController
         var checkIns = activity.Where(a => a.Action == "ShelterCheckIn").ToLookup(a => a.EntityId);
         return new
         {
+            Shelter = shelter,
             Households = households.Select(h => new
             {
                 h.Id, h.Reference, h.People, h.Status, h.CreatedAt, h.UpdatedAt,
