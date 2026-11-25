@@ -6,6 +6,7 @@ namespace Surakuma.Application;
 public sealed record DonorInput([Required, MaxLength(100)] string DisplayName, [MaxLength(150)] string? OrganisationName);
 public sealed record CampaignInput(Guid OrganisationId, Guid? CrisisId, [Required, MaxLength(150)] string Name,
     [Required, MaxLength(1000)] string Purpose, decimal Budget);
+public sealed record CampaignUpdateInput([Required, MaxLength(150)] string Name, [Required, MaxLength(1000)] string Purpose, decimal Budget);
 public sealed record PledgeInput(Guid OperationId, Guid CampaignId, DonationKind Kind, AidCategory Category, decimal Amount,
     [MaxLength(30)] string? Unit);
 public sealed record FundingReceiptInput([Required, MaxLength(100)] string Reference, Guid? ResourceId);
@@ -17,7 +18,7 @@ public sealed record MaterialFundingTotals(Guid CampaignId, AidCategory Category
 public sealed record DonationView(Guid Id, Guid CampaignId, DonationKind Kind, AidCategory Category, string Unit,
     decimal Amount, DonationState State, Guid? ResourceId, string? Donor, string? ReceiptReference);
 public sealed record FundingAllocationView(Guid Id, Guid DonationId, Guid? RequestId, decimal Amount);
-public sealed record FundingExpenseView(Guid Id, Guid AllocationId, decimal Amount, string? Reference);
+public sealed record FundingExpenseView(Guid Id, Guid AllocationId, decimal Amount, string? Reference, DateTimeOffset CreatedAt);
 public sealed record FundingWorkspace(bool CanManage, DonorProfile? Profile, List<FundingCampaign> Campaigns,
     List<DonationView> Donations, List<FundingAllocationView> Allocations, List<FundingExpenseView> Expenses,
     List<DonationEvent> Events, List<FundingTotals> Reports, List<MaterialFundingTotals> MaterialReports, List<InvestigationFlag> Flags);
@@ -64,7 +65,8 @@ public sealed class FundingService(IStore store, AccessService access, Operation
         return new(manage, profile, campaigns, donations,
             await store.ListAsync(allocations.Select(a => new FundingAllocationView(a.Id, a.DonationId, manage ? a.RequestId : null, a.Amount)), ct),
             await store.ListAsync(store.Query<DonationExpenditure>().Where(e => allocations.Any(a => a.Id == e.AllocationId))
-                .Select(e => new FundingExpenseView(e.Id, e.AllocationId, e.Amount, manage ? e.Reference : null)), ct),
+                .OrderByDescending(e => e.CreatedAt).ThenBy(e => e.Id)
+                .Select(e => new FundingExpenseView(e.Id, e.AllocationId, e.Amount, manage ? e.Reference : null, e.CreatedAt)), ct),
             await store.ListAsync(store.Query<DonationEvent>().Where(e => query.Any(d => d.Id == e.DonationId)).OrderByDescending(e => e.CreatedAt), ct), reports, materialReports,
             manage ? await store.ListAsync(store.Query<InvestigationFlag>().Where(f => query.Any(d => d.Id == f.DonationId))
                 .OrderBy(f => f.ReviewedAt != null).ThenByDescending(f => f.CreatedAt).Take(100), ct) : []);
@@ -107,18 +109,12 @@ public sealed class FundingService(IStore store, AccessService access, Operation
         return new([], options, resources, deliveries);
     }
 
-    public Task<DonorProfile> Register(DonorInput input, CancellationToken ct) => store.TransactionAsync(async () =>
+    public Task<DonorProfile> UpdateProfile(DonorInput input, CancellationToken ct) => store.TransactionAsync(async () =>
     {
-        var profile = await Profile(ct);
-        var created = profile == null;
-        if (profile == null)
-        {
-            profile = new DonorProfile { UserId = access.UserId };
-            store.Add(profile);
-        }
+        var profile = await Profile(ct) ?? throw new MissingException();
         profile.DisplayName = Required(input.DisplayName);
         profile.OrganisationName = string.IsNullOrWhiteSpace(input.OrganisationName) ? null : input.OrganisationName.Trim();
-        operations.Audit(created ? "DonorRegistered" : "DonorProfileUpdated", profile);
+        operations.Audit("DonorProfileUpdated", profile);
         return profile;
     }, ct);
 
@@ -134,6 +130,26 @@ public sealed class FundingService(IStore store, AccessService access, Operation
         store.Add(campaign);
         operations.Audit("FundingCampaignCreated", campaign, countryCode: country);
         await notifications.FundingChanged(campaign, "A funding campaign opened.", ct);
+        return campaign;
+    }, ct);
+
+    public Task<FundingCampaign> UpdateCampaign(string country, Guid id, CampaignUpdateInput input, CancellationToken ct) => store.TransactionAsync(async () =>
+    {
+        var campaign = await ReadCampaign(id, country, ct);
+        await Manage(campaign, ct);
+        var name = Required(input.Name);
+        var purpose = Required(input.Purpose);
+        var budget = Amount(input.Budget);
+        if (campaign.Name == name && campaign.Purpose == purpose && campaign.Budget == budget) return campaign;
+        if (budget < campaign.Budget)
+        {
+            var expenses = await store.ListAsync(MonetaryCampaignExpenses(id).Select(e => e.Amount), ct);
+            if (budget < expenses.Sum()) throw new RuleException("The budget cannot be lower than the amount already spent.");
+        }
+        campaign.Name = name;
+        campaign.Purpose = purpose;
+        campaign.Budget = budget;
+        operations.Audit("FundingCampaignUpdated", campaign, countryCode: country);
         return campaign;
     }, ct);
 
@@ -165,6 +181,7 @@ public sealed class FundingService(IStore store, AccessService access, Operation
                 throw new RuleException("This operation reference belongs to another pledge.");
             return OwnView(existing);
         }
+        if (input.Kind == DonationKind.Material) units.EnsureStockCategory(unit, input.Category);
         if (!campaign.Open) throw new RuleException("This campaign is closed.");
         await access.RequirePartner(campaign.OrganisationId, country, ct);
         var donation = new Donation { Id = id, CampaignId = campaign.Id, DonorId = donor.Id, Amount = amount,
@@ -200,7 +217,7 @@ public sealed class FundingService(IStore store, AccessService access, Operation
         RequireState(donation, DonationState.Pledged);
         if ((await store.ListAsync(store.Query<Donation>().Where(d => d.ReceiptReference == reference &&
             store.Query<FundingCampaign>().Any(c => c.Id == d.CampaignId && c.CountryCode == country &&
-                c.OrganisationId == campaign.OrganisationId)).Take(1), ct)).Count > 0)
+                c.OrganisationId == campaign.OrganisationId)).OrderBy(d => d.Id).Take(1), ct)).Count > 0)
             throw new RuleException("This receipt reference was already used by this organisation in this country.");
         if (donation.Kind == DonationKind.Material)
         {
@@ -290,12 +307,10 @@ public sealed class FundingService(IStore store, AccessService access, Operation
         var expenses = store.Query<DonationExpenditure>();
         var spent = (await store.ListAsync(expenses.Where(e => e.AllocationId == allocationId).Select(e => e.Amount), ct)).Sum();
         if (amount > allocation.Amount - spent) throw new RuleException("This amount exceeds the allocation balance.");
-        var campaignAllocations = store.Query<DonationAllocation>().Where(a =>
-            store.Query<Donation>().Any(d => d.CampaignId == campaign.Id && d.Id == a.DonationId && d.Kind == donation.Kind));
         if (donation.Kind == DonationKind.Monetary)
         {
             if (input.DeliveryConfirmationId != null) throw new RuleException("Use an external expense reference for a financial expenditure.");
-            var campaignExpenses = await store.ListAsync(expenses.Where(e => campaignAllocations.Any(a => a.Id == e.AllocationId)), ct);
+            var campaignExpenses = await store.ListAsync(MonetaryCampaignExpenses(campaign.Id), ct);
             if (campaignExpenses.Any(e => e.Reference.Equals(reference, StringComparison.OrdinalIgnoreCase)))
                 throw new RuleException("This expenditure reference was already used in the campaign.");
             if (amount + campaignExpenses.Sum(e => e.Amount) > campaign.Budget)
@@ -310,7 +325,7 @@ public sealed class FundingService(IStore store, AccessService access, Operation
             if (shipment.RequestId != allocation.RequestId || shipment.ResourceId != donation.ResourceId ||
                 QuantityUnits.Convert(amount, donation.Unit, stock.Unit) > receipt.ConfirmedQuantity)
                 throw new RuleException("Use the confirmed delivery receipt for this case and inventory item.");
-            if ((await store.ListAsync(expenses.Where(e => e.DeliveryConfirmationId == receipt.Id).Take(1), ct)).Count > 0)
+            if ((await store.ListAsync(expenses.Where(e => e.DeliveryConfirmationId == receipt.Id).OrderBy(e => e.Id).Take(1), ct)).Count > 0)
                 throw new RuleException("This delivery receipt is already attributed to a material donation.");
         }
         var expense = new DonationExpenditure { Id = operation, AllocationId = allocationId, Amount = amount,
@@ -382,13 +397,13 @@ public sealed class FundingService(IStore store, AccessService access, Operation
         if (await access.IsAdmin(ct)) return campaigns;
         var grants = store.Query<Membership>().Where(m => m.UserId == access.UserId && m.CountryCode == country &&
             (m.Role == Roles.FundingOfficer || m.Role == Roles.CountryAdministrator));
-        if ((await store.ListAsync(grants.Take(1), ct)).Count == 0) throw new AccessDeniedException();
+        if ((await store.ListAsync(grants.OrderBy(m => m.Id).Take(1), ct)).Count == 0) throw new AccessDeniedException();
         return campaigns.Where(c => grants.Any(m => m.Role == Roles.CountryAdministrator && m.CrisisId == null ||
             m.Role == Roles.FundingOfficer && m.OrganisationId == c.OrganisationId && (m.CrisisId == null || m.CrisisId == c.CrisisId)));
     }
 
     private async Task<DonorProfile?> Profile(CancellationToken ct) =>
-        (await store.ListAsync(store.Query<DonorProfile>().Where(p => p.UserId == access.UserId).Take(1), ct)).SingleOrDefault();
+        (await store.ListAsync(store.Query<DonorProfile>().Where(p => p.UserId == access.UserId).OrderBy(p => p.Id).Take(1), ct)).SingleOrDefault();
 
     private async Task<FundingCampaign> ReadCampaign(Guid id, string country, CancellationToken ct)
     {
@@ -406,17 +421,26 @@ public sealed class FundingService(IStore store, AccessService access, Operation
     private Task Manage(FundingCampaign campaign, CancellationToken ct) =>
         access.RequireLocation(campaign.OrganisationId, campaign.CountryCode, Officers, ct, campaign.CrisisId);
 
+    private IQueryable<DonationExpenditure> MonetaryCampaignExpenses(Guid campaignId)
+    {
+        var donations = store.Query<Donation>().Where(d => d.CampaignId == campaignId && d.Kind == DonationKind.Monetary);
+        var allocations = store.Query<DonationAllocation>().Where(a => donations.Any(d => d.Id == a.DonationId));
+        return store.Query<DonationExpenditure>().Where(e => allocations.Any(a => a.Id == e.AllocationId));
+    }
+
     private async Task Record(Donation donation, FundingCampaign campaign, string activity, CancellationToken ct)
     {
         var profile = await store.FindAsync<DonorProfile>(donation.DonorId, ct) ?? throw new MissingException();
         var entry = new DonationEvent { DonationId = donation.Id, State = donation.State, Activity = activity };
         store.Add(entry);
-        // The outbox checks the existing citizen email policy at send time. Keep financial details in the authenticated portal.
+        notifications.DonorFundingChanged(profile.UserId, campaign, activity);
+        // The outbox checks donor eligibility at send time. Keep financial details in the authenticated portal.
         store.Add(new OutboxMessage { Id = entry.Id, UserId = profile.UserId, FundingCountryCode = campaign.CountryCode,
             Message = "Your donation activity was updated. Sign in to view the details.",
             SinhalaMessage = "ඔබගේ පරිත්‍යාග තොරතුරු යාවත්කාලීන කර ඇත. විස්තර බැලීමට පිවිසෙන්න.",
             TamilMessage = "உங்கள் நன்கொடை விவரங்கள் புதுப்பிக்கப்பட்டுள்ளன. விவரங்களைப் பார்க்க உள்நுழையவும்." });
-        await notifications.FundingChanged(campaign, "Donation activity updated · " + activity + ".", ct);
+        await notifications.FundingChanged(campaign, "Donation activity updated · " + activity + ".", ct,
+            needsReceipt: activity == "Pledged");
         operations.Audit("Donation" + activity.Replace(" ", ""), donation, countryCode: campaign.CountryCode);
     }
 
