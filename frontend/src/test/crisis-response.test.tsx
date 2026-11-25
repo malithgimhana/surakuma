@@ -150,8 +150,18 @@ it('loads country-scoped responses and language policies while retaining each co
   expect(screen.getByLabelText('සිංහල මාතෘකාව')).toBeRequired();
 });
 
-it('previews reviewed translations and saves a draft in the selected country', async () => {
-  vi.mocked(api.request).mockReset().mockResolvedValue({ data: {} });
+it('shows saved drafts to their author and submitted alerts to the country reviewer', async () => {
+  let savedAlert: Record<string, unknown> | undefined;
+  let alertStatus = 'Draft';
+  let isAuthor = true;
+  vi.mocked(api.request).mockReset().mockImplementation(async ({ data, url }) => {
+    if (url?.startsWith('/alerts/nepal-draft/submit?')) {
+      alertStatus = 'PendingReview';
+    } else {
+      savedAlert = { ...(data as Record<string, unknown>), id: 'nepal-draft', published: false };
+    }
+    return { data: savedAlert };
+  });
   vi.mocked(get).mockImplementation(async (path) => {
     if (path === '/countries') return policies;
     if (path === '/crises?countryCode=NP')
@@ -165,15 +175,21 @@ it('previews reviewed translations and saves a draft in the selected country', a
         },
       ];
     if (path.startsWith('/public/lookups')) return { organisations: [] };
-    if (path.startsWith('/admin/crisis-operations/alerts'))
-      return { items: [], total: 0, publishedCount: 0 };
+    if (path.startsWith('/admin/crisis-operations/alerts')) {
+      const status = new URLSearchParams(path.split('?')[1]).get('status');
+      const items = savedAlert && (status === alertStatus || status === 'All')
+        ? [{ alert: savedAlert, status: alertStatus, isAuthor, canReview: !isAuthor }]
+        : [];
+      return { items, total: items.length, publishedCount: 0, reviewer: !isAuthor };
+    }
     if (path.includes('/snapshot'))
       return { activeShelters: 0, shelteredPeople: 0, lastUpdated: updatedAt };
     return [];
   });
-  render(
-    <QueryClientProvider client={new QueryClient()}>{renderDashboard('NP')}</QueryClientProvider>,
+  const dashboard = () => (
+    <QueryClientProvider client={new QueryClient()}>{renderDashboard('NP')}</QueryClientProvider>
   );
+  const { unmount } = render(dashboard());
   expect(await screen.findByRole('heading', { name: 'Nepal response' })).toBeVisible();
 
   for (const [label, value] of Object.entries({
@@ -212,6 +228,22 @@ it('previews reviewed translations and saves a draft in the selected country', a
     }),
   );
   expect(await screen.findByText(/Draft saved/)).toBeVisible();
+  const historyHeading = screen.getByRole('heading', { name: 'Public alert history' });
+  expect(screen.getByRole('link', { name: 'View saved drafts' })).toHaveAttribute('href', `#${historyHeading.id}`);
+  expect(screen.getByLabelText('Filter by status')).toHaveValue('Draft');
+  fireEvent.click(await screen.findByRole('button', { name: 'View alert: Test notice' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Submit for review' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+  unmount();
+  isAuthor = false;
+  render(dashboard());
+  expect(screen.getByLabelText('Filter by status')).toHaveValue('All');
+  expect(await screen.findByRole('button', { name: 'View alert: Test notice' })).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Review queue' }));
+  expect(screen.getByLabelText('Filter by status')).toHaveValue('PendingReview');
+  fireEvent.click(await screen.findByRole('button', { name: 'View alert: Test notice' }));
+  expect(screen.getByRole('button', { name: 'Approve alert' })).toBeVisible();
 });
 
 it('blocks composition while the selected country’s crisis request fails and lets the user retry', async () => {
