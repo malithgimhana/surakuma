@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import '../i18n';
 import { AdminPage } from '../StaffSupport';
 import { api } from '../api';
+import { CountryScope } from '../geography';
 
 afterEach(cleanup);
 
@@ -62,15 +63,25 @@ it('lets an administrator inspect and assign an unassigned request', async () =>
 });
 
 it('resets the staff access form manually and after a successful grant, but keeps failed entries', async () => {
+  HTMLDialogElement.prototype.showModal ??= function () { this.open = true; };
+  HTMLDialogElement.prototype.close ??= function () { this.open = false; };
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-    <MemoryRouter initialEntries={['/admin?section=users']}><AdminPage /></MemoryRouter>
+    <CountryScope.Provider value="IN">
+      <MemoryRouter initialEntries={['/admin?section=users']}><AdminPage /></MemoryRouter>
+    </CountryScope.Provider>
   </QueryClientProvider>);
   fireEvent.click(screen.getByRole('button', { name: 'Create staff account' }));
-  const section = screen.getByRole('heading', { name: 'Create staff account or grant role' }).parentElement!;
-  const form = within(section);
+  const form = within(screen.getByRole('dialog', { name: 'Create staff account' }));
+  expect(form.getByText('India')).toBeVisible();
+  expect(form.getByAltText('')).toHaveAttribute('src', '/country-flags/in.svg');
+  expect(screen.queryByRole('heading', { name: 'System Administrator access requests' })).not.toBeInTheDocument();
+  expect(form.queryByRole('option', { name: /^System Administrator$/ })).not.toBeInTheDocument();
+  expect(form.getByRole('option', { name: /^Country Administrator$/ })).toBeInTheDocument();
   const name = form.getByLabelText('Full name');
   const email = form.getByLabelText('Email');
-  const password = form.getByLabelText('Initial password (new accounts only)');
+  const password = form.getByLabelText('Password', { exact: true });
+  expect(form.getAllByRole('textbox').slice(0, 2)).toEqual([name, email]);
+  expect(name).toHaveFocus();
   await form.findByRole('option', { name: 'Response centre' });
   fireEvent.change(name, { target: { value: 'Test Person' } });
   fireEvent.change(email, { target: { value: 'person@example.test' } });
@@ -95,20 +106,27 @@ it('resets the staff access form manually and after a successful grant, but keep
   fireEvent.change(password, { target: { value: 'Test-password-123' } });
   vi.mocked(api.request).mockRejectedValueOnce(new Error('Failed'));
   fireEvent.click(form.getByRole('button', { name: 'Grant staff access' }));
-  await waitFor(() => expect(screen.getByRole('alert')).toBeVisible());
+  await waitFor(() => expect(form.getByRole('alert')).toBeVisible());
   expect(name).toHaveValue('Test Person');
   expect(password).toHaveValue('Test-password-123');
 
+  vi.mocked(api.request).mockResolvedValueOnce({ data: { invitationQueued: true } });
   fireEvent.click(form.getByRole('button', { name: 'Grant staff access' }));
   await waitFor(() => expect(name).toHaveValue(''));
   expect(email).toHaveValue('');
   expect(password).toHaveValue('');
+  expect(form.getByRole('status')).toHaveTextContent('Account created. Invitation email queued.');
+  fireEvent.click(form.getByRole('button', { name: 'Cancel' }));
+  expect(screen.queryByRole('dialog', { name: 'Create staff account' })).not.toBeInTheDocument();
 });
 
 it('shows ten users per page and searches and filters users from later pages', async () => {
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
     <MemoryRouter initialEntries={['/admin?section=users']}><AdminPage /></MemoryRouter>
   </QueryClientProvider>);
+  const roleFilter = within(screen.getByLabelText('Filter by role'));
+  expect(roleFilter.queryByRole('option', { name: /^Administrator$/ })).not.toBeInTheDocument();
+  expect(roleFilter.getByRole('option', { name: 'Country Administrator' })).toBeInTheDocument();
   expect(await screen.findByText('Other User')).toBeVisible();
   expect(within(screen.getByRole('row', { name: /Other User/ })).getByText('Disabled')).toBeVisible();
   expect(screen.getAllByRole('row')).toHaveLength(11);
