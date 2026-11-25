@@ -205,13 +205,14 @@ try {
   );
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
   await page.getByLabel('Crisis event', { exact: true }).selectOption(crisis.id);
+  await page.getByLabel('Which item do you need?').selectOption('DryRations');
+  await page.getByLabel('When will it run out?').selectOption('WithinSixHours');
   await page.getByLabel('Describe what you need', { exact: true }).fill(description);
   await page.getByLabel('Measurement unit', { exact: true }).selectOption('packs');
   await page.getByLabel('Quantity needed', { exact: true }).fill('10');
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
   await page.getByLabel('Location', { exact: true }).fill(base.locationText);
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
-  await page.getByLabel('This request contains fictional information only.').check();
   await caption('Review and explicitly confirm synthetic demonstration data before submission.');
   await page.getByRole('button', { name: 'Submit request', exact: true }).click();
   await expect(
@@ -223,31 +224,24 @@ try {
   await page.goto(`${site}/staff/cases/${foodId}`);
   await page.getByRole('button', { name: 'Begin review', exact: true }).click();
   await page.getByRole('button', { name: 'Verify request', exact: true }).click();
-  await expect(page.locator('.page-header').getByText('Verified', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Generate recommendation', exact: true }).click();
-  await expect(page.getByText('DEVELOPMENT RULES FALLBACK · not external AI')).toBeVisible({
+  await expect(page.locator('.cm-page-header').getByText('Verified', { exact: true })).toBeVisible();
+  await expect(page.getByText('AI assessment unavailable')).toBeVisible({
     timeout: 20000,
   });
   await caption(
-    'No API key is configured. This is labelled deterministic fallback, not a successful external AI call.',
+    'The case remains in the queue as High. Staff can read the original request and the score breakdown.',
     2600,
   );
   const duplicate = page
     .locator('.recommendation')
     .filter({ has: page.locator(`a[href="/staff/cases/${candidate.id}"]`) });
+  await page.getByText('Potential duplicates (1)', { exact: true }).click();
   await duplicate.scrollIntoViewIfNeeded();
   await caption(
     'A possible duplicate uses token similarity. Staff review it; the other request is preserved.',
   );
   await duplicate.getByRole('button', { name: 'Distinct', exact: true }).click();
-  await page.getByLabel('Final priority for modification', { exact: true }).selectOption('High');
-  await page
-    .getByLabel('Decision / override reason', { exact: true })
-    .fill('Staff confirmed an elderly household member needs priority support.');
-  await page.getByRole('button', { name: 'Modify', exact: true }).click();
-  await caption(
-    'Human override is recorded with a reason. Case approval is a separate authorised decision.',
-  );
+  await caption('Case approval is a separate authorised staff decision.');
   await page.getByRole('button', { name: 'Approve case', exact: true }).click();
   await switchAccount('logistics');
   await page.goto(`${site}/staff/cases/${foodId}`);
