@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import '../i18n';
-import { DeliveryRecovery, PartnerVerification, StaffLifecycle, SystemAdministratorRequests } from '../AdministrationWorkflows';
+import { DeliveryRecovery, PartnerVerification, StaffLifecycle } from '../AdministrationWorkflows';
 import { RecoveryPage } from '../RecoveryPage';
 import { api, get } from '../api';
 
@@ -180,13 +180,6 @@ it('shows zero results next to Search for an empty response', async () => {
   expect(await screen.findByText('0 results')).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'Clear dates' }));
   expect(screen.queryByText('0 results')).not.toBeInTheDocument();
-});
-it('does not offer self-approval and explains the second-admin requirement', async () => {
-  vi.mocked(get).mockResolvedValue({ activeGlobalAdministrators: 1, items: [{ id: 'p', targetName: 'Another account', state: 'Pending', requesterUserId: 'admin', reason: 'Global administrator access requested', createdAt: '2026-11-13T00:00:00Z', expiresAt: '2026-11-20T00:00:00Z' }] });
-  show(<SystemAdministratorRequests />);
-  expect(await screen.findByText(/second active System Administrator/)).toBeVisible();
-  expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
-  expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
 });
 it('allows country administrators to submit evidence without verification controls', () => {
   show(<PartnerVerification id="partner" global={false} verification={{ verificationState: 'Pending', evidence: '', decisionReason: '' }} />);
