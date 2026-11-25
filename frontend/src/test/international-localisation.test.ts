@@ -6,8 +6,8 @@ it('covers the existing catalogue in Nepali and Hindi and preserves interpolatio
   for (const catalog of [ne, hi])
     for (const [key, value] of Object.entries(english)) {
       expect(catalog[key], key).toBeTruthy();
-      expect(catalog[key].match(/\{\{.*?\}\}/g) || [], key).toEqual(
-        value.match(/\{\{.*?\}\}/g) || [],
+      expect((catalog[key].match(/\{\{.*?\}\}/g) || []).sort(), key).toEqual(
+        (value.match(/\{\{.*?\}\}/g) || []).sort(),
       );
     }
 });
