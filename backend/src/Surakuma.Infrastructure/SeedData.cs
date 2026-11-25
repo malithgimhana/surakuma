@@ -12,7 +12,8 @@ public static class SeedData
         foreach (var role in Roles.All)
         if (!await roles.RoleExistsAsync(role))
             await roles.CreateAsync(new IdentityRole(role));
-        if (await db.Set<Organisation>().AnyAsync())
+        // An administrator-only workspace is already initialized, even before its first organisation.
+        if (await db.Set<Organisation>().AnyAsync() || await users.Users.AnyAsync(u => u.IsSystemAdministrator))
             return;
         await using var transaction = await db.Database.BeginTransactionAsync();
         string password = config["Seed:Password"] ?? throw new InvalidOperationException("Set Seed:Password in development configuration.");
