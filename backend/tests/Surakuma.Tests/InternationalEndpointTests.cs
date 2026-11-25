@@ -62,7 +62,7 @@ public sealed class InternationalEndpointTests(ApiFixture fixture) : IClassFixtu
             var resource = new Resource { CountryCode = "NP", OrganisationId = organisationId, Category = AidCategory.FoodWater, Name = "Scoped stock", Unit = "packs", Stock = 5 };
             if (!await db.Set<OrganisationCountry>().AnyAsync(x => x.OrganisationId == organisationId && x.CountryCode == "NP")) db.Add(new OrganisationCountry { OrganisationId = organisationId, CountryCode = "NP", VerificationState = "Verified" });
             db.AddRange(crisis, foreign, request, other, resource);
-            db.Add(new Membership { CountryCode = "NP", CrisisId = crisis.Id, OrganisationId = organisationId, UserId = user.Id, Role = Roles.Coordinator });
+            db.Add(new Membership { CountryCode = "NP", CrisisId = crisis.Id, OrganisationId = organisationId, UserId = user.Id, Role = Roles.Logistics });
             await db.SaveChangesAsync(); requestId = request.Id; foreignRequestId = other.Id; resourceId = resource.Id;
         }
         using var staff = await fixture.Login("shelter");
@@ -80,16 +80,17 @@ public sealed class InternationalEndpointTests(ApiFixture fixture) : IClassFixtu
     public async Task ScopedGrantRevocationAndCountryAlertPolicyApplyImmediately()
     {
         using var admin = await fixture.Login("admin");
-        Guid organisationId, np, india;
+        var organisation = await admin.PostAsJsonAsync("/api/v1/admin/organisations", new { name = "Nepal grant partner", countryCode = "NP" });
+        organisation.EnsureSuccessStatusCode();
+        var organisationId = (await organisation.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+        Guid np, india;
         using (var scope = fixture.Factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
-            organisationId = await db.Set<Membership>().Where(x => x.Role == Roles.Logistics).Select(x => x.OrganisationId!.Value).FirstAsync();
             var nepal = new Crisis { Name = "Nepal grant journey", CountryCode = "NP" };
             var indian = new Crisis { Name = "India grant journey", CountryCode = "IN" };
             db.AddRange(nepal, indian); await db.SaveChangesAsync(); np = nepal.Id; india = indian.Id;
         }
-        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsync($"/api/v1/admin/organisations/{organisationId}/countries/NP", null)).StatusCode);
         (await admin.PostAsJsonAsync($"/api/v1/admin/organisations/{organisationId}/countries/NP/verification", new { evidence = "Test registration reviewed", decision = "Verified", reason = "Acceptance fixture" })).EnsureSuccessStatusCode();
         var grant = await admin.PostAsJsonAsync("/api/v1/admin/users", new { email = "logistics@surakuma.test", password = fixture.Password, name = "Logistics", organisationId, role = "Coordinator", countryCode = "NP", crisisId = np });
         grant.EnsureSuccessStatusCode();
@@ -203,7 +204,7 @@ public sealed class InternationalEndpointTests(ApiFixture fixture) : IClassFixtu
     }
 
     [Fact]
-    public async Task PartnerDirectoryReportsEnablementAndActivePrimaryCrisesByCountry()
+    public async Task PartnerDirectoryReportsActivePrimaryCrisesAndOnlyRestoresOriginalRegistration()
     {
         using var admin = await fixture.Login("admin");
         var created = await admin.PostAsJsonAsync("/api/v1/admin/organisations", new { name = "Directory test partner", countryCode = "LK" });
@@ -219,17 +220,21 @@ public sealed class InternationalEndpointTests(ApiFixture fixture) : IClassFixtu
         Assert.True((await Entry("LK")).GetProperty("enabled").GetBoolean());
         var nepalBefore = await admin.GetFromJsonAsync<JsonElement>("/api/v1/admin/organisations?countryCode=NP");
         Assert.DoesNotContain(nepalBefore.EnumerateArray(), x => x.GetProperty("id").GetGuid() == partner);
-        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsync($"/api/v1/admin/organisations/{partner}/countries/NP", null)).StatusCode);
+        var registration = $"/api/v1/admin/organisations/{partner}/countries";
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PutAsync(registration + "/NP", null)).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.DeleteAsync(registration + "/LK")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PutAsync(registration + "/NP", null)).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.PutAsync(registration + "/LK", null)).StatusCode);
+        Assert.Equal("Pending", (await Entry("LK")).GetProperty("verification").GetProperty("verificationState").GetString());
 
         using var scope = fixture.Factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
-        var crisis = new Crisis { Name = "Directory routing test", CountryCode = "NP", Active = true, PrimaryOrganisationId = partner };
+        var crisis = new Crisis { Name = "Directory routing test", CountryCode = "LK", Active = true, PrimaryOrganisationId = partner };
         db.Add(crisis);
-        db.Add(new Crisis { Name = "Closed directory test", CountryCode = "NP", Active = false, PrimaryOrganisationId = partner });
+        db.Add(new Crisis { Name = "Closed directory test", CountryCode = "LK", Active = false, PrimaryOrganisationId = partner });
         await db.SaveChangesAsync();
-        var nepal = await Entry("NP");
-        Assert.True(nepal.GetProperty("enabled").GetBoolean());
-        Assert.Equal(crisis.Id, Assert.Single(nepal.GetProperty("primaryCrises").EnumerateArray()).GetProperty("id").GetGuid());
-        Assert.Empty((await Entry("LK")).GetProperty("primaryCrises").EnumerateArray());
+        Assert.Equal(crisis.Id, Assert.Single((await Entry("LK")).GetProperty("primaryCrises").EnumerateArray()).GetProperty("id").GetGuid());
+        var nepalAfter = await admin.GetFromJsonAsync<JsonElement>("/api/v1/admin/organisations?countryCode=NP");
+        Assert.DoesNotContain(nepalAfter.EnumerateArray(), x => x.GetProperty("id").GetGuid() == partner);
     }
 }
