@@ -50,7 +50,7 @@ public sealed class AdminOverviewTests(ApiFixture fixture) : IClassFixture<ApiFi
             var code = countries[i];
             var dashboard = await admin.GetFromJsonAsync<JsonElement>($"/api/v1/admin/overview?countryCode={code}");
             Assert.Equal(code, dashboard.GetProperty("countryCode").GetString());
-            Assert.Equal(1, dashboard.GetProperty("systemAccess").GetProperty("count").GetInt32());
+            Assert.False(dashboard.TryGetProperty("systemAccess", out _));
             Assert.Equal(i == 1 ? 1 : 0, dashboard.GetProperty("partnerVerification").GetProperty("count").GetInt32());
             Assert.Equal(i == 0 ? 0 : 1, dashboard.GetProperty("stock").GetProperty("belowThreshold").GetInt32());
             Assert.Equal(i == 2 ? 1 : 0, dashboard.GetProperty("stock").GetProperty("outOfStock").GetInt32());
@@ -92,7 +92,7 @@ public sealed class AdminOverviewTests(ApiFixture fixture) : IClassFixture<ApiFi
         Assert.Equal(HttpStatusCode.Forbidden, (await national.GetAsync("/api/v1/admin/overview?countryCode=IN")).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await national.GetAsync("/api/v1/admin/alerts?countryCode=IN&includeGlobal=true")).StatusCode);
         var nationalOverview = await national.GetFromJsonAsync<JsonElement>("/api/v1/admin/overview?countryCode=NP");
-        Assert.Equal(JsonValueKind.Null, nationalOverview.GetProperty("systemAccess").ValueKind);
+        Assert.False(nationalOverview.TryGetProperty("systemAccess", out _));
         var comparison = await national.GetFromJsonAsync<JsonElement>("/api/v1/admin/reports?scope=all");
         Assert.Equal("NP", Assert.Single(comparison.GetProperty("countries").EnumerateArray()).GetProperty("countryCode").GetString());
         var nationalAlerts = await national.GetFromJsonAsync<JsonElement>("/api/v1/admin/alerts?countryCode=NP&includeGlobal=true");
