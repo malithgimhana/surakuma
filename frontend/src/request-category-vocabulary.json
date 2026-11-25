@@ -1,0 +1,66 @@
+[
+  {
+    "category": "FoodWater",
+    "signal": "food, drinking water or essential supplies",
+    "terms": [
+      "food", "meals", "rice", "groceries", "drinking water", "clean water", "bottled water",
+      "ආහාර", "කෑම", "බත්", "පානීය ජල", "බොන්න වතුර", "කන්න බොන්න", "කන්න දෙයක්", "බොන්න දෙයක්",
+      "உணவு", "அரிசி", "குடிநீர்",
+      "भोजन", "खाना", "चावल", "पीने का पानी",
+      "खानेकुरा", "चामल", "पिउने पानी"
+    ]
+  },
+  {
+    "category": "Medical",
+    "signal": "medicine or medical support",
+    "terms": [
+      "medicine", "medication", "prescription", "insulin", "medical",
+      "බෙහෙත්", "ඖෂධ", "වෛද්‍ය", "மருந்து", "மருத்துவ",
+      "दवा", "औषधि", "चिकित्सा", "बिरामी", "औषधी", "उपचार"
+    ]
+  },
+  {
+    "category": "Shelter",
+    "signal": "temporary place to stay",
+    "terms": [
+      "shelter", "place to stay", "place to sleep", "nowhere to stay", "nowhere to sleep", "temporary housing",
+      "නවාතැන්", "ඉන්න තැනක්", "தங்குமிடம்", "தங்க இட",
+      "आश्रय", "रहने की जगह", "बस्ने ठाउँ", "आवास"
+    ]
+  },
+  {
+    "category": "Transportation",
+    "signal": "help travelling or evacuating",
+    "terms": [
+      "transport", "evacuat", "ride to", "vehicle", "pickup",
+      "ප්‍රවාහන", "වාහනයක්", "போக்குவரத்து", "வாகனம்",
+      "वाहन", "परिवहन", "निकासी", "यातायात", "उद्धार"
+    ]
+  },
+  {
+    "category": "Accessibility",
+    "signal": "accessibility or communication assistance",
+    "terms": [
+      "wheelchair", "sign language", "accessible", "step-free", "ramp", "accessibility",
+      "රෝද පුටු", "සංඥා භාෂ", "சக்கர நாற்காலி", "சைகை மொழி",
+      "व्हीलचेयर", "सांकेतिक भाषा", "पहुँच", "ह्वीलचेयर"
+    ]
+  },
+  {
+    "category": "FoodWater",
+    "signal": "essential supplies",
+    "terms": [
+      "blanket", "clothes", "clothing", "hygiene",
+      "බ්ලැන්කට්", "ඇඳුම්", "போர்வை", "ஆடை",
+      "कंबल", "कपड़े", "कम्बल", "लुगा"
+    ]
+  },
+  {
+    "category": "Other",
+    "signal": "charging or electricity assistance",
+    "terms": [
+      "charge my phone", "charging", "power supply", "electricity",
+      "විදුලිය", "மின்சாரம்", "बिजली", "बिजुली"
+    ]
+  }
+]

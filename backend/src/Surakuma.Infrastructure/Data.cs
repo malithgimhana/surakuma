@@ -1,4 +1,5 @@
 using System.Data;
+using System.Globalization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
@@ -53,6 +54,8 @@ public sealed class CrisisDbContext(DbContextOptions<CrisisDbContext> options) :
                     e.Property(p.Name).HasConversion<string>().HasMaxLength(50);
             }
         }
+        ConfigurePublicReferences(b);
+        b.Entity<SecurityEmail>().Property(e => e.ProtectedToken).HasMaxLength(-1);
         b.Entity<Membership>().HasQueryFilter(m => !m.Suspended && m.Role != StaffRoles.Administrator
             && Users.Any(u => u.Id == m.UserId && !u.Disabled)
             && (m.Role == StaffRoles.CountryAdministrator || !Set<OrganisationCountry>().IgnoreQueryFilters().Any(link =>
@@ -73,6 +76,22 @@ public sealed class CrisisDbContext(DbContextOptions<CrisisDbContext> options) :
         b.Entity<Depot>().HasOne<Country>().WithMany().HasForeignKey(x => x.CountryCode).HasPrincipalKey(x => x.Code).OnDelete(DeleteBehavior.Restrict);
         Fk<Depot, Organisation>(b, nameof(Depot.OrganisationId));
         Fk<Resource, Depot>(b, nameof(Resource.DepotId));
+        Fk<Membership, Depot>(b, nameof(Membership.DepotId));
+        Fk<CaseNeed, AssistanceRequest>(b, nameof(CaseNeed.RequestId));
+        b.Entity<CaseNeed>().Property(n => n.DeliveredQuantity).HasPrecision(18, 5);
+        Fk<ResourceAllocation, CaseNeed>(b, nameof(ResourceAllocation.NeedId));
+        Fk<AssistanceRequest, Depot>(b, nameof(AssistanceRequest.HandoverCentreId));
+        Fk<CaseDispatch, Depot>(b, nameof(CaseDispatch.CentreId));
+        Fk<CaseDispatch, AssistanceRequest>(b, nameof(CaseDispatch.RequestId));
+        Fk<ResourceAllocation, CaseDispatch>(b, nameof(ResourceAllocation.CaseDispatchId));
+        Fk<VolunteerTask, CaseDispatch>(b, nameof(VolunteerTask.CaseDispatchId));
+        b.Entity<ResourceAllocation>().Property(x => x.CentreReceivedQuantity).HasPrecision(18, 2);
+        b.Entity<ResourceAllocation>().Property(x => x.CitizenReceivedQuantity).HasPrecision(18, 2);
+        b.Entity<VolunteerTaskEvent>().Property(x => x.HandoverQuantitiesJson).HasMaxLength(-1);
+        b.Entity<CaseNeed>().ToTable(t => t.HasCheckConstraint("CK_CaseNeed_Quantities",
+            "[RequiredQuantity] > 0 AND [ApprovedQuantity] > 0 AND [DeliveredQuantity] >= 0 AND [DeliveredQuantity] <= [ApprovedQuantity]"));
+        b.Entity<LogisticsPreferences>().HasIndex(p => p.UserId).IsUnique();
+        b.Entity<LogisticsPreferences>().HasOne<AppUser>().WithMany().HasForeignKey(p => p.UserId).OnDelete(DeleteBehavior.Restrict);
         b.Entity<Resource>().Property(x => x.Code).HasMaxLength(40);
         b.Entity<Resource>().Property(x => x.LowStockThreshold).HasPrecision(18, 2);
         b.Entity<Resource>().HasIndex(x => x.CountryCode);
@@ -113,12 +132,14 @@ public sealed class CrisisDbContext(DbContextOptions<CrisisDbContext> options) :
         b.Entity<AssistanceRequest>().Property(x => x.SubmissionKey).HasMaxLength(100);
         b.Entity<AssistanceRequest>().Property(x => x.CitizenId).HasMaxLength(450);
         b.Entity<AssistanceRequest>().Property(x => x.AssignedCaseManagerId).HasMaxLength(450);
-        b.Entity<AssistanceRequest>().Property(x => x.Reference).HasMaxLength(30);
         b.Entity<AssistanceRequest>().Property(x => x.Unit).HasMaxLength(32);
         b.Entity<AssistanceRequest>().Property(x => x.DeliveredQuantity).HasPrecision(21, 5);
+        b.Entity<AssistanceRequest>().Property(x => x.IntakeScore).HasPrecision(4, 1);
+        b.Entity<AssistanceRequest>().Property(x => x.PriorityScore).HasPrecision(4, 1);
+        b.Entity<AssistanceRequest>().Property(x => x.AssessmentState).HasMaxLength(20);
+        b.Entity<AssistanceRequest>().HasIndex(x => x.NextPriorityEscalationAt).HasFilter("[NextPriorityEscalationAt] IS NOT NULL");
         b.Entity<ResourceAllocation>().Property(x => x.RequestQuantity).HasPrecision(21, 5);
         b.Entity<AssistanceRequest>().HasIndex(x => new { x.CitizenId, x.SubmissionKey }).IsUnique();
-        b.Entity<AssistanceRequest>().HasIndex(x => x.Reference).IsUnique();
         b.Entity<AssistanceRequest>().HasIndex(x => new { x.CrisisId, x.Status, x.Priority });
         b.Entity<Membership>().Property(x => x.UserId).HasMaxLength(450);
         b.Entity<Membership>().Property(x => x.Role).HasMaxLength(50);
@@ -134,8 +155,19 @@ public sealed class CrisisDbContext(DbContextOptions<CrisisDbContext> options) :
         b.Entity<Household>().HasIndex(x => x.UserId).IsUnique();
         b.Entity<VolunteerProfile>().Property(x => x.UserId).HasMaxLength(450);
         b.Entity<VolunteerProfile>().HasIndex(x => x.UserId).IsUnique();
+        Fk<VolunteerProfile, AssistanceRequest>(b, nameof(VolunteerProfile.TaskRequestId));
+        Fk<VolunteerProfile, CaseDispatch>(b, nameof(VolunteerProfile.TaskDispatchId));
         b.Entity<Notification>().Property(x => x.UserId).HasMaxLength(450);
         b.Entity<Notification>().HasIndex(x => new { x.EventId, x.UserId }).IsUnique();
+        b.Entity<Notification>().HasIndex(x => new { x.UserId, x.CreatedAt });
+        b.Entity<AssistanceCentre>().HasIndex(x => new { x.CountryCode, x.Published });
+        b.Entity<VolunteerAvailabilityWindow>().HasIndex(x => new { x.UserId, x.StartsAt });
+        b.Entity<BrowserPushSubscription>().Property(x => x.EndpointHash).HasMaxLength(64);
+        b.Entity<BrowserPushSubscription>().HasIndex(x => x.EndpointHash).IsUnique();
+        b.Entity<BrowserPushSubscription>().HasIndex(x => x.UserId);
+        b.Entity<BrowserPushDelivery>().HasIndex(x => new { x.SubscriptionId, x.NotificationId }).IsUnique();
+        b.Entity<BrowserPushDelivery>().HasOne<BrowserPushSubscription>().WithMany().HasForeignKey(x => x.SubscriptionId);
+        b.Entity<BrowserPushDelivery>().HasOne<Notification>().WithMany().HasForeignKey(x => x.NotificationId);
         b.Entity<Notification>().Property(x => x.ScopeCountryCode).HasMaxLength(2).IsUnicode(false);
         b.Entity<Notification>().Property(x => x.ScopeRole).HasMaxLength(50);
         b.Entity<PartnerContribution>().Property(x => x.CountryCode).HasMaxLength(2).IsUnicode(false);
@@ -148,6 +180,17 @@ public sealed class CrisisDbContext(DbContextOptions<CrisisDbContext> options) :
         b.Entity<NotificationDelivery>().Property(x => x.RecipientId).HasMaxLength(450);
         b.Entity<NotificationDelivery>().HasIndex(x => new { x.EventId, x.RecipientId }).IsUnique();
         b.Entity<PotentialDuplicate>().HasIndex(x => new { x.RequestId, x.CandidateId }).IsUnique();
+        b.Entity<RequestAnalysisJob>().Property(x => x.State).HasMaxLength(32);
+        b.Entity<RequestAnalysisJob>().HasIndex(x => x.RequestId).IsUnique();
+        b.Entity<RequestAnalysisJob>().HasIndex(x => new { x.State, x.AvailableAt });
+        b.Entity<RequestEmbedding>().HasIndex(x => x.RequestId).IsUnique();
+        b.Entity<RequestEmbedding>().Property(x => x.Vector).HasMaxLength(1024);
+        b.Entity<AiInvocation>().Property(x => x.EstimatedUsd).HasPrecision(18, 8);
+        b.Entity<CaseMessageDraft>().HasIndex(x => new { x.RequestId, x.CreatedAt });
+        Fk<CaseMessageDraft, AssistanceRequest>(b, nameof(CaseMessageDraft.RequestId));
+        Fk<RequestAnalysisJob, AssistanceRequest>(b, nameof(RequestAnalysisJob.RequestId));
+        Fk<RequestEmbedding, AssistanceRequest>(b, nameof(RequestEmbedding.RequestId));
+        Fk<VolunteerProfile, AdministrativeDivision>(b, nameof(VolunteerProfile.ServiceRegionId));
         b.Entity<OutboxMessage>().HasIndex(x => new { x.State, x.NextAttemptAt });
         b.Entity<OutboxMessage>().Property(x => x.FundingCountryCode).HasMaxLength(2).IsUnicode(false);
         b.Entity<OutboxMessage>().HasOne<Country>().WithMany().HasForeignKey(x => x.FundingCountryCode)
@@ -194,9 +237,17 @@ public sealed class CrisisDbContext(DbContextOptions<CrisisDbContext> options) :
         Fk<VolunteerTaskEvent, VolunteerTask>(b, nameof(VolunteerTaskEvent.TaskId));
         b.Entity<VolunteerTaskEvent>().HasIndex(x => new { x.TaskId, x.CreatedAt });
         Fk<PublicAlert, Crisis>(b, nameof(PublicAlert.CrisisId));
+        b.Entity<PublicAlert>().Property(x => x.VisualSummary).HasMaxLength(360);
+        b.Entity<PublicAlert>().Property(x => x.PopupDescription).HasMaxLength(480);
+        b.Entity<PublicAlert>().Property(x => x.VisualKind).HasMaxLength(24);
+        b.Entity<PublicAlert>().Property(x => x.VisualImageUrl).HasMaxLength(240);
+        b.Entity<PublicAlertVisual>().HasIndex(x => x.AlertId).IsUnique();
+        b.Entity<PublicAlertVisual>().HasIndex(x => new { x.Completed, x.AvailableAt });
+        Fk<PublicAlertVisual, PublicAlert>(b, nameof(PublicAlertVisual.AlertId));
         Fk<Notification, AppUser>(b, nameof(Notification.UserId));
         Fk<Feedback, AssistanceRequest>(b, nameof(Feedback.RequestId));
         Fk<Feedback, AppUser>(b, nameof(Feedback.UserId));
+        b.Entity<Feedback>().HasIndex(x => new { x.RequestId, x.UserId }).IsUnique().HasFilter("[IsSuperseded] = 0");
         ConfigureFunding(b);
         ConfigureDecisionSupport(b);
         ConfigureSupplySupport(b);
@@ -211,6 +262,7 @@ public sealed class CrisisDbContext(DbContextOptions<CrisisDbContext> options) :
         Fk<SupplyRequest, Shelter>(b, nameof(SupplyRequest.ShelterId));
         Fk<SupplyRequest, AssistanceRequest>(b, nameof(SupplyRequest.CaseId));
         Fk<SupplyRequest, Crisis>(b, nameof(SupplyRequest.CrisisId));
+        Fk<SupplyRequest, Resource>(b, nameof(SupplyRequest.DestinationResourceId));
         b.Entity<SupplyRequest>().HasIndex(x => new { x.CountryCode, x.RequestingOrganisationId, x.CreatedAt });
         b.Entity<SupplyRequest>().HasIndex(x => new { x.CountryCode, x.TargetOrganisationId, x.CreatedAt });
         b.Entity<SupplyRequest>().ToTable(t => t.HasCheckConstraint("CK_SupplyRequest_Balance",
@@ -285,12 +337,57 @@ public sealed class CrisisDbContext(DbContextOptions<CrisisDbContext> options) :
         b.Entity<DonationAllocation>().ToTable(t => t.HasCheckConstraint("CK_DonationAllocation_Amount", "[Amount] > 0"));
         b.Entity<DonationExpenditure>().ToTable(t => t.HasCheckConstraint("CK_DonationExpenditure_Amount", "[Amount] > 0"));
     }
-    private static void Fk<T, TParent>(ModelBuilder b, string field) where T : class where TParent : class => b.Entity<T>().HasOne<TParent>().WithMany().HasForeignKey(field).OnDelete(DeleteBehavior.Restrict);
-    public override Task<int> SaveChangesAsync(CancellationToken ct = default)
+    private static void ConfigurePublicReferences(ModelBuilder builder)
     {
-        foreach (var entry in ChangeTracker.Entries<Record>().Where(x => x.State == EntityState.Modified))
-            entry.Entity.UpdatedAt = DateTimeOffset.UtcNow;
-        return base.SaveChangesAsync(ct);
+        foreach (var prefix in new[] { "SK", "RES", "DSP", "TRF", "SR" })
+            builder.HasSequence<long>(prefix + "ReferenceNumbers", "dbo").StartsAt(1001);
+
+        foreach (var type in new[] { typeof(AssistanceRequest), typeof(Resource), typeof(ResourceAllocation), typeof(LogisticsOrder), typeof(SupplyRequest), typeof(CaseDispatch) })
+        {
+            builder.Entity(type).Property<string>(nameof(AssistanceRequest.Reference)).HasMaxLength(30);
+            builder.Entity(type).HasIndex(nameof(AssistanceRequest.Reference)).IsUnique();
+        }
+        builder.Entity<AssistanceRequest>().Property(r => r.LegacyReference).HasMaxLength(30);
+        builder.Entity<AssistanceRequest>().HasIndex(r => r.LegacyReference).IsUnique();
+        builder.Entity<SupplyRequest>().Property(r => r.LegacyReference).HasMaxLength(30);
+    }
+
+    private static void Fk<T, TParent>(ModelBuilder b, string field) where T : class where TParent : class => b.Entity<T>().HasOne<TParent>().WithMany().HasForeignKey(field).OnDelete(DeleteBehavior.Restrict);
+    public override Task<int> SaveChangesAsync(CancellationToken ct = default) => SaveChangesAsync(true, ct);
+
+    public override async Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken ct = default)
+    {
+        foreach (var entry in ChangeTracker.Entries<Record>())
+        {
+            if (entry.State == EntityState.Modified)
+                entry.Entity.UpdatedAt = DateTimeOffset.UtcNow;
+            if (entry.State != EntityState.Added)
+                continue;
+
+            var prefix = entry.Entity switch
+            {
+                AssistanceRequest => "SK",
+                Resource => "RES",
+                ResourceAllocation => "DSP",
+                CaseDispatch => "DSP",
+                LogisticsOrder { Kind: LogisticsOrderKind.Transfer } => "TRF",
+                LogisticsOrder => "DSP",
+                SupplyRequest => "SR",
+                _ => null,
+            };
+            if (prefix is null)
+                continue;
+
+            var reference = entry.Property<string>(nameof(AssistanceRequest.Reference));
+            if (string.IsNullOrEmpty(reference.CurrentValue))
+            {
+                // Prefixes come from the entity types above. SQL Server allocates each number atomically.
+                var sql = "SELECT NEXT VALUE FOR [dbo].[" + prefix + "ReferenceNumbers] AS [Value]";
+                var values = await Database.SqlQueryRaw<long>(sql).ToListAsync(ct);
+                reference.CurrentValue = prefix + "-" + values.Single().ToString(CultureInfo.InvariantCulture);
+            }
+        }
+        return await base.SaveChangesAsync(acceptAllChangesOnSuccess, ct);
     }
 }
 public sealed class EfStore(CrisisDbContext db) : IStore
@@ -300,6 +397,7 @@ public sealed class EfStore(CrisisDbContext db) : IStore
     public Task<List<T>> ListAsync<T>(IQueryable<T> query, CancellationToken ct = default) => query.ToListAsync(ct);
     public async Task<T?> FindAsync<T>(Guid id, CancellationToken ct = default) where T : Record => await db.Set<T>().FindAsync([id], ct);
     public void Add<T>(T entity) where T : Record => db.Add(entity);
+    public void Remove<T>(T entity) where T : Record => db.Remove(entity);
     public async Task SaveAsync(CancellationToken ct = default) => await db.SaveChangesAsync(ct);
     public async Task<T> TransactionAsync<T>(Func<Task<T>> operation, CancellationToken ct = default)
     {
@@ -309,16 +407,21 @@ public sealed class EfStore(CrisisDbContext db) : IStore
         await tx.CommitAsync(ct);
         return result;
     }
-    public async Task<T> RoutingTransactionAsync<T>(Func<Task<T>> operation, CancellationToken ct = default)
+    public Task<T> RoutingTransactionAsync<T>(Func<Task<T>> operation, CancellationToken ct = default) =>
+        LockedTransactionAsync("Surakuma.RequestRouting", operation, ct);
+
+    public Task<T> FeedbackTransactionAsync<T>(Guid requestId, Func<Task<T>> operation, CancellationToken ct = default) =>
+        LockedTransactionAsync($"Surakuma.Feedback.{requestId:N}", operation, ct);
+
+    private async Task<T> LockedTransactionAsync<T>(string resource, Func<Task<T>> operation, CancellationToken ct)
     {
-        // Serialise routing decisions before any reads, so concurrent submissions cannot
-        // deadlock while upgrading shared locks or select from the same stale workload.
+        // Acquire the application lock before reads so callers make decisions against committed state.
         for (int attempt = 0; ; attempt++)
         {
             try
             {
                 await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
-                await db.Database.ExecuteSqlRawAsync("DECLARE @result int; EXEC @result = sp_getapplock @Resource = 'Surakuma.RequestRouting', @LockMode = 'Exclusive', @LockOwner = 'Transaction', @LockTimeout = 30000; IF @result < 0 THROW 51001, 'Could not acquire request routing lock.', 1;", ct);
+                await db.Database.ExecuteSqlInterpolatedAsync($"DECLARE @result int; EXEC @result = sp_getapplock @Resource = {resource}, @LockMode = 'Exclusive', @LockOwner = 'Transaction', @LockTimeout = 30000; IF @result < 0 THROW 51001, 'Could not acquire the request operation lock.', 1;", ct);
                 var result = await operation();
                 await db.SaveChangesAsync(ct);
                 await tx.CommitAsync(ct);
@@ -336,5 +439,6 @@ public sealed class EfStore(CrisisDbContext db) : IStore
 public sealed class CurrentActor(IHttpContextAccessor context) : ICurrentActor
 {
     public string? SelectedCountry => context.HttpContext?.Request.Query["countryCode"].FirstOrDefault();
+    public string? SelectedStaffRole => context.HttpContext?.Request.Query["staffRole"].FirstOrDefault();
     public string Id => context.HttpContext?.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? throw new AccessDeniedException();
 }

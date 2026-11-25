@@ -22,6 +22,21 @@ namespace Surakuma.Infrastructure.Migrations
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
+            modelBuilder.HasSequence("DSPReferenceNumbers", "dbo")
+                .StartsAt(1001L);
+
+            modelBuilder.HasSequence("RESReferenceNumbers", "dbo")
+                .StartsAt(1001L);
+
+            modelBuilder.HasSequence("SKReferenceNumbers", "dbo")
+                .StartsAt(1001L);
+
+            modelBuilder.HasSequence("SRReferenceNumbers", "dbo")
+                .StartsAt(1001L);
+
+            modelBuilder.HasSequence("TRFReferenceNumbers", "dbo")
+                .StartsAt(1001L);
+
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRole", b =>
                 {
                     b.Property<string>("Id")
@@ -329,6 +344,142 @@ namespace Surakuma.Infrastructure.Migrations
                     b.ToTable("AdministrativeDivision");
                 });
 
+            modelBuilder.Entity("Surakuma.Domain.AiInvocation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<decimal?>("EstimatedUsd")
+                        .HasPrecision(18, 8)
+                        .HasColumnType("decimal(18,8)");
+
+                    b.Property<string>("FallbackReason")
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<int?>("InputTokens")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Model")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<int?>("OutputTokens")
+                        .HasColumnType("int");
+
+                    b.Property<int>("ProcessingMs")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<string>("Task")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<byte[]>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("AiInvocation");
+                });
+
+            modelBuilder.Entity("Surakuma.Domain.AssistanceCentre", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("Accessible")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Address")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<int?>("Capacity")
+                        .HasColumnType("int");
+
+                    b.Property<string>("CountryCode")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid?>("DepotId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Facilities")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<double>("Latitude")
+                        .HasColumnType("float");
+
+                    b.Property<double>("Longitude")
+                        .HasColumnType("float");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<string>("OpeningHours")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<Guid>("OrganisationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("Published")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Services")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<byte[]>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CountryCode", "Published");
+
+                    b.ToTable("AssistanceCentre");
+                });
+
             modelBuilder.Entity("Surakuma.Domain.AssistanceRequest", b =>
                 {
                     b.Property<Guid>("Id")
@@ -343,6 +494,10 @@ namespace Surakuma.Infrastructure.Migrations
                     b.Property<Guid?>("AdministrativeDivisionId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<string>("AssessmentState")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
                     b.Property<string>("AssignedCaseManagerId")
                         .HasMaxLength(450)
                         .HasColumnType("nvarchar(450)");
@@ -351,6 +506,13 @@ namespace Surakuma.Infrastructure.Migrations
                         .IsRequired()
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");
+
+                    b.Property<DateTimeOffset?>("AuthorizedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("AuthorizedBy")
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
 
                     b.Property<string>("Category")
                         .IsRequired()
@@ -380,11 +542,29 @@ namespace Surakuma.Infrastructure.Migrations
                     b.Property<bool>("Escalated")
                         .HasColumnType("bit");
 
+                    b.Property<Guid?>("HandoverCentreId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<int>("HouseholdSize")
                         .HasColumnType("int");
 
+                    b.Property<bool>("ImmediateDanger")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("IntakeJson")
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<decimal?>("IntakeScore")
+                        .HasPrecision(4, 1)
+                        .HasColumnType("decimal(4,1)");
+
                     b.Property<double?>("Latitude")
                         .HasColumnType("float");
+
+                    b.Property<string>("LegacyReference")
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
 
                     b.Property<string>("LocationText")
                         .IsRequired()
@@ -394,6 +574,9 @@ namespace Surakuma.Infrastructure.Migrations
                     b.Property<double?>("Longitude")
                         .HasColumnType("float");
 
+                    b.Property<DateTimeOffset?>("NextPriorityEscalationAt")
+                        .HasColumnType("datetimeoffset");
+
                     b.Property<Guid?>("OrganisationId")
                         .HasColumnType("uniqueidentifier");
 
@@ -401,6 +584,10 @@ namespace Surakuma.Infrastructure.Migrations
                         .IsRequired()
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");
+
+                    b.Property<decimal?>("PriorityScore")
+                        .HasPrecision(4, 1)
+                        .HasColumnType("decimal(4,1)");
 
                     b.Property<decimal>("Quantity")
                         .HasPrecision(18, 2)
@@ -423,6 +610,12 @@ namespace Surakuma.Infrastructure.Migrations
                         .IsRequired()
                         .HasMaxLength(4000)
                         .HasColumnType("nvarchar(4000)");
+
+                    b.Property<bool>("RequiresCentreHandover")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("RequiresCoordinatorAuthorization")
+                        .HasColumnType("bit");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -455,6 +648,15 @@ namespace Surakuma.Infrastructure.Migrations
                     b.HasIndex("AdministrativeDivisionId");
 
                     b.HasIndex("AssignedCaseManagerId");
+
+                    b.HasIndex("HandoverCentreId");
+
+                    b.HasIndex("LegacyReference")
+                        .IsUnique()
+                        .HasFilter("[LegacyReference] IS NOT NULL");
+
+                    b.HasIndex("NextPriorityEscalationAt")
+                        .HasFilter("[NextPriorityEscalationAt] IS NOT NULL");
 
                     b.HasIndex("OrganisationId");
 
@@ -571,6 +773,107 @@ namespace Surakuma.Infrastructure.Migrations
                     b.ToTable("AuditEvent");
                 });
 
+            modelBuilder.Entity("Surakuma.Domain.BrowserPushDelivery", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("int");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset?>("NextAttemptAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid>("NotificationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<Guid>("SubscriptionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<byte[]>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NotificationId");
+
+                    b.HasIndex("SubscriptionId", "NotificationId")
+                        .IsUnique();
+
+                    b.ToTable("BrowserPushDelivery");
+                });
+
+            modelBuilder.Entity("Surakuma.Domain.BrowserPushSubscription", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("AuthSecret")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset>("EnabledAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Endpoint")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<string>("EndpointHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("PublicKey")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<byte[]>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EndpointHash")
+                        .IsUnique();
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("BrowserPushSubscription");
+                });
+
             modelBuilder.Entity("Surakuma.Domain.CaseConsolidation", b =>
                 {
                     b.Property<Guid>("Id")
@@ -615,6 +918,187 @@ namespace Surakuma.Infrastructure.Migrations
                     b.ToTable("CaseConsolidation", t =>
                         {
                             t.HasCheckConstraint("CK_CaseConsolidation_Distinct", "[OriginalRequestId] <> [PrimaryRequestId]");
+                        });
+                });
+
+            modelBuilder.Entity("Surakuma.Domain.CaseDispatch", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("CentreId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("DispatchedBy")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<string>("ReceiptNote")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<DateTimeOffset?>("ReceivedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("ReceivedBy")
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<string>("Reference")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
+                    b.Property<Guid>("RequestId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<byte[]>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CentreId");
+
+                    b.HasIndex("Reference")
+                        .IsUnique();
+
+                    b.HasIndex("RequestId");
+
+                    b.ToTable("CaseDispatch");
+                });
+
+            modelBuilder.Entity("Surakuma.Domain.CaseMessageDraft", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Audience")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<string>("Copy")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("CreatedByUserId")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("Language")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<DateTimeOffset?>("PublishedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid>("RequestId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("ReviewerUserId")
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<string>("StatusSnapshot")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<byte[]>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RequestId", "CreatedAt");
+
+                    b.ToTable("CaseMessageDraft");
+                });
+
+            modelBuilder.Entity("Surakuma.Domain.CaseNeed", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<decimal>("ApprovedQuantity")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<decimal>("DeliveredQuantity")
+                        .HasPrecision(18, 5)
+                        .HasColumnType("decimal(18,5)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<Guid>("RequestId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<decimal>("RequiredQuantity")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("Unit")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<byte[]>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RequestId");
+
+                    b.ToTable("CaseNeed", t =>
+                        {
+                            t.HasCheckConstraint("CK_CaseNeed_Quantities", "[RequiredQuantity] > 0 AND [ApprovedQuantity] > 0 AND [DeliveredQuantity] >= 0 AND [DeliveredQuantity] <= [ApprovedQuantity]");
                         });
                 });
 
@@ -1369,6 +1853,9 @@ namespace Surakuma.Infrastructure.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("datetimeoffset");
 
+                    b.Property<bool>("IsSuperseded")
+                        .HasColumnType("bit");
+
                     b.Property<bool>("Problem")
                         .HasColumnType("bit");
 
@@ -1397,9 +1884,11 @@ namespace Surakuma.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("RequestId");
-
                     b.HasIndex("UserId");
+
+                    b.HasIndex("RequestId", "UserId")
+                        .IsUnique()
+                        .HasFilter("[IsSuperseded] = 0");
 
                     b.ToTable("Feedback");
                 });
@@ -1697,6 +2186,13 @@ namespace Surakuma.Infrastructure.Migrations
                         .HasMaxLength(4000)
                         .HasColumnType("nvarchar(4000)");
 
+                    b.Property<DateTimeOffset?>("PackedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("PackedBy")
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
                     b.Property<decimal>("Quantity")
                         .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
@@ -1706,8 +2202,19 @@ namespace Surakuma.Infrastructure.Migrations
                         .HasMaxLength(4000)
                         .HasColumnType("nvarchar(4000)");
 
+                    b.Property<string>("Reference")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
+                    b.Property<bool>("RequiresPacking")
+                        .HasColumnType("bit");
+
                     b.Property<Guid>("ResourceId")
                         .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset?>("ScheduledArrivalAt")
+                        .HasColumnType("datetimeoffset");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -1731,12 +2238,58 @@ namespace Surakuma.Infrastructure.Migrations
 
                     b.HasIndex("OperationalAreaId");
 
+                    b.HasIndex("Reference")
+                        .IsUnique();
+
                     b.HasIndex("ResourceId");
 
                     b.ToTable("LogisticsOrder", t =>
                         {
                             t.HasCheckConstraint("CK_LogisticsOrder_Quantity", "[Quantity] > 0");
                         });
+                });
+
+            modelBuilder.Entity("Surakuma.Domain.LogisticsPreferences", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("AssignmentUpdates")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<bool>("DispatchUpdates")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("StockAlerts")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("SupplyUpdates")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<byte[]>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId")
+                        .IsUnique();
+
+                    b.ToTable("LogisticsPreferences");
                 });
 
             modelBuilder.Entity("Surakuma.Domain.Membership", b =>
@@ -1760,6 +2313,9 @@ namespace Surakuma.Infrastructure.Migrations
                         .HasColumnType("datetimeoffset");
 
                     b.Property<Guid?>("CrisisId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("DepotId")
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<Guid?>("OrganisationId")
@@ -1796,6 +2352,8 @@ namespace Surakuma.Infrastructure.Migrations
 
                     b.HasIndex("CountryCode");
 
+                    b.HasIndex("DepotId");
+
                     b.HasIndex("OrganisationId");
 
                     b.HasIndex("CrisisId", "CountryCode");
@@ -1812,6 +2370,13 @@ namespace Surakuma.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<Guid?>("AllocationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("CommunicationSource")
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("datetimeoffset");
 
@@ -1821,11 +2386,19 @@ namespace Surakuma.Infrastructure.Migrations
                     b.Property<Guid>("EventId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<string>("HindiMessage")
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
                     b.Property<bool>("IsInternal")
                         .HasColumnType("bit");
 
                     b.Property<string>("Message")
                         .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<string>("NepaliMessage")
                         .HasMaxLength(4000)
                         .HasColumnType("nvarchar(4000)");
 
@@ -1876,10 +2449,10 @@ namespace Surakuma.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("UserId");
-
                     b.HasIndex("EventId", "UserId")
                         .IsUnique();
+
+                    b.HasIndex("UserId", "CreatedAt");
 
                     b.ToTable("Notification");
                 });
@@ -2074,6 +2647,14 @@ namespace Surakuma.Infrastructure.Migrations
                     b.Property<int>("Attempts")
                         .HasColumnType("int");
 
+                    b.Property<string>("CommunicationSource")
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<string>("CopyLanguage")
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("datetimeoffset");
 
@@ -2099,6 +2680,10 @@ namespace Surakuma.Infrastructure.Migrations
 
                     b.Property<Guid>("RequestId")
                         .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("ReviewedCopy")
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
 
                     b.Property<string>("SinhalaMessage")
                         .IsRequired()
@@ -2278,6 +2863,10 @@ namespace Surakuma.Infrastructure.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("datetimeoffset");
 
+                    b.Property<string>("Model")
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
                     b.Property<string>("Reason")
                         .IsRequired()
                         .HasMaxLength(4000)
@@ -2351,6 +2940,10 @@ namespace Surakuma.Infrastructure.Migrations
                         .HasMaxLength(4000)
                         .HasColumnType("nvarchar(4000)");
 
+                    b.Property<string>("PopupDescription")
+                        .HasMaxLength(480)
+                        .HasColumnType("nvarchar(480)");
+
                     b.Property<bool>("Published")
                         .HasColumnType("bit");
 
@@ -2405,6 +2998,18 @@ namespace Surakuma.Infrastructure.Migrations
                         .ValueGeneratedOnAddOrUpdate()
                         .HasColumnType("rowversion");
 
+                    b.Property<string>("VisualImageUrl")
+                        .HasMaxLength(240)
+                        .HasColumnType("nvarchar(240)");
+
+                    b.Property<string>("VisualKind")
+                        .HasMaxLength(24)
+                        .HasColumnType("nvarchar(24)");
+
+                    b.Property<string>("VisualSummary")
+                        .HasMaxLength(360)
+                        .HasColumnType("nvarchar(360)");
+
                     b.Property<string>("WorkflowState")
                         .HasMaxLength(4000)
                         .HasColumnType("nvarchar(4000)");
@@ -2414,6 +3019,55 @@ namespace Surakuma.Infrastructure.Migrations
                     b.HasIndex("CrisisId");
 
                     b.ToTable("PublicAlert");
+                });
+
+            modelBuilder.Entity("Surakuma.Domain.PublicAlertVisual", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("AlertId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("int");
+
+                    b.Property<DateTimeOffset>("AvailableAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<bool>("Completed")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<bool>("DescriptionOnly")
+                        .HasColumnType("bit");
+
+                    b.Property<byte[]>("Image")
+                        .HasColumnType("varbinary(max)");
+
+                    b.Property<Guid?>("Lease")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<byte[]>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AlertId")
+                        .IsUnique();
+
+                    b.HasIndex("Completed", "AvailableAt");
+
+                    b.ToTable("PublicAlertVisual");
                 });
 
             modelBuilder.Entity("Surakuma.Domain.Recommendation", b =>
@@ -2469,8 +3123,19 @@ namespace Surakuma.Infrastructure.Migrations
                         .HasMaxLength(4000)
                         .HasColumnType("nvarchar(4000)");
 
+                    b.Property<string>("SignalsJson")
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("UrgencyFactorsJson")
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<int?>("UrgencyScore")
+                        .HasColumnType("int");
 
                     b.Property<byte[]>("Version")
                         .IsConcurrencyToken()
@@ -2483,6 +3148,97 @@ namespace Surakuma.Infrastructure.Migrations
                     b.HasIndex("RequestId");
 
                     b.ToTable("Recommendation");
+                });
+
+            modelBuilder.Entity("Surakuma.Domain.RequestAnalysisJob", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("int");
+
+                    b.Property<DateTimeOffset>("AvailableAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset?>("CompletedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<Guid?>("Lease")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("RequestId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<byte[]>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RequestId")
+                        .IsUnique();
+
+                    b.HasIndex("State", "AvailableAt");
+
+                    b.ToTable("RequestAnalysisJob");
+                });
+
+            modelBuilder.Entity("Surakuma.Domain.RequestEmbedding", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Model")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<Guid>("RequestId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<byte[]>("Vector")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("varbinary(1024)");
+
+                    b.Property<byte[]>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RequestId")
+                        .IsUnique();
+
+                    b.ToTable("RequestEmbedding");
                 });
 
             modelBuilder.Entity("Surakuma.Domain.RequestHistory", b =>
@@ -2583,6 +3339,11 @@ namespace Surakuma.Infrastructure.Migrations
                     b.Property<Guid>("OrganisationId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<string>("Reference")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
                     b.Property<decimal>("Reserved")
                         .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
@@ -2621,6 +3382,9 @@ namespace Surakuma.Infrastructure.Migrations
 
                     b.HasIndex("OrganisationId");
 
+                    b.HasIndex("Reference")
+                        .IsUnique();
+
                     b.HasIndex("AdministrativeDivisionId", "CountryCode");
 
                     b.HasIndex("CountryCode", "DepotId", "Code")
@@ -2644,12 +3408,38 @@ namespace Surakuma.Infrastructure.Migrations
                         .HasMaxLength(450)
                         .HasColumnType("nvarchar(450)");
 
+                    b.Property<Guid?>("CaseDispatchId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<decimal?>("CentreReceivedQuantity")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<decimal?>("CitizenReceivedQuantity")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid?>("NeedId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset?>("PackedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("PackedBy")
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
 
                     b.Property<decimal>("Quantity")
                         .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("Reference")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
 
                     b.Property<Guid>("RequestId")
                         .HasColumnType("uniqueidentifier");
@@ -2660,6 +3450,9 @@ namespace Surakuma.Infrastructure.Migrations
 
                     b.Property<Guid>("ResourceId")
                         .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset?>("ScheduledArrivalAt")
+                        .HasColumnType("datetimeoffset");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -2676,6 +3469,13 @@ namespace Surakuma.Infrastructure.Migrations
                         .HasColumnType("rowversion");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("CaseDispatchId");
+
+                    b.HasIndex("NeedId");
+
+                    b.HasIndex("Reference")
+                        .IsUnique();
 
                     b.HasIndex("RequestId");
 
@@ -2696,10 +3496,15 @@ namespace Surakuma.Infrastructure.Migrations
                     b.Property<DateTimeOffset>("ExpiresAt")
                         .HasColumnType("datetimeoffset");
 
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
                     b.Property<string>("ProtectedToken")
                         .IsRequired()
-                        .HasMaxLength(4000)
-                        .HasColumnType("nvarchar(4000)");
+                        .HasMaxLength(-1)
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("State")
                         .IsRequired()
@@ -2813,8 +3618,14 @@ namespace Surakuma.Infrastructure.Migrations
                     b.Property<bool>("Open")
                         .HasColumnType("bit");
 
+                    b.Property<DateTimeOffset?>("OperationalUpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
                     b.Property<Guid>("OrganisationId")
                         .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("PendingVerification")
+                        .HasColumnType("bit");
 
                     b.Property<int>("Reserved")
                         .HasColumnType("int");
@@ -2983,6 +3794,13 @@ namespace Surakuma.Infrastructure.Migrations
                     b.Property<Guid?>("CrisisId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<Guid?>("DestinationResourceId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("LegacyReference")
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
                     b.Property<decimal>("Quantity")
                         .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
@@ -2995,6 +3813,11 @@ namespace Surakuma.Infrastructure.Migrations
                     b.Property<decimal>("ReceivedQuantity")
                         .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("Reference")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
 
                     b.Property<Guid>("RequestingOrganisationId")
                         .HasColumnType("uniqueidentifier");
@@ -3025,6 +3848,11 @@ namespace Surakuma.Infrastructure.Migrations
 
                     b.HasIndex("CrisisId");
 
+                    b.HasIndex("DestinationResourceId");
+
+                    b.HasIndex("Reference")
+                        .IsUnique();
+
                     b.HasIndex("RequestingOrganisationId");
 
                     b.HasIndex("ShelterId");
@@ -3039,6 +3867,42 @@ namespace Surakuma.Infrastructure.Migrations
                         {
                             t.HasCheckConstraint("CK_SupplyRequest_Balance", "[Quantity] > 0 AND [ReceivedQuantity] BETWEEN 0 AND [Quantity] AND [RequestingOrganisationId] <> [TargetOrganisationId] AND ([ShelterId] IS NULL OR [CaseId] IS NULL)");
                         });
+                });
+
+            modelBuilder.Entity("Surakuma.Domain.VolunteerAvailabilityWindow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset>("EndsAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset>("StartsAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<byte[]>("Version")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "StartsAt");
+
+                    b.ToTable("VolunteerAvailabilityWindow");
                 });
 
             modelBuilder.Entity("Surakuma.Domain.VolunteerProfile", b =>
@@ -3069,10 +3933,28 @@ namespace Surakuma.Infrastructure.Migrations
                     b.Property<Guid>("OrganisationId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<double?>("ServiceLatitude")
+                        .HasColumnType("float");
+
+                    b.Property<bool>("ServiceLocationConsent")
+                        .HasColumnType("bit");
+
+                    b.Property<double?>("ServiceLongitude")
+                        .HasColumnType("float");
+
+                    b.Property<Guid?>("ServiceRegionId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<string>("Skills")
                         .IsRequired()
                         .HasMaxLength(4000)
                         .HasColumnType("nvarchar(4000)");
+
+                    b.Property<Guid?>("TaskDispatchId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("TaskRequestId")
+                        .HasColumnType("uniqueidentifier");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("datetimeoffset");
@@ -3097,6 +3979,12 @@ namespace Surakuma.Infrastructure.Migrations
 
                     b.HasIndex("OrganisationId");
 
+                    b.HasIndex("ServiceRegionId");
+
+                    b.HasIndex("TaskDispatchId");
+
+                    b.HasIndex("TaskRequestId");
+
                     b.HasIndex("UserId")
                         .IsUnique();
 
@@ -3109,11 +3997,19 @@ namespace Surakuma.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<Guid?>("CaseDispatchId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("datetimeoffset");
 
                     b.Property<DateTimeOffset>("DueAt")
                         .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Instructions")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
 
                     b.Property<string>("Note")
                         .IsRequired()
@@ -3155,6 +4051,8 @@ namespace Surakuma.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("CaseDispatchId");
+
                     b.HasIndex("RequestId");
 
                     b.HasIndex("VolunteerId", "Status", "DueAt");
@@ -3183,6 +4081,10 @@ namespace Surakuma.Infrastructure.Migrations
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("HandoverQuantitiesJson")
+                        .HasMaxLength(-1)
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("Issues")
                         .IsRequired()
@@ -3440,6 +4342,11 @@ namespace Surakuma.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.HasOne("Surakuma.Domain.Depot", null)
+                        .WithMany()
+                        .HasForeignKey("HandoverCentreId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("Surakuma.Domain.Organisation", null)
                         .WithMany()
                         .HasForeignKey("OrganisationId")
@@ -3455,6 +4362,21 @@ namespace Surakuma.Infrastructure.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Surakuma.Domain.BrowserPushDelivery", b =>
+                {
+                    b.HasOne("Surakuma.Domain.Notification", null)
+                        .WithMany()
+                        .HasForeignKey("NotificationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Surakuma.Domain.BrowserPushSubscription", null)
+                        .WithMany()
+                        .HasForeignKey("SubscriptionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Surakuma.Domain.CaseConsolidation", b =>
                 {
                     b.HasOne("Surakuma.Domain.AssistanceRequest", null)
@@ -3466,6 +4388,39 @@ namespace Surakuma.Infrastructure.Migrations
                     b.HasOne("Surakuma.Domain.AssistanceRequest", null)
                         .WithMany()
                         .HasForeignKey("PrimaryRequestId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Surakuma.Domain.CaseDispatch", b =>
+                {
+                    b.HasOne("Surakuma.Domain.Depot", null)
+                        .WithMany()
+                        .HasForeignKey("CentreId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Surakuma.Domain.AssistanceRequest", null)
+                        .WithMany()
+                        .HasForeignKey("RequestId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Surakuma.Domain.CaseMessageDraft", b =>
+                {
+                    b.HasOne("Surakuma.Domain.AssistanceRequest", null)
+                        .WithMany()
+                        .HasForeignKey("RequestId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Surakuma.Domain.CaseNeed", b =>
+                {
+                    b.HasOne("Surakuma.Domain.AssistanceRequest", null)
+                        .WithMany()
+                        .HasForeignKey("RequestId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
@@ -3748,6 +4703,15 @@ namespace Surakuma.Infrastructure.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Surakuma.Domain.LogisticsPreferences", b =>
+                {
+                    b.HasOne("Surakuma.Infrastructure.AppUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Surakuma.Domain.Membership", b =>
                 {
                     b.HasOne("Surakuma.Domain.Country", null)
@@ -3756,6 +4720,11 @@ namespace Surakuma.Infrastructure.Migrations
                         .HasPrincipalKey("Code")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.HasOne("Surakuma.Domain.Depot", null)
+                        .WithMany()
+                        .HasForeignKey("DepotId")
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("Surakuma.Domain.Organisation", null)
                         .WithMany()
@@ -3878,7 +4847,34 @@ namespace Surakuma.Infrastructure.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Surakuma.Domain.PublicAlertVisual", b =>
+                {
+                    b.HasOne("Surakuma.Domain.PublicAlert", null)
+                        .WithMany()
+                        .HasForeignKey("AlertId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Surakuma.Domain.Recommendation", b =>
+                {
+                    b.HasOne("Surakuma.Domain.AssistanceRequest", null)
+                        .WithMany()
+                        .HasForeignKey("RequestId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Surakuma.Domain.RequestAnalysisJob", b =>
+                {
+                    b.HasOne("Surakuma.Domain.AssistanceRequest", null)
+                        .WithMany()
+                        .HasForeignKey("RequestId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Surakuma.Domain.RequestEmbedding", b =>
                 {
                     b.HasOne("Surakuma.Domain.AssistanceRequest", null)
                         .WithMany()
@@ -3925,6 +4921,16 @@ namespace Surakuma.Infrastructure.Migrations
 
             modelBuilder.Entity("Surakuma.Domain.ResourceAllocation", b =>
                 {
+                    b.HasOne("Surakuma.Domain.CaseDispatch", null)
+                        .WithMany()
+                        .HasForeignKey("CaseDispatchId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Surakuma.Domain.CaseNeed", null)
+                        .WithMany()
+                        .HasForeignKey("NeedId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("Surakuma.Domain.AssistanceRequest", null)
                         .WithMany()
                         .HasForeignKey("RequestId")
@@ -4003,6 +5009,11 @@ namespace Surakuma.Infrastructure.Migrations
                         .HasForeignKey("CrisisId")
                         .OnDelete(DeleteBehavior.Restrict);
 
+                    b.HasOne("Surakuma.Domain.Resource", null)
+                        .WithMany()
+                        .HasForeignKey("DestinationResourceId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("Surakuma.Domain.Organisation", null)
                         .WithMany()
                         .HasForeignKey("RequestingOrganisationId")
@@ -4036,6 +5047,21 @@ namespace Surakuma.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.HasOne("Surakuma.Domain.AdministrativeDivision", null)
+                        .WithMany()
+                        .HasForeignKey("ServiceRegionId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Surakuma.Domain.CaseDispatch", null)
+                        .WithMany()
+                        .HasForeignKey("TaskDispatchId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Surakuma.Domain.AssistanceRequest", null)
+                        .WithMany()
+                        .HasForeignKey("TaskRequestId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("Surakuma.Infrastructure.AppUser", null)
                         .WithMany()
                         .HasForeignKey("UserId")
@@ -4045,6 +5071,11 @@ namespace Surakuma.Infrastructure.Migrations
 
             modelBuilder.Entity("Surakuma.Domain.VolunteerTask", b =>
                 {
+                    b.HasOne("Surakuma.Domain.CaseDispatch", null)
+                        .WithMany()
+                        .HasForeignKey("CaseDispatchId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("Surakuma.Domain.AssistanceRequest", null)
                         .WithMany()
                         .HasForeignKey("RequestId")
