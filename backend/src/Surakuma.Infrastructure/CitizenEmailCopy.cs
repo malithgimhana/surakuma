@@ -1,4 +1,5 @@
 using Surakuma.Domain;
+using Surakuma.Application;
 
 namespace Surakuma.Infrastructure;
 
@@ -16,6 +17,10 @@ internal static class CitizenEmailCopy
         "ta" => new("கோரிக்கை புதுப்பிப்பு", "உங்கள் கோரிக்கை பற்றிய புதுப்பிப்பு",
             "குறிப்பு எண்", "நிலை", "கோரிக்கையைக் காணுங்கள்", "எனது கோரிக்கைகள்",
             "உங்கள் கோரிக்கையைப் பார்க்க உங்கள் சுரகும கணக்கில் உள்நுழையவும்.", "தானியங்கி கோரிக்கை புதுப்பிப்பு"),
+        "hi" => new("अनुरोध की जानकारी", "आपके अनुरोध की नई जानकारी", "संदर्भ", "स्थिति",
+            "मेरा अनुरोध देखें", "मेरे अनुरोध देखें", "अपना अनुरोध देखने के लिए Surakuma में साइन इन करें।", "स्वचालित अनुरोध सूचना"),
+        "ne" => new("अनुरोधको अद्यावधिक", "तपाईंको अनुरोधको नयाँ जानकारी", "सन्दर्भ", "स्थिति",
+            "मेरो अनुरोध हेर्नुहोस्", "मेरा अनुरोधहरू हेर्नुहोस्", "अनुरोध हेर्न Surakuma मा साइन इन गर्नुहोस्।", "स्वचालित अनुरोध सूचना"),
         _ => new("Request update", "An update on your request", "Reference", "Status",
             "View my request", "View my requests", "Sign in to Surakuma to view your request.",
             "Automated request update")
@@ -25,8 +30,17 @@ internal static class CitizenEmailCopy
     {
         "si" => Sinhala(status),
         "ta" => Tamil(status),
+        "hi" or "ne" when status.HasValue => Localized(status.Value, language),
+        "hi" or "ne" => null,
         _ => English(status)
     };
+
+    private static Stage Localized(RequestStatus status, string language)
+    {
+        var label = CitizenMessages.Status("", status, language)[2..^1];
+        var labels = For(language);
+        return new(label, labels.Heading, label + "।");
+    }
 
     internal static string Color(RequestStatus? status) => status switch
     {

@@ -36,7 +36,7 @@ public sealed class NotificationWorker(IServiceScopeFactory scopeFactory, ILogge
         OutboxMessage? message;
         NotificationDelivery delivery;
         AppUser? user;
-        bool citizen;
+        bool eligible;
         DeliveryAttempt? attempt = null;
         await using (var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct))
         {
@@ -59,12 +59,21 @@ public sealed class NotificationWorker(IServiceScopeFactory scopeFactory, ILogge
             user = await db.Users.FindAsync([message.UserId], ct);
             var users = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
             var roles = user is null ? Array.Empty<string>() : (await users.GetRolesAsync(user)).ToArray();
-            citizen = NotificationChannels.ReceivesCitizenEmail(roles);
-            if (citizen && user?.Disabled == false && message.FundingCountryCode == null &&
+            var funding = message.FundingCountryCode != null;
+            eligible = funding ? roles.Contains(Roles.Donor) : NotificationChannels.ReceivesCitizenEmail(roles);
+            if (!funding && eligible && user?.Disabled == false &&
                 !await db.Set<Notification>().AnyAsync(x => x.EventId == message.Id && x.UserId == message.UserId, ct))
+            {
+                string? WithCopy(string language, string? text)
+                    => message.CopyLanguage == language && message.ReviewedCopy is { } copy ? text + " " + copy : text;
+                var (reference, status) = CitizenMessages.ReadQueuedStatus(message.Message);
                 db.Add(new Notification { EventId = message.Id, UserId = message.UserId,
-                    RequestId = message.RequestId, Message = message.Message,
-                    SinhalaMessage = message.SinhalaMessage, TamilMessage = message.TamilMessage });
+                    RequestId = message.RequestId, Message = WithCopy("en", message.Message)!,
+                    SinhalaMessage = WithCopy("si", message.SinhalaMessage)!, TamilMessage = WithCopy("ta", message.TamilMessage)!,
+                    HindiMessage = status.HasValue && reference != null ? WithCopy("hi", CitizenMessages.Status(reference, status.Value, "hi")) : null,
+                    NepaliMessage = status.HasValue && reference != null ? WithCopy("ne", CitizenMessages.Status(reference, status.Value, "ne")) : null,
+                    CommunicationSource = message.CommunicationSource });
+            }
             delivery = await db.Set<NotificationDelivery>().SingleOrDefaultAsync(x => x.EventId == message.Id && x.RecipientId == message.UserId, ct)
                 ?? new NotificationDelivery { EventId = message.Id, RecipientId = message.UserId, Provider = provider.Name };
             if (delivery.State is "Sent" or "Captured" or "Review" or "Failed" or "Skipped")
@@ -86,8 +95,10 @@ public sealed class NotificationWorker(IServiceScopeFactory scopeFactory, ILogge
         }
         var result = user?.Email is null
             ? new DeliveryResult("Failed", Error: "Recipient email unavailable.")
-            : !citizen || user.Disabled
-                ? new DeliveryResult("Skipped", Error: "Email notifications require an active citizen account.")
+            : !eligible || user.Disabled
+                ? new DeliveryResult("Skipped", Error: message.FundingCountryCode != null
+                    ? "Donation email notifications require an active donor account."
+                    : "Email notifications require an active citizen account.")
                 : await provider.SendAsync(user.Email, CitizenEmailUpdate.FromOutbox(message, user.Language), message.Id, ct);
         message.State = result.State == "Retry" && message.CycleAttempts >= 4 ? "Failed" : result.State;
         message.LastError = result.Error;

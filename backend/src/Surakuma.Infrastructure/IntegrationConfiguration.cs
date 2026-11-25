@@ -9,7 +9,7 @@ public static class IntegrationConfiguration
 {
     public static IntegrationConfigurationStatus[] Describe(IConfiguration config)
     {
-        bool aiKey = !string.IsNullOrWhiteSpace(config["Ai:ApiKey"]);
+        bool aiKey = !string.IsNullOrWhiteSpace(config["Ai:OpenAiApiKey"] ?? config["OPENAI_API_KEY"]);
         bool mapKey = !string.IsNullOrWhiteSpace(config["Mapping:ApiKey"]);
         string emailMode = config["Email:Provider"] ?? "Capture";
         var emailMissing = new List<string>();
@@ -20,10 +20,11 @@ public static class IntegrationConfiguration
 
         return
         [
-            new("ai", "AI recommendations", aiKey ? "Gemini" : "Deterministic fallback", aiKey ? "Configured" : "Fallback",
-                aiKey ? "Credentials are configured. Live access and model availability still need verification. Only synthetic requests can use external AI."
-                    : "Labelled development rules are active. Staff can review requests without an external AI account.",
-                aiKey ? [] : ["Ai__ApiKey"]),
+            new("ai", "AI recommendations", aiKey ? "OpenAI" : "Deterministic fallback",
+                aiKey ? "Configured" : "Fallback", aiKey
+                    ? "Per-task configuration is active. Real request text stays in Surakuma. Live provider access and quota require verification."
+                    : "Local request signals and statistical decision support are available.",
+                aiKey ? [] : ["Ai__OpenAiApiKey"]),
             new("email", "Email notifications", emailMode,
                 emailMode == "Capture" ? "Capture" : emailMode != "Brevo" ? "Invalid" : emailMissing.Count > 0 ? "Incomplete" : "Configured",
                 emailMode == "Capture" ? "Notifications are captured locally in SQL. No email is sent."
