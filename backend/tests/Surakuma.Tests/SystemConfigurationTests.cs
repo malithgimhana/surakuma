@@ -14,7 +14,7 @@ public sealed class SystemConfigurationTests
         Assert.Equal("Fallback", status.Single(x => x.Id == "ai").State);
         Assert.Equal("Capture", status.Single(x => x.Id == "email").State);
         Assert.Equal("Unavailable", status.Single(x => x.Id == "mapping").State);
-        Assert.Contains("Ai__ApiKey", status.Single(x => x.Id == "ai").MissingSettings);
+        Assert.Contains("Ai__OpenAiApiKey", status.Single(x => x.Id == "ai").MissingSettings);
     }
 
     [Theory]
@@ -27,7 +27,7 @@ public sealed class SystemConfigurationTests
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
-            ["Ai:ApiKey"] = "synthetic-ai-secret",
+            ["Ai:OpenAiApiKey"] = "synthetic-ai-secret",
             ["Mapping:ApiKey"] = "synthetic-map-secret",
             ["Email:Provider"] = provider,
             ["Email:ApiKey"] = emailKey,
@@ -38,9 +38,10 @@ public sealed class SystemConfigurationTests
         var status = IntegrationConfiguration.Describe(config);
         Assert.Equal(expected, status.Single(x => x.Id == "email").State);
         Assert.Equal("Configured", status.Single(x => x.Id == "ai").State);
-        Assert.Contains("still need verification", status.Single(x => x.Id == "ai").Detail);
+        Assert.Contains("require verification", status.Single(x => x.Id == "ai").Detail);
         string json = JsonSerializer.Serialize(status);
         foreach (string secret in new[] { "synthetic-ai-secret", "synthetic-map-secret", "synthetic-email-secret", "sender@example.test", "synthetic-signing-secret", "synthetic-private-connection" })
             Assert.DoesNotContain(secret, json);
     }
+
 }
