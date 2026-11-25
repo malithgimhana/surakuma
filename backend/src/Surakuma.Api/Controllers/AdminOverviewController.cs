@@ -39,16 +39,6 @@ public sealed class AdminOverviewController(CrisisDbContext db, AccessService ac
             .Where(link => link.CountryCode == countryCode && link.VerificationState == "Pending")
             .GroupBy(_ => 1).Select(g => new PendingWork(g.Count(), g.Min(link => link.CreatedAt)))
             .SingleOrDefaultAsync(ct) ?? new(0, null);
-        PendingWork? systemAccess = null;
-        if (global)
-        {
-            var now = DateTimeOffset.UtcNow;
-            systemAccess = await db.Set<AdminProposal>()
-                .Where(p => p.Kind == "GlobalAccess" && p.State == "Pending" && p.ExpiresAt > now)
-                .GroupBy(_ => 1).Select(g => new PendingWork(g.Count(), g.Min(p => p.CreatedAt)))
-                .SingleOrDefaultAsync(ct) ?? new(0, null);
-        }
-
-        return new { countryCode, stock, shelters, partnerVerification, systemAccess };
+        return new { countryCode, stock, shelters, partnerVerification };
     }
 }
