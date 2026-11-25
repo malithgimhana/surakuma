@@ -9,5 +9,6 @@
   <ItemGroup><ProjectReference Include="../Surakuma.Domain/Surakuma.Domain.csproj" /></ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="../../../frontend/src/admin-country-boundaries.json" LogicalName="CountryBoundaries.json" />
+    <EmbeddedResource Include="../../../frontend/src/request-category-vocabulary.json" LogicalName="RequestCategoryVocabulary.json" />
   </ItemGroup>
 </Project>
