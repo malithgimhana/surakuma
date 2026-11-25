@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { MemoryRouter } from 'react-router-dom';
 import '../i18n';
 import { api, get } from '../api';
 import { useAuth } from '../auth';
@@ -31,8 +32,10 @@ const assignment = {
   partnerStatus: 'Verified',
 };
 
-function openProfile(roles: string[], volunteer: object | null = null) {
-  const user = { ...account, roles };
+function openProfile(roles: string[], volunteer: object | null = null, path = '/app/profile') {
+  const user = { ...account, roles, memberships: roles.map(role => ({
+    role, id: 'own-assignment', countryCode: 'NP', organisationId: 'response-centre',
+  })) };
   vi.mocked(useAuth).mockReturnValue({
     user,
     updateUser: vi.fn(),
@@ -50,7 +53,7 @@ function openProfile(roles: string[], volunteer: object | null = null) {
   vi.mocked(api.put).mockResolvedValue({ data: user });
   render(
     <QueryClientProvider client={new QueryClient()}>
-      <ProfilePage />
+      <MemoryRouter initialEntries={[path]}><ProfilePage /></MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -81,6 +84,8 @@ it.each([
 it('saves both household and case availability for a mixed role account', async () => {
   openProfile(['Citizen', 'CaseManager']);
   const available = await screen.findByRole('checkbox', { name: /Available for new cases/ });
+  expect(screen.getByRole('heading', { name: 'Country & organisation scope' })).toBeVisible();
+  expect(screen.queryByRole('combobox', { name: /country|organisation/i })).toBeNull();
   fireEvent.click(available);
   fireEvent.change(screen.getByRole('spinbutton', { name: 'People in your household' }), {
     target: { value: '4' },
@@ -95,6 +100,13 @@ it('saves both household and case availability for a mixed role account', async 
       }),
     ),
   );
+});
+
+it('keeps Case Manager profile scope when a different role is the account’s default workspace', async () => {
+  openProfile(['Volunteer', 'CaseManager'], null, '/app/profile?role=CaseManager');
+  expect(await screen.findByRole('heading', { name: 'Country & organisation scope' })).toBeVisible();
+  expect(screen.getByRole('checkbox', { name: /Available for new cases/ })).toBeChecked();
+  expect(screen.getByRole('heading', { name: 'Volunteering' })).toBeVisible();
 });
 
 it('saves volunteer availability without sending skills, verification or citizen fields', async () => {
