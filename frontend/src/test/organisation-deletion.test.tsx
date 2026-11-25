@@ -11,7 +11,7 @@ vi.mock('../auth', () => ({
     user: { memberships: [{ role: 'CountryAdministrator', countryCode: 'LK' }] },
   }),
 }));
-vi.mock('../api', () => ({ get: vi.fn(), api: { delete: vi.fn() }, errorMessage: () => 'Service error' }));
+vi.mock('../api', () => ({ get: vi.fn(), api: { delete: vi.fn(), post: vi.fn() }, errorMessage: () => 'Service error' }));
 
 HTMLDialogElement.prototype.showModal ??= function () { this.open = true; };
 HTMLDialogElement.prototype.close ??= function () { this.open = false; };
@@ -28,6 +28,11 @@ function openDirectory(globalAdmin: boolean, blockers: string[] = []) {
   });
   vi.mocked(api.delete).mockImplementation(async () => {
     organisations = [];
+  });
+  vi.mocked(api.post).mockImplementation(async () => {
+    const partner = { id: 'new-org', name: 'Sri Lanka Relief Network', enabled: true, primaryCrises: [] };
+    organisations.push(partner);
+    return { data: partner };
   });
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
@@ -81,4 +86,21 @@ it('lets a country administrator remove a registration from the managed country'
   fireEvent.click(dialog.getByRole('button', { name: 'Remove from Sri Lanka' }));
   expect(await screen.findByText('“Test Relief Centre” was removed from Sri Lanka.')).toBeVisible();
   expect(api.delete).toHaveBeenCalledExactlyOnceWith('/admin/organisations/test-org/countries/LK');
+});
+
+it.each([
+  { role: 'country administrator', globalAdmin: false },
+  { role: 'system administrator', globalAdmin: true },
+])('lets a $role add a partner directly in the current country', async ({ globalAdmin }) => {
+  openDirectory(globalAdmin);
+  fireEvent.click(screen.getByRole('button', { name: 'Add organisation' }));
+  const dialog = within(screen.getByRole('dialog', { name: 'Add organisation' }));
+  expect(dialog.getByText('Sri Lanka', { exact: true })).toBeVisible();
+  expect(dialog.queryByLabelText('Organisation setup')).not.toBeInTheDocument();
+  expect(dialog.queryByLabelText('Organisation ID')).not.toBeInTheDocument();
+  fireEvent.change(dialog.getByLabelText('Organisation name'), { target: { value: 'Sri Lanka Relief Network' } });
+  fireEvent.click(dialog.getByRole('button', { name: 'Create organisation' }));
+  expect(await screen.findByText('Sri Lanka Relief Network was added in Sri Lanka and is pending verification.')).toBeVisible();
+  expect(await screen.findByRole('button', { name: /Sri Lanka Relief Network.*Pending verification/ })).toBeVisible();
+  expect(api.post).toHaveBeenCalledExactlyOnceWith('/admin/organisations', { name: 'Sri Lanka Relief Network', countryCode: 'LK' });
 });
