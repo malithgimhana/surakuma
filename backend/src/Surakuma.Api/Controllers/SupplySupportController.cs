@@ -10,8 +10,8 @@ namespace Surakuma.Api.Controllers;
 public sealed class SupplySupportController(SupplySupportService service) : ControllerBase
 {
     [HttpGet]
-    public Task<SupplyWorkspace> Workspace([RegularExpression("LK|IN|NP")] string country, CancellationToken ct)
-        => service.Workspace(country, ct);
+    public Task<SupplyWorkspace> Workspace([RegularExpression("LK|IN|NP")] string country, CancellationToken ct, string? search = null)
+        => service.Workspace(country, ct, search);
     [HttpPost]
     public Task<SupplyRequest> RequestSupplies([RegularExpression("LK|IN|NP")] string country, SupplyRequestInput input, CancellationToken ct)
         => service.Request(country, input, ct);
