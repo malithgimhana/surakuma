@@ -36,12 +36,14 @@ public static class CitizenMessages
         {
             "si" => state switch { RequestStatus.Submitted => "ඉල්ලීම ලැබී ඇත", RequestStatus.UnderReview => "සමාලෝචනය වෙමින් පවතී", RequestStatus.Verified => "තහවුරු කර ඇත", RequestStatus.Approved => "අනුමත කර ඇත", RequestStatus.InProgress => "සහාය සූදානම් කරමින් පවතී", RequestStatus.PartiallyFulfilled => "සහායෙන් කොටසක් ලබාදී ඇත", RequestStatus.Fulfilled => "සහාය ලබාදී ඇත", RequestStatus.Closed => "සම්පූර්ණ කර ඇත", RequestStatus.Cancelled => "අවලංගු කර ඇත", _ => "අනුමත නොවීය" },
             "ta" => state switch { RequestStatus.Submitted => "கோரிக்கை பெறப்பட்டது", RequestStatus.UnderReview => "பரிசீலனையில் உள்ளது", RequestStatus.Verified => "சரிபார்க்கப்பட்டது", RequestStatus.Approved => "அங்கீகரிக்கப்பட்டது", RequestStatus.InProgress => "உதவி ஏற்பாடு செய்யப்படுகிறது", RequestStatus.PartiallyFulfilled => "உதவி பகுதியாக வழங்கப்பட்டது", RequestStatus.Fulfilled => "உதவி வழங்கப்பட்டது", RequestStatus.Closed => "நிறைவடைந்தது", RequestStatus.Cancelled => "ரத்துசெய்யப்பட்டது", _ => "அங்கீகரிக்கப்படவில்லை" },
+            "hi" => state switch { RequestStatus.Submitted => "अनुरोध प्राप्त हुआ", RequestStatus.UnderReview => "अनुरोध की समीक्षा जारी है", RequestStatus.Verified => "अनुरोध का सत्यापन हो गया", RequestStatus.Approved => "सहायता के लिए स्वीकृत", RequestStatus.InProgress => "सहायता की व्यवस्था हो रही है", RequestStatus.PartiallyFulfilled => "कुछ सहायता दी गई", RequestStatus.Fulfilled => "सहायता दी गई", RequestStatus.Closed => "अनुरोध बंद कर दिया गया", RequestStatus.Cancelled => "अनुरोध रद्द कर दिया गया", _ => "अनुरोध स्वीकृत नहीं हुआ" },
+            "ne" => state switch { RequestStatus.Submitted => "अनुरोध प्राप्त भयो", RequestStatus.UnderReview => "अनुरोधको समीक्षा भइरहेको छ", RequestStatus.Verified => "अनुरोध प्रमाणित भयो", RequestStatus.Approved => "सहायताका लागि स्वीकृत", RequestStatus.InProgress => "सहायताको व्यवस्था भइरहेको छ", RequestStatus.PartiallyFulfilled => "केही सहायता उपलब्ध गराइयो", RequestStatus.Fulfilled => "सहायता उपलब्ध गराइयो", RequestStatus.Closed => "अनुरोध बन्द गरिएको छ", RequestStatus.Cancelled => "अनुरोध रद्द गरिएको छ", _ => "अनुरोध स्वीकृत भएन" },
             _ => EnglishStatus(state)
         };
         return $"{reference}: {translated}.";
     }
 
-    internal static (string? Reference, RequestStatus? Status) ReadQueuedStatus(string message)
+    public static (string? Reference, RequestStatus? Status) ReadQueuedStatus(string message)
     {
         // The canonical English outbox text records the status at the time of the event.
         int separator = message.IndexOf(": ", StringComparison.Ordinal);
