@@ -1,5 +1,5 @@
 import { cloneElement, isValidElement, useId } from 'react';
-import type { ReactNode, ReactElement, ButtonHTMLAttributes } from 'react';
+import type { ReactNode, ReactElement, ButtonHTMLAttributes, InputHTMLAttributes, Ref } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertCircle, ArrowRight, Check, HeartHandshake, LoaderCircle, MapPin } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -29,6 +29,7 @@ export function Button({
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
   busy?: boolean;
+  ref?: Ref<HTMLButtonElement>;
 }) {
   return (
     <button className={`button ${variant}`} {...props} disabled={props.disabled || busy}>
@@ -39,6 +40,13 @@ export function Button({
 }
 export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
   return <div className={`card ${className}`}>{children}</div>;
+}
+export function DateInput({
+  type,
+  max = type === 'date' ? '9999-12-31' : '9999-12-31T23:59:59.999',
+  ...props
+}: InputHTMLAttributes<HTMLInputElement> & { type: 'date' | 'datetime-local' }) {
+  return <input {...props} type={type} max={max} />;
 }
 export function Field({
   label,
@@ -141,10 +149,12 @@ export function Empty({
 }
 export function Badge({ value }: { value: string }) {
   const { t } = useTranslation();
-  const tone = /Critical|Rejected|Cancelled|ShelterClosed|Failed/.test(value)
+  const tone = /Critical|Rejected|Cancelled|ShelterClosed|ShelterFull|Failed/.test(value)
     ? 'red'
-    : /Fulfilled|Completed|Closed|Approved|Open|Sent|Captured|CheckedIn/.test(value)
+    : value !== 'PartiallyFulfilled' && /Fulfilled|Completed|Closed|Approved|Open|Sent|Captured|CheckedIn/.test(value)
       ? 'green'
+      : value === 'Urgent' ? 'orange'
+      : value === 'Low' ? 'gray'
       : /High|Review|Reserved|Partial|Warning/.test(value)
         ? 'amber'
         : 'blue';
