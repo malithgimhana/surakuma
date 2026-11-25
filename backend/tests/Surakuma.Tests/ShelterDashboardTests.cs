@@ -110,5 +110,29 @@ public sealed class ShelterDashboardTests(ApiFixture fixture) : IClassFixture<Ap
         (await admin.PutAsJsonAsync($"/api/v1/shelters/{createdId}?countryCode=NP", newShelter with { capacity = 60 })).EnsureSuccessStatusCode();
         var afterEdit = (await admin.GetFromJsonAsync<JsonElement>(List("NP"))).GetProperty("statistics");
         Assert.Equal(60, afterEdit.GetProperty("available").GetInt32());
+
+        var coordinatorId = await db.Users.Where(u => u.Email == "coordinator@surakuma.test").Select(u => u.Id).SingleAsync();
+        var unrelatedCrisis = new Crisis { CountryCode = "NP", Name = "Nepal response outside assignment", PrimaryOrganisationId = externalOrg.Id };
+        reserved.CrisisId = unrelatedCrisis.Id;
+        db.AddRange(unrelatedCrisis,
+            new Membership { UserId = coordinatorId, Role = Roles.Coordinator, CountryCode = "NP", OrganisationId = org.Id, CrisisId = crisis.Id },
+            new Membership { UserId = coordinatorId, Role = Roles.Coordinator, CountryCode = "NP", OrganisationId = externalOrg.Id, CrisisId = unrelatedCrisis.Id },
+            new CrisisAssignment { UserId = coordinatorId, CrisisId = crisis.Id });
+        await db.SaveChangesAsync();
+
+        using var coordinator = await fixture.Login("coordinator");
+        var oversight = await coordinator.GetFromJsonAsync<JsonElement>(List("NP"));
+        Assert.Equal(2, oversight.GetProperty("entries").GetArrayLength());
+        Assert.All(oversight.GetProperty("entries").EnumerateArray(), row =>
+            Assert.Equal(org.Id, row.GetProperty("shelter").GetProperty("organisationId").GetGuid()));
+        Assert.Equal(0, oversight.GetProperty("statistics").GetProperty("pendingArrivals").GetInt32());
+        var overview = await coordinator.GetFromJsonAsync<JsonElement>("/api/v1/staff/overview/Coordinator?countryCode=NP");
+        Assert.Equal(1, overview.GetProperty("metrics").GetProperty("pressure").GetInt32());
+        var scopedStays = await coordinator.GetFromJsonAsync<JsonElement>(Detail("NP"));
+        Assert.Equal(2, scopedStays.GetProperty("households").GetArrayLength());
+        Assert.Equal(HttpStatusCode.NotFound, (await coordinator.GetAsync(restrictedDetails)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await coordinator.GetAsync(List("IN"))).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await coordinator.GetAsync(Detail("NP") + "&allocation=true")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await coordinator.PutAsJsonAsync($"/api/v1/shelters/{createdId}?countryCode=NP", newShelter)).StatusCode);
     }
 }
