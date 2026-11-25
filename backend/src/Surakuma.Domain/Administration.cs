@@ -40,9 +40,12 @@ public sealed class ServiceObservation : Record
     public bool Success { get; set; }
     public string? ActorId { get; set; }
 }
+public enum SecurityEmailKind { PasswordReset, StaffInvitation }
+
 public sealed class SecurityEmail : Record
 {
     public string UserId { get; set; } = "";
+    public SecurityEmailKind Kind { get; set; } = SecurityEmailKind.PasswordReset;
     public string ProtectedToken { get; set; } = "";
     public string State { get; set; } = "Pending";
     public DateTimeOffset ExpiresAt { get; set; } = DateTimeOffset.UtcNow.AddHours(1);

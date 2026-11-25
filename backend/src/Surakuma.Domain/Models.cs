@@ -5,8 +5,8 @@ public static class Roles
     public const string Citizen = "Citizen", Coordinator = "Coordinator", CaseManager = "CaseManager",
         Logistics = "Logistics", ShelterAdmin = "ShelterAdmin", VolunteerCoordinator = "VolunteerCoordinator",
         Volunteer = "Volunteer", Partner = "Partner", Administrator = "Administrator", CountryAdministrator = "CountryAdministrator",
-        FundingOfficer = "FundingOfficer";
-    public static readonly string[] All = [Citizen, Coordinator, CaseManager, Logistics, ShelterAdmin, VolunteerCoordinator, Volunteer, Partner, Administrator, CountryAdministrator, FundingOfficer];
+        FundingOfficer = "FundingOfficer", Donor = "Donor";
+    public static readonly string[] All = [Citizen, Coordinator, CaseManager, Logistics, ShelterAdmin, VolunteerCoordinator, Volunteer, Partner, Administrator, CountryAdministrator, FundingOfficer, Donor];
 }
 public enum RequestStatus
 {
@@ -19,7 +19,7 @@ public enum AidCategory
 }
 public enum Priority
 {
-    Low, Normal, High, Critical
+    Low, Normal, Medium, High, Urgent, Critical
 }
 public enum AllocationStatus
 {
@@ -81,6 +81,7 @@ public sealed class Organisation : Record
 }
 public sealed class Membership : Record
 {
+    public Guid? DepotId { get; set; }
     public bool Suspended { get; set; }
     public string SuspensionReason { get; set; } = "";
     public string CountryCode { get; set; } = "LK";
@@ -144,7 +145,13 @@ public sealed class Household : Record
 }
 public sealed class AssistanceRequest : Record
 {
-    public string Reference { get; set; } = "SK-" + Guid.NewGuid().ToString("N")[..10].ToUpperInvariant();
+    public bool RequiresCentreHandover { get; set; }
+    public Guid? HandoverCentreId { get; set; }
+    public bool RequiresCoordinatorAuthorization { get; set; }
+    public DateTimeOffset? AuthorizedAt { get; set; }
+    public string? AuthorizedBy { get; set; }
+    public string Reference { get; set; } = "";
+    public string? LegacyReference { get; set; }
     public string CitizenId { get; set; } = ""; public Guid CrisisId
     {
         get; set;
@@ -158,6 +165,15 @@ public sealed class AssistanceRequest : Record
         get; set;
     }
     public Priority Priority { get; set; } = Priority.Normal;
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? IntakeJson { get; set; }
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public CitizenIntake? Intake => IntakeJson is null ? null : System.Text.Json.JsonSerializer.Deserialize<CitizenIntake>(IntakeJson);
+    public decimal? IntakeScore { get; set; }
+    public decimal? PriorityScore { get; set; }
+    public DateTimeOffset? NextPriorityEscalationAt { get; set; }
+    public bool ImmediateDanger { get; set; }
+    public string? AssessmentState { get; set; }
     public string Description { get; set; } = ""; public string LocationText { get; set; } = "";
     public double? Latitude
     {
@@ -253,6 +269,9 @@ public sealed class Recommendation : Record
         get; set;
     }
     public string Explanation { get; set; } = ""; public string Provider { get; set; } = ""; public string Model { get; set; } = "";
+    public string? SignalsJson { get; set; }
+    public string? UrgencyFactorsJson { get; set; }
+    public int? UrgencyScore { get; set; }
     public double? Confidence
     {
         get; set;
@@ -294,9 +313,11 @@ public sealed class PotentialDuplicate : Record
         get; set;
     }
     public string State { get; set; } = "Pending"; public string Reason { get; set; } = "";
+    public string? Model { get; set; }
 }
 public sealed class Resource : Record
 {
+    public string Reference { get; set; } = "";
     public string CountryCode { get; set; } = "LK";
     public Guid? DepotId { get; set; }
     public string? Code { get; set; }
@@ -356,6 +377,14 @@ public sealed class Resource : Record
 }
 public sealed class ResourceAllocation : Record
 {
+    public Guid? CaseDispatchId { get; set; }
+    public decimal? CentreReceivedQuantity { get; set; }
+    public decimal? CitizenReceivedQuantity { get; set; }
+    public string Reference { get; set; } = "";
+    public Guid? NeedId { get; set; }
+    public DateTimeOffset? PackedAt { get; set; }
+    public string? PackedBy { get; set; }
+    public DateTimeOffset? ScheduledArrivalAt { get; set; }
     public Guid RequestId
     {
         get; set;
@@ -426,6 +455,8 @@ public sealed class Shelter : Record
         get; set;
     }
     public bool Open { get; set; } = true; public string Facilities { get; set; } = "Water, toilets";
+    public bool PendingVerification { get; set; }
+    public DateTimeOffset? OperationalUpdatedAt { get; set; }
     public int Available => Capacity - Reserved - Occupancy;
     public void Reserve(int count)
     {
@@ -472,6 +503,12 @@ public sealed class ShelterAllocation : Record
 }
 public sealed class VolunteerProfile : Record
 {
+    public Guid? TaskRequestId { get; set; }
+    public Guid? TaskDispatchId { get; set; }
+    public Guid? ServiceRegionId { get; set; }
+    public double? ServiceLatitude { get; set; }
+    public double? ServiceLongitude { get; set; }
+    public bool ServiceLocationConsent { get; set; }
     public string CountryCode { get; set; } = "LK";
     public string UserId { get; set; } = ""; public Guid OrganisationId
     {
@@ -485,6 +522,8 @@ public sealed class VolunteerProfile : Record
 }
 public sealed class VolunteerTask : Record
 {
+    public Guid? CaseDispatchId { get; set; }
+    public string Instructions { get; set; } = "";
     public DateTimeOffset? StartsAt { get; set; }
     public Guid RequestId
     {
@@ -505,6 +544,7 @@ public sealed class VolunteerTask : Record
 }
 public sealed class VolunteerTaskEvent : Record
 {
+    public string? HandoverQuantitiesJson { get; set; }
     public Guid TaskId { get; set; }
     public string ActorId { get; set; } = "";
     public string Action { get; set; } = "";
@@ -521,6 +561,10 @@ public sealed class PublicAlert : Record
     [System.Text.Json.Serialization.JsonIgnore] public string? ReviewerUserId { get; set; }
     [System.Text.Json.Serialization.JsonIgnore] public string? EmergencyPublisherUserId { get; set; }
     public DateTimeOffset? PublishedAt { get; set; }
+    public string? VisualSummary { get; set; }
+    public string? PopupDescription { get; set; }
+    public string? VisualKind { get; set; }
+    public string? VisualImageUrl { get; set; }
     public string TranslationsJson { get; set; } = "{}";
     public Guid CrisisId
     {
@@ -535,8 +579,22 @@ public sealed class PublicAlert : Record
         get; set;
     }
 }
+public sealed class PublicAlertVisual : Record
+{
+    public Guid AlertId { get; set; }
+    public DateTimeOffset AvailableAt { get; set; } = DateTimeOffset.UtcNow;
+    public Guid? Lease { get; set; }
+    public int Attempts { get; set; }
+    public bool Completed { get; set; }
+    public bool DescriptionOnly { get; set; }
+    public byte[]? Image { get; set; }
+}
 public sealed class Notification : Record
 {
+    public Guid? AllocationId { get; set; }
+    public string? HindiMessage { get; set; }
+    public string? NepaliMessage { get; set; }
+    public string? CommunicationSource { get; set; }
     public Guid? ScopeOrganisationId { get; set; }
     public string? ScopeCountryCode { get; set; }
     public string? ScopeRole { get; set; }
@@ -558,6 +616,9 @@ public sealed class Notification : Record
 }
 public sealed class OutboxMessage : Record
 {
+    public string? ReviewedCopy { get; set; }
+    public string? CopyLanguage { get; set; }
+    public string? CommunicationSource { get; set; }
     public string? FundingCountryCode { get; set; }
     public int CycleAttempts { get; set; }
     public string UserId { get; set; } = ""; public Guid RequestId
@@ -595,6 +656,7 @@ public sealed class AuditEvent : Record
 }
 public sealed class Feedback : Record
 {
+    public bool IsSuperseded { get; set; }
     public Guid RequestId
     {
         get; set;
