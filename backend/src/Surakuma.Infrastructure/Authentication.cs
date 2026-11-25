@@ -31,7 +31,13 @@ public sealed class AuthenticationService(UserManager<AppUser> users, CrisisDbCo
             AccessibilityNeeds = household?.AccessibilityNeeds ?? ""
         };
     }
-    public async Task<AuthSession> Register(RegisterInput input, CancellationToken ct)
+    public Task<AuthSession> Register(RegisterInput input, CancellationToken ct) => RegisterAccount(input, null, ct);
+
+    public Task<AuthSession> RegisterDonor(RegisterDonorInput input, CancellationToken ct) => RegisterAccount(
+        new RegisterInput(input.Email, input.Password, input.Name.Trim(), input.Language),
+        new DonorProfile { DisplayName = input.Name.Trim(), OrganisationName = string.IsNullOrWhiteSpace(input.OrganisationName) ? null : input.OrganisationName.Trim() }, ct);
+
+    private async Task<AuthSession> RegisterAccount(RegisterInput input, DonorProfile? donor, CancellationToken ct)
     {
         if (input.Language is not ("en" or "si" or "ta" or "ne" or "hi"))
             throw new RuleException("Unsupported language.");
@@ -40,15 +46,26 @@ public sealed class AuthenticationService(UserManager<AppUser> users, CrisisDbCo
         var result = await users.CreateAsync(user, input.Password);
         if (!result.Succeeded)
             throw new RuleException(string.Join(" ", result.Errors.Select(x => x.Description)));
-        await users.AddToRoleAsync(user, Roles.Citizen);
-        db.Add(new Household { UserId = user.Id });
-        db.Add(new AuditEvent { ActorId = user.Id, Action = "CitizenRegistered", EntityType = "User", Detail = "Citizen account created." });
+        var roleResult = await users.AddToRoleAsync(user, donor is null ? Roles.Citizen : Roles.Donor);
+        if (!roleResult.Succeeded)
+            throw new RuleException(string.Join(" ", roleResult.Errors.Select(x => x.Description)));
+        if (donor is null)
+        {
+            db.Add(new Household { UserId = user.Id });
+            db.Add(new AuditEvent { ActorId = user.Id, Action = "CitizenRegistered", EntityType = "User", Detail = "Citizen account created." });
+        }
+        else
+        {
+            donor.UserId = user.Id;
+            db.Add(donor);
+            db.Add(new AuditEvent { ActorId = user.Id, Action = "DonorRegistered", EntityType = nameof(DonorProfile), EntityId = donor.Id });
+        }
         var session = await CreateSession(user, ct);
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         return session;
     }
-    public async Task<AuthSession?> Login(LoginInput input, CancellationToken ct)
+    public async Task<AuthSession?> Login(LoginInput input, CancellationToken ct, bool donorOnly = false)
     {
         var user = await users.FindByEmailAsync(input.Email);
         if (user is null || user.Disabled || await users.IsLockedOutAsync(user))
@@ -59,6 +76,8 @@ public sealed class AuthenticationService(UserManager<AppUser> users, CrisisDbCo
             return null;
         }
         await users.ResetAccessFailedCountAsync(user);
+        if (donorOnly && !await users.IsInRoleAsync(user, Roles.Donor))
+            return null;
         var session = await CreateSession(user, ct);
         db.Add(new AuditEvent { ActorId = user.Id, Action = "Login", EntityType = "User" });
         await db.SaveChangesAsync(ct);
@@ -132,6 +151,7 @@ public sealed class AuthenticationService(UserManager<AppUser> users, CrisisDbCo
         var identityRoles = await users.GetRolesAsync(user);
         var active = await db.Set<Membership>().Where(m => m.UserId == user.Id).Select(m => m.Role).Distinct().ToListAsync(ct);
         if (identityRoles.Contains(Roles.Citizen)) active.Add(Roles.Citizen);
+        if (identityRoles.Contains(Roles.Donor)) active.Add(Roles.Donor);
         if (user.IsSystemAdministrator) active.Add(Roles.Administrator);
         return active.Distinct().ToArray();
     }
