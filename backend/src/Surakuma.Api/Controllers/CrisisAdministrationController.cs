@@ -16,7 +16,7 @@ public sealed class CrisisAdministrationController(CrisisDbContext db, AccessSer
         string? severity = null, string status = "Published", Guid? crisisId = null, int page = 1, int pageSize = 4)
     {
         if (access.SelectedCountry is { } selected && selected != countryCode) throw new AccessDeniedException();
-        var reviewer = await access.CountryAccess(countryCode, [], ct);
+        var reviewer = !access.IsCoordinatorWorkspace && await access.CountryAccess(countryCode, [], ct);
         var countryCrises = db.Set<Crisis>().Where(c => c.CountryCode == countryCode);
         if (!reviewer)
         {
@@ -38,6 +38,8 @@ public sealed class CrisisAdministrationController(CrisisDbContext db, AccessSer
             IsAuthor = a.CreatorUserId == access.UserId,
             CanReview = reviewer && a.CreatorUserId != access.UserId && a.EmergencyPublisherUserId != access.UserId,
             NeedsEmergencyReview = a.EmergencyPublisherUserId != null && a.ReviewerUserId == null,
+            HasImageCandidate = a.Published && a.ExpiresAt > now && a.VisualImageUrl == null &&
+                db.Set<PublicAlertVisual>().Any(v => v.AlertId == a.Id && v.Completed && v.Image != null),
             Status = a.Published ? (a.ExpiresAt <= now ? "Expired" : a.WorkflowState == "EmergencyPublished" ? "EmergencyPublished" : "Published")
                 : a.WorkflowState ?? (audit.Any(e => e.EntityId == a.Id) ? "Withdrawn" : "Draft")
         });
