@@ -11,11 +11,57 @@ namespace Surakuma.Api.Controllers;
 
 public sealed partial class OperationsController
 {
-    public sealed record AlertActionInput(string? Reason = null);
+    public sealed record AlertActionInput(string? Reason = null, bool TranslationsReviewed = false);
+    public sealed record AlertImageReviewInput(bool ImageReviewed);
     public sealed record TranslationDraftInput(Guid CrisisId, [Required, MaxLength(12)] string Language,
         [Required, MaxLength(150)] string Title, [Required, MaxLength(2000)] string Message, bool PublicWordingConfirmed);
     public sealed record TranslationDraftResult(string State, string? Source = null, string? Title = null, string? Message = null);
     private static readonly JsonSerializerOptions AlertJson = new(JsonSerializerDefaults.Web);
+
+    [Microsoft.AspNetCore.Authorization.AllowAnonymous, HttpGet("alerts/{id:guid}/image")]
+    public async Task<IActionResult> PublicAlertImage(Guid id, CancellationToken ct, string countryCode = "LK")
+    {
+        var image = await ops.AlertImage(id, countryCode, ct);
+        return image is null ? NotFound() : File(image, "image/webp");
+    }
+
+    [HttpGet("alerts/{id:guid}/image-review")]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    public async Task<IActionResult> AlertImageDraft(Guid id, CancellationToken ct)
+    {
+        await AlertForImageReview(id, ct);
+        var image = await db.Set<PublicAlertVisual>().Where(v => v.AlertId == id && v.Completed)
+            .Select(v => v.Image).SingleOrDefaultAsync(ct);
+        return image is null ? NotFound() : File(image, "image/webp");
+    }
+
+    [HttpPut("alerts/{id:guid}/image-review")]
+    public async Task<PublicAlert> ApproveAlertImage(Guid id, AlertImageReviewInput input, CancellationToken ct)
+    {
+        if (!input.ImageReviewed) throw new RuleException("Confirm you reviewed the illustration for public release.");
+        await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+        var (alert, crisis) = await AlertForImageReview(id, ct);
+        if (alert.VisualImageUrl != null) return alert;
+        if (!await db.Set<PublicAlertVisual>().AnyAsync(v => v.AlertId == id && v.Completed && v.Image != null, ct))
+            throw new RuleException("An illustration is not ready for review.");
+        alert.VisualImageUrl = $"/api/v1/alerts/{id}/image?countryCode={Uri.EscapeDataString(crisis.CountryCode)}";
+        ops.Audit("PublicAlertImageApproved", alert, countryCode: crisis.CountryCode);
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+        return alert;
+    }
+
+    private async Task<(PublicAlert Alert, Crisis Crisis)> AlertForImageReview(Guid id, CancellationToken ct)
+    {
+        var alert = await db.Set<PublicAlert>().FindAsync([id], ct) ?? throw new MissingException();
+        var crisis = await CoordinatedCrisis(alert.CrisisId, ct);
+        if (alert.CreatorUserId != access.UserId &&
+            (access.IsCoordinatorWorkspace || !await access.CountryAccess(crisis.CountryCode, [], ct)))
+            throw new AccessDeniedException();
+        if (!alert.Published || alert.ExpiresAt <= DateTimeOffset.UtcNow)
+            throw new RuleException("Review illustrations for active published alerts.");
+        return (alert, crisis);
+    }
 
     [HttpPost("alerts/translation-draft"), EnableRateLimiting("ai-drafts")]
     public async Task<TranslationDraftResult> TranslationDraft([FromServices] IAiProvider provider,
@@ -83,7 +129,7 @@ public sealed partial class OperationsController
         var crisis = await CoordinatedCrisis(alert.CrisisId, ct);
         var country = crisis.CountryCode;
         var state = alert.WorkflowState ?? (alert.Published ? "LegacyPublished" : "Draft");
-        var reviewer = await access.CountryAccess(country, [], ct);
+        var reviewer = !access.IsCoordinatorWorkspace && await access.CountryAccess(country, [], ct);
         var reason = input?.Reason?.Trim() ?? "";
         var action = "PublicAlert";
         var message = "";
@@ -106,10 +152,13 @@ public sealed partial class OperationsController
                 break;
             case "publish" when state == "Approved":
                 if (alert.CreatorUserId != access.UserId && !reviewer) throw new AccessDeniedException();
+                if (access.IsCoordinatorWorkspace && alert.Severity == "Critical" && input?.TranslationsReviewed != true)
+                    throw new RuleException("Confirm the public wording and translations before publication.");
                 await ValidatePublication(alert, crisis, ct);
                 alert.WorkflowState = "Published";
                 alert.Published = true;
                 alert.PublishedAt = DateTimeOffset.UtcNow;
+                db.Add(new PublicAlertVisual { AlertId = alert.Id });
                 action += "Published";
                 message = "A public alert was published.";
                 break;
@@ -117,12 +166,15 @@ public sealed partial class OperationsController
                 if (!reviewer) throw new AccessDeniedException();
                 if (alert.Severity != "Critical") throw new RuleException("Emergency publication is limited to critical alerts.");
                 RequireAlertReason(reason);
+                if (input?.TranslationsReviewed != true)
+                    throw new RuleException("Confirm the wording and translations were reviewed before emergency publication.");
                 await ValidatePublication(alert, crisis, ct);
                 alert.WorkflowState = "EmergencyPublished";
                 alert.EmergencyPublisherUserId = access.UserId;
                 alert.ReviewerUserId = null;
                 alert.Published = true;
                 alert.PublishedAt = DateTimeOffset.UtcNow;
+                db.Add(new PublicAlertVisual { AlertId = alert.Id });
                 action += "EmergencyPublished";
                 message = "A critical alert was published under emergency authority. Independent review is required.";
                 break;
@@ -150,8 +202,11 @@ public sealed partial class OperationsController
                 throw new RuleException("This action is unavailable for the current alert status.");
         }
         ops.Audit(action, alert, reason, country);
+        if (operation is "approve" or "return" && alert.CreatorUserId is { } creator)
+            await notifications.AlertReviewDecided(crisis, creator, operation == "approve", ct);
         if (message.Length > 0)
-            await notifications.AlertChanged(crisis, message, reviewersOnly: operation == "submit", ct);
+            await notifications.AlertChanged(crisis, message, reviewersOnly: operation is "submit" or "emergency-publish", ct,
+                access.UserId, alert.CreatorUserId ?? "");
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         return alert;
