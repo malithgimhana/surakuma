@@ -22,4 +22,10 @@ describe('Role-aware login destinations', () => {
     expect(loginDestination(user(['Citizen']), '//example.test')).toBe('/app');
     expect(loginDestination(user(['Citizen']), '/admin')).toBe('/app');
   });
+  it('keeps donor-only accounts in their dedicated workspace', () => {
+    expect(loginDestination(user(['Donor']), '/app/profile')).toBe('/donor');
+    expect(loginDestination(user(['Donor']), '/donor/donations?campaign=sample')).toBe('/donor/donations?campaign=sample');
+    expect(loginDestination(user(['Citizen']), '/donor/donations')).toBe('/app');
+    expect(loginDestination(user(['Citizen', 'Donor']), undefined, '/donor')).toBe('/donor');
+  });
 });
