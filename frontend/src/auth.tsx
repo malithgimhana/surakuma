@@ -3,7 +3,9 @@ import type { ReactNode } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { api, refreshSession, setToken } from './api';
+import { donorWorkspace, landing } from './countryScope';
 import type { User } from './types';
+export { landing } from './countryScope';
 interface AuthState {
   user: User | null;
   loading: boolean;
@@ -36,7 +38,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [client]);
   async function signIn(path: string, input: unknown) {
     const { data } = await api.post<{ accessToken: string; user: User }>(path, input);
-    setToken(data.accessToken);
+    setToken(data.accessToken, data.user);
     client.clear();
     setUser(data.user);
     return data.user;
@@ -61,16 +63,8 @@ export function useAuth() {
   if (!context) throw new Error('AuthProvider required');
   return context;
 }
-export function landing(user: User) {
-  return user.roles.includes('Administrator')
-    ? '/admin'
-    : user.roles.includes('Volunteer')
-      ? '/volunteer'
-      : user.roles.some((r) => r !== 'Citizen')
-        ? '/staff'
-        : '/app';
-}
-export function Protected({ children, roles }: { children: ReactNode; roles?: string[] }) {
+export function useOptionalAuth() { return useContext(Context); }
+export function Protected({ children, roles, login = '/login' }: { children: ReactNode; roles?: string[]; login?: string }) {
   const { user, loading } = useAuth();
   const location = useLocation();
   if (loading)
@@ -79,15 +73,24 @@ export function Protected({ children, roles }: { children: ReactNode; roles?: st
         Loading your session…
       </div>
     );
-  if (!user) return <Navigate to="/login" state={{ from: location.pathname }} replace />;
+  if (!user) return <Navigate to={login} state={{ from: location.pathname + location.search }} replace />;
   if (roles && !user.roles.some((r) => roles.includes(r)))
     return <Navigate to={landing(user)} replace />;
   return children;
 }
 
-export function loginDestination(user: User, requested?: string) {
-  if (!requested || !requested.startsWith('/') || requested.startsWith('//')) return landing(user);
-  const home = landing(user);
-  if (requested === '/app/profile' || requested === '/app/notifications') return requested;
-  return requested === home || requested.startsWith(home + '/') ? requested : home;
+export function loginDestination(user: User, requested?: string, home = landing(user)) {
+  if (!requested || !requested.startsWith('/') || requested.startsWith('//')) return home;
+  const path = requested.split(/[?#]/, 1)[0];
+  if (path.includes('\\')) return home;
+  const donorPath = path === donorWorkspace || path.startsWith(donorWorkspace + '/');
+  if (home === donorWorkspace) return donorPath ? requested : home;
+  if (path === '/app/profile' || path === '/app/notifications') return requested;
+  if ((path === '/app' || path.startsWith('/app/')) && user.roles.includes('Citizen')) return requested;
+  if ((path === '/volunteer' || path.startsWith('/volunteer/')) && user.roles.includes('Volunteer')) return requested;
+  if (path === '/staff/volunteers' && user.roles.includes('VolunteerCoordinator')) return requested;
+  if (donorPath && user.roles.includes('Donor')) return requested;
+  if ((path === '/funding/manage' || path.startsWith('/funding/manage/')) && user.roles.includes('FundingOfficer')) return requested;
+  if ((path === '/partner' || path.startsWith('/partner/')) && user.roles.includes('Partner')) return requested;
+  return path === home || path.startsWith(home + '/') ? requested : home;
 }
