@@ -42,10 +42,118 @@ public sealed class QuantityConversionTests
         Assert.Throws<RuleException>(() => QuantityUnits.ForInventory(1m, "mL", "L"));
         Assert.Equal(0.001m, QuantityUnits.Convert(1m, "mL", "L"));
     }
+
+    [Fact]
+    public void StockLevelsKeepTwoDecimalsForSmallerMeasuresAndWholeCountsForPackagedUnits()
+    {
+        foreach (var unit in new[] { "kg", "grams", "millilitres" })
+        {
+            QuantityUnits.ValidateStockLevel(0.02m, unit);
+            Assert.Throws<RuleException>(() => QuantityUnits.ValidateStockLevel(0.001m, unit));
+        }
+        foreach (var unit in new[] { "L", "litres", "pieces", "packs", "bags", "bottles", "cartons", "boxes",
+            "vials", "ampoules", "sets", "rolls", "pairs", "kits" })
+        {
+            QuantityUnits.ValidateStockLevel(3m, unit);
+            Assert.Throws<RuleException>(() => QuantityUnits.ValidateStockLevel(0.02m, unit));
+        }
+    }
 }
 
 public sealed class ResourceMeasurementTests(ApiFixture fixture) : IClassFixture<ApiFixture>
 {
+    [Fact]
+    public async Task ResourceBatchRollsBackInvalidItemsAndDoesNotDuplicateOpeningStockOnRetry()
+    {
+        using var logistics = await fixture.Login("logistics");
+        var (_, organisation, _, _) = await Geography();
+        const string path = "/api/v1/resources/batch";
+        var water = new
+        {
+            organisationId = organisation, name = "Batch drinking water", category = "FoodWater", unit = "l",
+            stock = 20m, locationText = "Synthetic depot", latitude = 6.93, longitude = 79.89,
+            suitability = "", transportAvailable = true, lowStockThreshold = 5m, operationId = Guid.NewGuid(),
+        };
+        var formula = water with
+        {
+            name = "Batch baby formula", unit = "pieces", stock = 8m, lowStockThreshold = 2m, operationId = Guid.NewGuid(),
+        };
+        var ids = new[] { water.operationId, formula.operationId };
+
+        using var scope = fixture.Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
+        using var rejected = await logistics.PostAsJsonAsync(path, new { resources = new[] { water, formula with { stock = 8.5m } } });
+        Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+        Assert.Empty(await db.Set<Resource>().Where(resource => ids.Contains(resource.Id)).ToListAsync());
+        Assert.Empty(await db.Set<StockMovement>().Where(movement => ids.Contains(movement.ResourceId)).ToListAsync());
+
+        var input = new { resources = new[] { water, formula } };
+        var saved = await Post(logistics, path, input);
+        var retried = await Post(logistics, path, input);
+        Assert.Equal(ids, saved.EnumerateArray().Select(Id));
+        Assert.Equal(ids, retried.EnumerateArray().Select(Id));
+        var stock = await db.Set<Resource>().Where(resource => ids.Contains(resource.Id)).ToDictionaryAsync(resource => resource.Id);
+        Assert.Equal(20m, stock[water.operationId].Stock);
+        Assert.Equal(2m, stock[formula.operationId].LowStockThreshold);
+        var movements = await db.Set<StockMovement>().Where(movement => ids.Contains(movement.ResourceId)).ToListAsync();
+        Assert.Equal(2, movements.Count);
+        Assert.All(movements, movement => Assert.Equal("Opening", movement.Kind));
+    }
+
+    [Fact]
+    public async Task OpeningStockAndThresholdRequireWholeLitresWhileExistingLevelsCanBeKept()
+    {
+        using var logistics = await fixture.Login("logistics");
+        var (_, organisation, _, _) = await Geography();
+        const string resources = "/api/v1/resources";
+        var input = new
+        {
+            organisationId = organisation, name = "Synthetic litre stock", category = "FoodWater", unit = "litres",
+            stock = 0m, locationText = "Synthetic depot", latitude = 6.93, longitude = 79.89,
+            suitability = "", transportAvailable = true, lowStockThreshold = 1m, operationId = Guid.NewGuid(),
+        };
+        using var decimalStock = await logistics.PostAsJsonAsync(resources, input with { stock = 0.02m });
+        Assert.Equal(HttpStatusCode.BadRequest, decimalStock.StatusCode);
+        Assert.Contains("whole number of litres", await decimalStock.Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.BadRequest, (await logistics.PostAsJsonAsync(resources, input with { lowStockThreshold = 0.5m })).StatusCode);
+        var resource = Id(await Post(logistics, resources, input));
+        var configuration = $"/api/v1/logistics/resources/{resource}/configuration";
+        var update = new { code = "WATER", lowStockThreshold = 0.5m };
+        Assert.Equal(HttpStatusCode.BadRequest, (await logistics.PatchAsJsonAsync(configuration, update)).StatusCode);
+
+        using var scope = fixture.Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
+        var saved = await db.Set<Resource>().SingleAsync(r => r.Id == resource);
+        saved.LowStockThreshold = 0.5m;
+        await db.SaveChangesAsync();
+        (await logistics.PostAsJsonAsync(resources, input with { lowStockThreshold = 0.5m })).EnsureSuccessStatusCode();
+        (await logistics.PatchAsJsonAsync(configuration, update)).EnsureSuccessStatusCode();
+        (await logistics.PatchAsJsonAsync(configuration, update with { lowStockThreshold = 2m })).EnsureSuccessStatusCode();
+    }
+
+    [Fact]
+    public async Task StockRegistrationUsesTheSameCategoryRulesAsThePublicUnitCatalog()
+    {
+        using var logistics = await fixture.Login("logistics");
+        var (_, organisation, _, _) = await Geography();
+        var catalog = await logistics.GetFromJsonAsync<ResourceUnit[]>("/api/v1/public/resource-units",
+            new JsonSerializerOptions(JsonSerializerDefaults.Web)
+            {
+                Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+            });
+        Assert.NotNull(catalog);
+        Assert.Equal(Enum.GetValues<AidCategory>(), catalog.Single(unit => unit.Code == "kits").StockCategories);
+        Assert.Empty(catalog.Single(unit => unit.Code == "persons").StockCategories!);
+        Assert.Equal(new[] { AidCategory.Medical }, catalog.Single(unit => unit.Code == "vials").StockCategories);
+
+        using var unrelated = await logistics.PostAsJsonAsync("/api/v1/resources", Inventory(organisation, "vials", 5));
+        Assert.Equal(HttpStatusCode.BadRequest, unrelated.StatusCode);
+        using var people = await logistics.PostAsJsonAsync("/api/v1/resources", Inventory(organisation, "persons", 5));
+        Assert.Equal(HttpStatusCode.BadRequest, people.StatusCode);
+        var bottles = await Post(logistics, "/api/v1/resources", Inventory(organisation, "bottles", 5));
+        Assert.Equal("bottles", bottles.GetProperty("unit").GetString());
+    }
+
     [Theory]
     [InlineData("l", 15)]
     [InlineData("ml", 15000)]
@@ -131,7 +239,7 @@ public sealed class ResourceMeasurementTests(ApiFixture fixture) : IClassFixture
         var (crisis, organisation, localRegion, foreignRegion) = await Geography();
         Assert.Equal(HttpStatusCode.BadRequest, (await citizen.PostAsJsonAsync("/api/v1/requests", Submission(crisis, foreignRegion, "l"))).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await citizen.PostAsJsonAsync("/api/v1/requests", Submission(crisis, localRegion, null))).StatusCode);
-        Assert.Equal(HttpStatusCode.BadRequest, (await citizen.PostAsJsonAsync("/api/v1/requests", Submission(crisis, localRegion, "bottles"))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await citizen.PostAsJsonAsync("/api/v1/requests", Submission(crisis, localRegion, "rolls"))).StatusCode);
         using var scope = fixture.Factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
         var seed = await db.Set<AssistanceRequest>().SingleAsync(r => r.SubmissionKey == "seed-food");
@@ -195,6 +303,7 @@ public sealed class ResourceMeasurementTests(ApiFixture fixture) : IClassFixture
     public async Task MaterialReceiptAndAttributionUseInventoryAndDonationUnitsRespectively()
     {
         using var citizen = await fixture.Login("citizen");
+        using var donor = await fixture.RegisterDonor("Synthetic water donor");
         using var manager = await fixture.Login("case");
         using var logistics = await fixture.Login("logistics");
         using var administrator = await fixture.Login("admin");
@@ -208,8 +317,7 @@ public sealed class ResourceMeasurementTests(ApiFixture fixture) : IClassFixture
             organisationId = organisation, crisisId = crisis, name = "Synthetic water donations",
             purpose = "Synthetic clean water relief", budget = 10000,
         }));
-        (await citizen.PutAsJsonAsync("/api/v1/funding/profile", new { displayName = "Synthetic water donor" })).EnsureSuccessStatusCode();
-        var donation = Id(await Post(citizen, path + "/donations", new
+        var donation = Id(await Post(donor, path + "/donations", new
         {
             operationId = Guid.NewGuid(), campaignId = campaign, kind = "Material", category = "FoodWater", unit = "l", amount = 15,
         }));
@@ -230,7 +338,7 @@ public sealed class ResourceMeasurementTests(ApiFixture fixture) : IClassFixture
         {
             operationId = Guid.NewGuid(), amount = 15, reference = "SYNTHETIC-WATER-ATTRIBUTION", deliveryConfirmationId = delivery,
         });
-        var workspace = await citizen.GetFromJsonAsync<JsonElement>(path + "/workspace");
+        var workspace = await donor.GetFromJsonAsync<JsonElement>(path + "/workspace");
         var report = Assert.Single(workspace.GetProperty("materialReports").EnumerateArray(), r => r.GetProperty("campaignId").GetGuid() == campaign);
         Assert.Equal("ml", report.GetProperty("unit").GetString());
         Assert.Equal(15000m, report.GetProperty("received").GetDecimal());
@@ -269,14 +377,18 @@ public sealed class ResourceMeasurementTests(ApiFixture fixture) : IClassFixture
         return await response.Content.ReadFromJsonAsync<JsonElement>();
     }
 
-    private static async Task Approve(HttpClient manager, Guid request)
+    private async Task Approve(HttpClient manager, Guid request)
     {
         foreach (var status in new[] { "UnderReview", "Verified", "Approved" })
             (await manager.PatchAsJsonAsync($"/api/v1/requests/{request}/status", new { status, reason = "Synthetic review." })).EnsureSuccessStatusCode();
+        using var coordinator = await fixture.Login("coordinator");
+        await Post(coordinator, $"/api/v1/fulfillment/cases/{request}/authorize", new { reason = "Synthetic fulfillment handoff." });
     }
 
     private static async Task Deliver(HttpClient logistics, Guid shipment, decimal stockQuantity)
     {
+        await Post(logistics, $"/api/v1/fulfillment/allocations/{shipment}/prepare",
+            new { packedQuantity = stockQuantity, note = "Counted and packed measured stock." });
         (await logistics.PostAsync($"/api/v1/allocations/{shipment}/Dispatch", null)).EnsureSuccessStatusCode();
         await Post(logistics, $"/api/v1/allocations/{shipment}/Deliver", new
         {
@@ -319,8 +431,9 @@ public sealed class ResourceMeasurementMigrationTests(ApiFixture fixture) : ICla
         Assert.Equal(requests, upgraded);
         Assert.Equal(movements, await db.Set<RequestHistory>().Select(r => r.Id).OrderBy(id => id).ToListAsync());
         Assert.Equal(stock, await db.Set<Resource>().OrderBy(r => r.Id).Select(r => new { r.Id, r.Unit, r.Stock }).ToListAsync());
-        var preserved = await db.Set<AssistanceRequest>().AsNoTracking().ToListAsync();
-        Assert.All(preserved.Where(r => r.Category != AidCategory.Shelter), r => Assert.True(r.UnitRequiresClarification));
+        var preserved = await db.Set<AssistanceRequest>().AsNoTracking()
+            .Select(r => new { r.Category, r.Unit, r.AdministrativeDivisionId }).ToListAsync();
+        Assert.All(preserved.Where(r => r.Category != AidCategory.Shelter), r => Assert.Null(r.Unit));
         Assert.Equal("household", Assert.Single(preserved, r => r.Category == AidCategory.Shelter).Unit);
         Assert.All(preserved, r => Assert.Null(r.AdministrativeDivisionId));
     }
