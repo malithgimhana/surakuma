@@ -70,7 +70,11 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<IStore, EfStore>();
 builder.Services.AddScoped<ICurrentActor, CurrentActor>();
 builder.Services.AddScoped<AccessService>();
+builder.Services.AddSingleton(new ShelterOperationalPolicy(builder.Configuration.GetValue("ShelterDashboard:StaleAfterHours", 168)));
 builder.Services.AddScoped<Operations>();
+builder.Services.AddScoped<VolunteerAvailability>();
+builder.Services.AddScoped<RequestIntelligence>();
+builder.Services.AddScoped<CaseCommunications>();
 builder.Services.AddSingleton(new ResourceUnitCatalog(
     builder.Configuration.GetSection("ResourceUnits:Additional").Get<ResourceUnit[]>() ?? []));
 builder.Services.AddScoped<FundingService>();
@@ -80,12 +84,40 @@ builder.Services.AddScoped<InternalNotifications>();
 builder.Services.AddScoped<AuthenticationService>();
 builder.Services.AddScoped<IAllocationPolicy, ConstraintAllocationPolicy>();
 builder.Services.AddScoped<IAllocationStrategy, RankedAllocationStrategy>();
-builder.Services.AddHttpClient<IAiProvider, AiProvider>(c => c.Timeout = Timeout.InfiniteTimeSpan).AddHttpMessageHandler<ProviderObservationHandler>().AddSurakumaResilience();
+builder.Services.AddHttpClient<IAiProvider, AiProvider>();
+builder.Services.AddHttpClient(AiProvider.AlertImageClient, c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(100);
+    c.MaxResponseContentBufferSize = 3 * 1024 * 1024;
+}).RedactLoggedHeaders(["Authorization"]);
+foreach (var task in AiProvider.Tasks)
+{
+    var settings = builder.Configuration.GetSection("Ai:Tasks:" + task);
+    builder.Services.AddHttpClient($"surakuma-ai-OpenAI-{task}", c =>
+    {
+        c.Timeout = Timeout.InfiniteTimeSpan;
+        c.MaxResponseContentBufferSize = 128 * 1024;
+    }).RedactLoggedHeaders(["Authorization"])
+        .AddHttpMessageHandler<ProviderObservationHandler>().AddSurakumaResilience(ai: true,
+            attemptTimeout: TimeSpan.FromSeconds(Math.Clamp(settings.GetValue("TimeoutSeconds", 20), 2, 30)),
+            retries: Math.Clamp(settings.GetValue("Retries", task == "intake-category" ? 0 : 1), 0, 2),
+            breakDuration: TimeSpan.FromSeconds(Math.Clamp(settings.GetValue("BreakSeconds", 30), 5, 300)));
+}
 builder.Services.AddHttpClient<EmailProvider>(c => c.Timeout = Timeout.InfiniteTimeSpan).AddHttpMessageHandler<ProviderObservationHandler>().AddSurakumaResilience(email: true);
+builder.Services.AddHttpClient(SecurityEmailWorker.ClientName, c => c.Timeout = TimeSpan.FromSeconds(20));
 builder.Services.AddScoped<IEmailProvider>(sp => EmailProviderFactory.Create(sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<EmailProvider>()));
 builder.Services.AddHttpClient<IMappingProvider, MappingProvider>(c => c.Timeout = Timeout.InfiniteTimeSpan).AddHttpMessageHandler<ProviderObservationHandler>().AddSurakumaResilience();
 builder.Services.AddHostedService<NotificationWorker>();
+builder.Services.AddSingleton<BrowserPushSettings>();
+builder.Services.AddHttpClient(BrowserPushWorker.ClientName, c => c.Timeout = TimeSpan.FromSeconds(15))
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false })
+    .RedactLoggedHeaders(_ => true)
+    .RemoveAllLoggers();
+if (!builder.Environment.IsEnvironment("Testing")) builder.Services.AddHostedService<BrowserPushWorker>();
+if (!builder.Environment.IsEnvironment("Testing") || builder.Configuration.GetValue<bool>("Ai:EnableTestWorker"))
+    builder.Services.AddHostedService<RequestAnalysisWorker>();
 if (!builder.Environment.IsEnvironment("Testing")) { builder.Services.AddHostedService<AdministrationWorker>(); builder.Services.AddHostedService<SecurityEmailWorker>(); }
+if (!builder.Environment.IsEnvironment("Testing")) builder.Services.AddHostedService<PublicAlertVisualWorker>();
 builder.Services.AddMemoryCache();
 builder.Services.AddControllers().AddJsonOptions(o => o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter(null, false)));
 builder.Services.AddEndpointsApiExplorer();
@@ -139,7 +171,9 @@ app.Use(async (context, next) =>
             DbUpdateException => 409,
             _ => 500
         };
-        app.Logger.LogWarning("Request failed: {FailureType}, SQL {SqlNumber}, status {Status}, trace {TraceId}", ex.GetType().Name, (root as SqlException)?.Number, status, context.TraceIdentifier);
+        var route = (context.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText;
+        app.Logger.LogWarning("Request failed: {Method} {Route}, {FailureType}, SQL {SqlNumber}, status {Status}, trace {TraceId}",
+            context.Request.Method, route, ex.GetType().Name, (root as SqlException)?.Number, status, context.TraceIdentifier);
         context.Response.StatusCode = status;
         await Results.Problem(statusCode: status, title: status switch
         {
