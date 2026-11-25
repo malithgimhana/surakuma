@@ -8,8 +8,8 @@ import {
   Ambulance,
   ArrowRight,
   ArrowUpRight,
+  Bus,
   Check,
-  CloudRain,
   Heart,
   HeartHandshake,
   House,
@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { get, api } from './api';
 import { useAuth } from './auth';
+import { donorWorkspace } from './countryScope';
 import {
   Badge,
   Button,
@@ -41,47 +42,9 @@ import {
 } from './components';
 import { CommunityArt } from './CommunityArt';
 import { MapView } from './MapView';
-import type { Alert, PublicShelter } from './types';
-function useAlerts() {
-  return useQuery({ queryKey: ['alerts'], queryFn: () => get<Alert[]>('/alerts') });
-}
-export function AlertCard({ alert }: { alert: Alert }) {
-  const { t, i18n } = useTranslation();
-  let translations: Record<string,{title:string;message:string}> = {};
-  try { translations = JSON.parse(alert.translationsJson || "{}"); } catch { /* legacy alert */ }
-  return (
-    <Card className="alert-card">
-      <IconTile
-        icon={alert.severity === 'Warning' ? CloudRain : ShieldCheck}
-        tone={alert.severity === 'Warning' ? 'coral' : 'blue'}
-      />
-      <div>
-        <div className="inline">
-          <Badge value={alert.severity} />
-          <small className="muted">{alert.area}</small>
-        </div>
-        <h3>
-          {i18n.language === 'si'
-            ? alert.sinhalaTitle || alert.title
-            : i18n.language === 'ta'
-              ? alert.tamilTitle || alert.title
-              : translations[i18n.language]?.title || alert.title}
-        </h3>
-        <p>
-          {i18n.language === 'si'
-            ? alert.sinhalaMessage || alert.message
-            : i18n.language === 'ta'
-              ? alert.tamilMessage || alert.message
-              : translations[i18n.language]?.message || alert.message}
-        </p>
-        <small className="muted">
-          {t('authority')}: {alert.authority} · {t('expires')}:{' '}
-          {formatDate(alert.expiresAt, i18n.language)}
-        </small>
-      </div>
-    </Card>
-  );
-}
+import { AlertCard, alertWording, useAlerts } from './PublicAlertCard';
+import type { PublicShelter } from './types';
+export { AlertCard, useAlerts } from './PublicAlertCard';
 export function HomePage() {
   const { t } = useTranslation(),
     alerts = useAlerts();
@@ -107,6 +70,10 @@ export function HomePage() {
             <Link to="/shelters" className="button secondary">
               <MapPin size={18} />
               {t('shelters')}
+            </Link>
+            <Link to="/donation" className="button secondary">
+              <HeartHandshake size={18} aria-hidden="true" />
+              {t('donation')}
             </Link>
           </div>
           <div className="hero-trust">
@@ -164,6 +131,8 @@ export function HomePage() {
                 ['FoodWater', Utensils, 'coral'],
                 ['Medical', Stethoscope, 'blue'],
                 ['Shelter', House, 'yellow'],
+                ['Transportation', Bus, 'blue'],
+                ['Accessibility', Accessibility, 'green'],
                 ['Other', LifeBuoy, 'green'],
               ] as const
             ).map(([category, Icon, tone]) => (
@@ -196,8 +165,8 @@ export function HomePage() {
         ) : alerts.error ? (
           <ErrorState error={alerts.error} retry={() => void alerts.refetch()} />
         ) : alerts.data?.length ? (
-          <div className="home-alerts">
-            {alerts.data.slice(0, 2).map((alert) => (
+          <div className="public-alert-grid home-alert-grid">
+            {alerts.data.slice(0, 3).map((alert) => (
               <AlertCard key={alert.id} alert={alert} />
             ))}
           </div>
@@ -235,51 +204,90 @@ export function HomePage() {
     </>
   );
 }
-export function AlertsPage() {
-  const { t } = useTranslation(),
-    query = useAlerts();
-  const [filter, setFilter] = useState('All');
+export function DonationPage() {
+  const { t } = useTranslation();
+  const { user } = useAuth();
   return (
-    <div className="container page">
-      <PageHeader
-        eyebrow={t('communityTag')}
-        title={t('alerts')}
-        description={t('latestUpdates')}
-      />
-      <div className="filter-tabs">
-        {['All', 'Warning', 'Information'].map((value) => (
-          <button
-            key={value}
-            className={filter === value ? 'selected' : ''}
-            aria-pressed={filter === value}
-            onClick={() => setFilter(value)}
-          >
-            {value === 'All' ? t('all') : t('status.' + value)}
-          </button>
-        ))}
-      </div>
-      {query.isPending ? (
-        <Loading />
-      ) : query.error ? (
-        <ErrorState error={query.error} retry={() => void query.refetch()} />
-      ) : (
-        <div className="stack">
-          {query.data
-            ?.filter((a) => filter === 'All' || a.severity === filter)
-            .map((a) => (
-              <AlertCard key={a.id} alert={a} />
-            ))}
-          {!query.data?.filter((a) => filter === 'All' || a.severity === filter).length && (
-            <Empty title={t('noAlerts')} />
+    <section className="hero container">
+      <div className="hero-copy">
+        <span className="eyebrow">{t('donation')}</span>
+        <h1>{t('donationTitle')}</h1>
+        <p>{t('donationDescription')}</p>
+        <div className="hero-actions">
+          {user?.roles.includes('Donor') ? (
+            <Link to={donorWorkspace} className="button primary">{t('donorWorkspace')}<ArrowRight size={18} aria-hidden="true" /></Link>
+          ) : (
+            <>
+              <Link to="/donation/register" className="button primary">{t('donorRegister')}<ArrowRight size={18} aria-hidden="true" /></Link>
+              <Link to="/donation/login" className="button secondary">{t('donorLogin')}</Link>
+            </>
           )}
         </div>
+      </div>
+      <div className="hero-visual"><CommunityArt /></div>
+    </section>
+  );
+}
+
+const alertSeverities = ['All', 'Critical', 'Warning', 'Advisory', 'Information'];
+const publicAlertPageSize = 3;
+
+export function AlertsPage({ workspace = false }: { workspace?: boolean }) {
+  const { t, i18n } = useTranslation();
+  const query = useAlerts();
+  const [filter, setFilter] = useState('All');
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(0);
+  const alerts = query.data ?? [];
+  const language = (i18n.resolvedLanguage ?? i18n.language).split('-')[0];
+  const term = search.trim().toLowerCase();
+  const filtered = alerts.filter((alert) => {
+    if (filter !== 'All' && alert.severity !== filter) return false;
+    const { title, message } = alertWording(alert, language);
+    return !term || [title, message, alert.title, alert.area, alert.authority]
+      .some((value) => value?.toLowerCase().includes(term));
+  });
+  const pages = Math.ceil(filtered.length / publicAlertPageSize);
+  const currentPage = Math.min(page, Math.max(0, pages - 1));
+  return (
+    <div className={workspace ? 'citizen-page public-alert-page' : 'container page public-alert-page'}>
+      <PageHeader eyebrow={t('communityTag')} title={t('alerts')} description={t('alertPageDescription')} />
+      <div className="public-alert-controls">
+        <div className="filter-tabs public-alert-filters" role="group" aria-label={t('alertSeverity')}>
+          {alertSeverities.map((value) => {
+            const count = value === 'All' ? alerts.length : alerts.filter((alert) => alert.severity === value).length;
+            return <button type="button" key={value} className={filter === value ? 'selected' : ''}
+              aria-pressed={filter === value} onClick={() => { setFilter(value); setPage(0); }}>
+              {value === 'All' ? t('all') : t('status.' + value)} <span aria-hidden="true">({count})</span>
+            </button>;
+          })}
+        </div>
+        <label className="public-alert-search">
+          <Search size={19} aria-hidden="true" />
+          <span className="sr-only">{t('alertSearch')}</span>
+          <input type="search" placeholder={t('alertSearch')} value={search}
+            onChange={(event) => { setSearch(event.target.value); setPage(0); }} />
+        </label>
+      </div>
+      {query.isPending ? <Loading /> : query.error ? <ErrorState error={query.error} retry={() => void query.refetch()} /> : (
+        filtered.length ? <>
+          <div className="public-alert-grid">
+            {filtered.slice(currentPage * publicAlertPageSize, (currentPage + 1) * publicAlertPageSize)
+              .map((alert) => <AlertCard key={alert.id} alert={alert} />)}
+          </div>
+          {pages > 1 && <nav className="public-alert-pagination" aria-label={t('allAlerts')}>
+            {Array.from({ length: pages }, (_, index) => <button type="button" key={index}
+              aria-label={t('pageOf', { page: index + 1, total: pages })}
+              aria-current={index === currentPage ? 'page' : undefined} onClick={() => setPage(index)} />)}
+          </nav>}
+        </> : <Card><Empty title={term ? t('alertSearchEmpty') : t(filter === 'All' ? 'noAlerts' : 'noMatchingAlerts')} /></Card>
       )}
     </div>
   );
 }
 function ShelterArt({ index = 0 }: { index?: number }) {
   return (
-    <div className={`shelter-art shelter-art-${index % 3}`}>
+    <div className={`shelter-art shelter-art-${index % 3}`} aria-hidden="true">
       <span className="shelter-sun" />
       <div className="building">
         <span />
@@ -293,22 +301,25 @@ function ShelterArt({ index = 0 }: { index?: number }) {
     </div>
   );
 }
-export function SheltersPage() {
-  const { t } = useTranslation();
-  const query = useQuery({ queryKey: ['shelters'], queryFn: () => get<PublicShelter[]>('/shelters') });
+export function SheltersPage({ workspace = false }: { workspace?: boolean }) {
+  const { t } = useTranslation(), country = useCountry();
+  const directory = workspace ? '/app/shelters' : '/shelters';
+  const query = useQuery({ queryKey: ['shelters', country], queryFn: () => get<PublicShelter[]>('/shelters') });
   const [search, setSearch] = useState(''),
     [view, setView] = useState('list');
   const shelters =
     query.data?.filter((s) =>
-      (s.name + ' ' + s.address).toLowerCase().includes(search.toLowerCase()),
+      (s.name + ' ' + s.address).toLowerCase().includes(search.trim().toLowerCase()),
     ) || [];
   return (
-    <div className="container page">
-      <PageHeader title={t('shelters')} description={t('shelterSubtitle')} />
-      <div className="directory-tools">
+    <div className={workspace ? 'citizen-page citizen-shelters' : 'container page citizen-shelters'}>
+      <PageHeader title={t('shelters')} description={t('shelterSubtitle')}
+        action={<Link className="button secondary" to={workspace ? '/app/assistance-centres' : '/assistance-centres'}>{t('assistanceCentres')}</Link>} />
+      <Card className="citizen-directory-controls"><div className="directory-tools">
         <label className="search-field">
-          <Search size={20} />
+          <Search size={20} aria-hidden="true" />
           <input
+            type="search"
             aria-label={t('searchShelters')}
             placeholder={t('searchShelters')}
             value={search}
@@ -317,73 +328,91 @@ export function SheltersPage() {
         </label>
         <div className="filter-tabs">
           {['list', 'map'].map((v) => (
-            <button key={v} className={view === v ? 'selected' : ''} aria-pressed={view === v} onClick={() => setView(v)}>
+            <button type="button" key={v} className={view === v ? 'selected' : ''} aria-pressed={view === v} onClick={() => setView(v)}>
               {t(v)}
             </button>
           ))}
         </div>
-      </div>
+      </div></Card>
       {query.isPending ? (
         <Loading />
       ) : query.error ? (
         <ErrorState error={query.error} retry={() => void query.refetch()} />
+      ) : !shelters.length ? (
+        <Card><Empty title={t(search.trim() ? 'noMatchingShelters' : 'noShelters')}
+          action={search.trim() ? <Button variant="secondary" onClick={() => setSearch('')}>{t('clearFilters')}</Button> : undefined} /></Card>
       ) : view === 'map' ? (
-        <>
-          <MapView shelters={shelters} />
+        <Card className="citizen-shelter-map">
+          <MapView shelters={shelters} failureMessage={t('shelterMapUnavailable')} />
           <ul aria-label={t('shelters')}>
-            {shelters.map((s) => <li key={s.id}><Link to={`/shelters/${s.id}`}>{s.name} · {s.available} {t('spaces')}</Link></li>)}
+            {shelters.map((s) => <li key={s.id}><NextLink to={`${directory}/${s.id}`}>{s.name} · {s.available} {t('spaces')}</NextLink></li>)}
           </ul>
-        </>
+        </Card>
       ) : (
         <div className="shelter-grid">
           {shelters.map((s, index) => (
-            <Card key={s.id} className="shelter-card">
-              <ShelterArt index={index} />
+            <Card key={s.id} className="shelter-card flush">
+              {country === 'LK' && s.name.trim().toLowerCase() === 'gampaha centre' ? (
+                <figure className="shelter-photo">
+                  <img src="/shelter-art/gampaha-centre.webp" alt="" width={1200} height={546} loading="lazy" decoding="async" />
+                  <figcaption>{t('shelterAiIllustration')}</figcaption>
+                </figure>
+              ) : <ShelterArt index={index} />}
               <div className="shelter-card-body">
-                <Badge
-                  value={!s.open ? 'ShelterClosed' : s.available < 10 ? 'NearlyFull' : 'Open'}
-                />
-                <h3>{s.name}</h3>
+                <div className="shelter-card-title">
+                  <h2>{s.name}</h2>
+                  <Badge
+                    value={!s.open ? 'ShelterClosed' : s.available === 0 ? 'ShelterFull' : s.available < 10 ? 'NearlyFull' : 'Open'}
+                  />
+                </div>
                 <LocationText>{s.address}</LocationText>
                 <div className="shelter-facts">
                   <span>
-                    <Users size={17} />
-                    <strong>{s.available}</strong> {t('spaces')}
+                    <Users size={17} aria-hidden="true" />
+                    <span><strong>{s.available}</strong> {t('spaces')}</span>
                   </span>
                   {s.accessible && (
                     <span>
-                      <Accessibility size={17} />
+                      <Accessibility size={17} aria-hidden="true" />
                       {t('accessible')}
                     </span>
                   )}
                 </div>
-                <Link className="shelter-details-link" to={`/shelters/${s.id}`}>
+                <dl className="citizen-shelter-capacity">
+                  <div><dt>{t('capacity')}</dt><dd>{s.capacity}</dd></div>
+                  <div><dt>{t('reserved')}</dt><dd>{s.reserved}</dd></div>
+                  <div><dt>{t('occupancy')}</dt><dd>{s.occupancy}</dd></div>
+                </dl>
+                <Link className="shelter-details-link" to={`${directory}/${s.id}`} aria-label={`${t('viewDetails')} · ${s.name}`}>
                   {t('viewDetails')}
-                  <ArrowRight size={16} />
+                  <ArrowRight size={16} aria-hidden="true" />
                 </Link>
               </div>
             </Card>
           ))}
-          {shelters.length === 0 && <Empty title={t('empty')} />}
         </div>
       )}
     </div>
   );
 }
-export function ShelterDetails() {
+export function ShelterDetails({ workspace = false }: { workspace?: boolean }) {
   const { id } = useParams(),
     { t, i18n } = useTranslation(),
-    { user } = useAuth();
-  const query = useQuery({ queryKey: ['shelters'], queryFn: () => get<PublicShelter[]>('/shelters') });
+    { user } = useAuth(), country = useCountry();
+  const directory = workspace ? '/app/shelters' : '/shelters';
+  const query = useQuery({ queryKey: ['shelters', country], queryFn: () => get<PublicShelter[]>('/shelters') });
   const [route, setRoute] = useState(''),
     [busy, setBusy] = useState(false);
   if (query.isPending) return <Loading />;
-  if (query.error) return <ErrorState error={query.error} />;
+  if (query.error) return <ErrorState error={query.error} retry={() => void query.refetch()} />;
   const s = query.data?.find((x) => x.id === id);
-  if (!s) return <Empty title={t('empty')} />;
+  if (!s) return <Empty title={t('shelterNotAvailable')}
+    action={<NextLink to={directory}>{t('shelters')}</NextLink>} />;
   async function routing() {
+    if (!navigator.geolocation) { setRoute(t('locationDenied')); return; }
+    setRoute('');
     setBusy(true);
-    navigator.geolocation?.getCurrentPosition(
+    navigator.geolocation.getCurrentPosition(
       (position) => {
         void api
           .get<{ features: { properties: { summary: { distance: number; duration: number } } }[] }>(
@@ -413,17 +442,18 @@ export function ShelterDetails() {
         setRoute(t('locationDenied'));
         setBusy(false);
       },
+      { timeout: 10000 },
     );
   }
   return (
-    <div className="container page">
-      <NextLink to="/shelters">{t('back')}</NextLink>
+    <div className={workspace ? 'citizen-page citizen-shelter-details' : 'container page citizen-shelter-details'}>
+      <NextLink to={directory}>{t('back')}</NextLink>
       <PageHeader
         title={s.name}
         description={s.address}
-        action={<Badge value={s.open ? 'Open' : 'ShelterClosed'} />}
+        action={<Badge value={!s.open ? 'ShelterClosed' : s.available === 0 ? 'ShelterFull' : s.available < 10 ? 'NearlyFull' : 'Open'} />}
       />
-      <div className="two-column">
+      <div className="citizen-tracking-columns">
         <div className="stack">
           <Card>
             <div className="stat-grid">
@@ -455,7 +485,7 @@ export function ShelterDetails() {
           </Card>
         </div>
         <div className="stack">
-          <MapView shelters={[s]} point={[s.latitude, s.longitude]} />
+          <MapView shelters={[s]} failureMessage={t('shelterMapUnavailable')} />
           <Card>
             <p>{t('shelterSubtitle')}</p>
             <Link className="button primary" to="/app/requests/new?category=Shelter">
