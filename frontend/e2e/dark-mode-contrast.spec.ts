@@ -124,6 +124,7 @@ test('dark mode keeps request and staff screens readable', async ({ page }) => {
     const results = await new AxeBuilder({ page }).withRules(['color-contrast']).analyze();
     expect(results.violations, `Color contrast on ${path}`).toEqual([]);
     if (path === '/app/requests/new') {
+      await page.getByRole('radio', { name: /^Food & water/ }).press('Space');
       await page.getByRole('button', { name: 'Continue' }).click();
       await expect(page.getByRole('heading', { name: 'Details' })).toBeVisible();
       const details = await new AxeBuilder({ page }).withRules(['color-contrast']).analyze();
