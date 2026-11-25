@@ -85,6 +85,9 @@ public sealed class PartnerController(CrisisDbContext db, IStore store, AccessSe
         if (contribution.Status != ContributionStatus.Offered) throw new RuleException("Only pending offers can be edited.");
         if (input.SupportRequestId is Guid supportId)
             await supply.ValidateOffer(country, supportId, input.OrganisationId, input.Category, input.Kind, unit, input.Quantity, ct);
+        else if (input.Kind == "Resource" && (id == null || contribution.Kind != "Resource" ||
+            contribution.Category != category || QuantityUnits.Normalize(contribution.Unit) != unit))
+            units.EnsureStockCategory(unit, category);
         contribution.SupportRequestId = input.SupportRequestId;
         contribution.Category = category;
         contribution.Title = input.Title.Trim();
@@ -117,7 +120,7 @@ public sealed class PartnerController(CrisisDbContext db, IStore store, AccessSe
         var administration = operation is "accept" or "decline";
         if (administration)
         {
-            if (!await access.CountryAccess(country, [], ct)) throw new AccessDeniedException();
+            if (access.IsLogisticsWorkspace || !await access.CountryAccess(country, [], ct)) throw new AccessDeniedException();
             if (operation == "accept") await access.RequirePartner(contribution.OrganisationId, country, ct);
             if (operation == "accept" && contribution.SupportRequestId is Guid supportId)
             {
@@ -141,12 +144,14 @@ public sealed class PartnerController(CrisisDbContext db, IStore store, AccessSe
             ("progress", ContributionStatus.Accepted or ContributionStatus.InProgress) => RecordProgress(contribution, input.Quantity),
             _ => throw new RuleException("This action is unavailable for the current contribution status."),
         };
-        await RecordContribution(contribution, contribution.Status.ToString(), note, !administration, ct);
-        if (operation == "accept" && contribution.SupportRequestId is Guid acceptedSupport)
+        await RecordContribution(contribution, contribution.Status.ToString(), note, false, ct);
+        if (contribution.SupportRequestId is Guid affectedSupport)
         {
-            var request = await supply.FindRequest(acceptedSupport, country, ct);
-            await notifications.PartnerChanged(request.RequestingOrganisationId, country, request.CrisisId,
-                "A contribution was approved for your supply request.", false, ct);
+            var request = await supply.FindRequest(affectedSupport, country, ct);
+            if (operation == "accept")
+                await notifications.PartnerChanged(request.RequestingOrganisationId, country, request.CrisisId,
+                    "A contribution was approved for your supply request.", false, ct);
+            await notifications.SupplySupportChanged(request, $"The offer for a supply request is now {contribution.Status}.", ct);
         }
         return contribution;
     }, ct);
@@ -180,7 +185,8 @@ public sealed class PartnerController(CrisisDbContext db, IStore store, AccessSe
         db.Add(new CaseShare { RequestId = requestId, OrganisationId = organisationId,
             WorkTitle = input?.Title?.Trim(), WorkInstructions = input?.Instructions?.Trim() });
         operations.Audit("PartnerCaseShared", request, organisationId.ToString(), country);
-        await notifications.PartnerChanged(organisationId, country, request.CrisisId, $"New partner assignment · {request.Reference}.", false, ct);
+        await notifications.PartnerChanged(organisationId, country, request.CrisisId, $"New partner assignment · {request.Reference}.", false, ct,
+            requestId: request.Id);
         return NoContent();
     }, ct);
 
