@@ -8,7 +8,7 @@ import { AppLayout, PublicLayout } from '../layouts';
 vi.mock('../api', () => ({get: () => Promise.resolve([])}));
 
 vi.mock('../auth', () => ({
-  useAuth: () => ({ user: { name: 'Shelter staff', roles: ['ShelterAdmin'], memberships: [] }, logout: vi.fn() }),
+  useAuth: () => ({ user: { name: 'Shelter staff', roles: ['ShelterAdmin'], memberships: [{ role: 'ShelterAdmin', organisationId: 'operator', countryCode: 'LK' }] }, logout: vi.fn() }),
   landing: () => '/staff',
 }));
 
@@ -23,7 +23,8 @@ it('provides the workspace link inside the public mobile menu', () => {
 
 it('keeps staff navigation on the shared notifications page', () => {
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter initialEntries={['/app/notifications']}><Routes><Route path="/app" element={<AppLayout />}><Route path="notifications" element={<p>Notifications content</p>} /></Route></Routes></MemoryRouter></QueryClientProvider>);
-  expect(screen.getByRole('link', { name: 'Shelter management' })).toHaveAttribute('href', '/staff/shelters');
+  expect(screen.getByRole('link', { name: 'Shelter management' })).toHaveAttribute('href', '/staff/shelters?role=ShelterAdmin');
+  expect(screen.queryByRole('combobox', { name: 'Country' })).not.toBeInTheDocument();
   expect(screen.queryByRole('link', { name: 'My requests' })).not.toBeInTheDocument();
 });
 
