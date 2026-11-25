@@ -88,25 +88,23 @@ public sealed class GeographyController(CrisisDbContext db, AccessService access
         db.Set<AdministrativeDivision>().Where(x => x.CountryCode == code).OrderBy(x => x.Name).ToListAsync(ct);
 
     [HttpPut("admin/organisations/{id:guid}/countries/{code}")]
-    public async Task<IActionResult> EnableCountry(Guid id, string code, CancellationToken ct)
+    public async Task<IActionResult> RestoreCountryRegistration(Guid id, string code, CancellationToken ct)
     {
         await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         if (!await access.IsAdmin(ct)) throw new AccessDeniedException();
-        if (!await db.Set<Country>().AnyAsync(x => x.Code == code, ct)
-            || !await db.Set<Organisation>().AnyAsync(x => x.Id == id && x.ArchivedAt == null, ct))
-            throw new MissingException();
-        var operation = await db.Set<OrganisationCountry>().IgnoreQueryFilters().SingleOrDefaultAsync(x => x.OrganisationId == id && x.CountryCode == code, ct);
+        if (!await db.Set<Organisation>().AnyAsync(x => x.Id == id && x.ArchivedAt == null, ct)) throw new MissingException();
+        var registrations = db.Set<OrganisationCountry>().IgnoreQueryFilters().Where(x => x.OrganisationId == id);
+        var operation = await registrations.SingleOrDefaultAsync(x => x.CountryCode == code, ct);
         if (operation is null)
-        {
-            operation = new OrganisationCountry { OrganisationId = id, CountryCode = code };
-            db.Add(operation);
-        }
-        else if (operation.ArchivedAt is null) return NoContent();
+            throw new RuleException("Create a separate organisation for this country. You can only restore a registration in its original country.");
+        if (operation.ArchivedAt is null) return NoContent();
+        if (await registrations.AnyAsync(x => x.Id != operation.Id && x.ArchivedAt == null, ct))
+            throw new RuleException("This organisation still operates in another country. Close that registration before restoring this one.");
         operation.ArchivedAt = null;
         operation.VerificationState = "Pending";
         operation.ReviewerUserId = null;
         operation.ReviewedAt = null;
-        operations.Audit("OrganisationCountryEnabled", operation, code);
+        operations.Audit("OrganisationCountryEnabled", operation, operation.CountryCode);
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         return NoContent();
