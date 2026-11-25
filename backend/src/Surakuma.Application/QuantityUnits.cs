@@ -60,21 +60,39 @@ public static class QuantityUnits
             throw new RuleException("Enter a non-negative quantity with at most two decimal places.");
         ValidateWhole(quantity, unit);
     }
+
+    public static void ValidateStockLevel(decimal quantity, string? unit)
+    {
+        if (Normalize(unit) == "l" && quantity != decimal.Truncate(quantity))
+            throw new RuleException("Enter a whole number of litres for opening stock or the low-stock threshold. Use millilitres for smaller amounts.");
+        ValidateInventory(quantity, unit);
+    }
 }
 
-public sealed record ResourceUnit(string Code, string Label, bool AllowsFractions);
+public sealed record ResourceUnit(string Code, string Label, bool AllowsFractions, AidCategory[]? StockCategories = null);
 
 public sealed class ResourceUnitCatalog
 {
+    private static readonly AidCategory[] AllStockCategories = Enum.GetValues<AidCategory>();
+
     private readonly Dictionary<string, ResourceUnit> units = new(StringComparer.Ordinal)
     {
-        ["pieces"] = new("pieces", "Pieces", false),
-        ["packs"] = new("packs", "Packs", false),
-        ["kg"] = new("kg", "Kilograms (kg)", true),
-        ["g"] = new("g", "Grams (g)", true),
-        ["l"] = new("l", "Litres (L)", true),
-        ["ml"] = new("ml", "Millilitres (mL)", true),
-        ["persons"] = new("persons", "Persons", false)
+        ["pieces"] = new("pieces", "Pieces", false, AllStockCategories),
+        ["packs"] = new("packs", "Packs", false, [AidCategory.FoodWater, AidCategory.Medical, AidCategory.Shelter, AidCategory.Accessibility, AidCategory.Other]),
+        ["kg"] = new("kg", "Kilograms (kg)", true, [AidCategory.FoodWater, AidCategory.Other]),
+        ["g"] = new("g", "Grams (g)", true, [AidCategory.FoodWater]),
+        ["l"] = new("l", "Litres (L)", true, [AidCategory.FoodWater, AidCategory.Medical, AidCategory.Transportation, AidCategory.Other]),
+        ["ml"] = new("ml", "Millilitres (mL)", true, [AidCategory.FoodWater, AidCategory.Medical]),
+        ["persons"] = new("persons", "Persons", false, []),
+        ["bags"] = new("bags", "Bags", false, [AidCategory.FoodWater, AidCategory.Other]),
+        ["bottles"] = new("bottles", "Bottles", false, [AidCategory.FoodWater, AidCategory.Medical, AidCategory.Other]),
+        ["cartons"] = new("cartons", "Cartons", false, [AidCategory.FoodWater, AidCategory.Other]),
+        ["boxes"] = new("boxes", "Boxes", false, [AidCategory.Medical, AidCategory.Other]),
+        ["vials"] = new("vials", "Vials", false, [AidCategory.Medical]),
+        ["ampoules"] = new("ampoules", "Ampoules", false, [AidCategory.Medical]),
+        ["sets"] = new("sets", "Sets", false, [AidCategory.Shelter, AidCategory.Transportation, AidCategory.Accessibility, AidCategory.Other]),
+        ["rolls"] = new("rolls", "Rolls", false, [AidCategory.Shelter]),
+        ["pairs"] = new("pairs", "Pairs", false, [AidCategory.Accessibility, AidCategory.Other])
     };
 
     public ResourceUnitCatalog(IEnumerable<ResourceUnit> additional)
@@ -95,5 +113,12 @@ public sealed class ResourceUnitCatalog
     {
         var code = QuantityUnits.Normalize(unit);
         return units.ContainsKey(code) ? code : throw new RuleException("Choose a configured measurement unit.");
+    }
+
+    public void EnsureStockCategory(string code, AidCategory? category)
+    {
+        if (units[code].StockCategories is not { Length: > 0 } categories ||
+            category is { } selected && !categories.Contains(selected))
+            throw new RuleException("Choose a stock unit suitable for the selected aid category.");
     }
 }
