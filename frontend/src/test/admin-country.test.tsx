@@ -6,6 +6,7 @@ import '../i18n';
 import { api, get } from '../api';
 import { AppLayout } from '../layouts';
 import { AdminPage } from '../StaffSupport';
+import FundingWorkspace from '../FundingWorkspace';
 
 vi.mock('../api', () => ({ get: vi.fn(), api: { get: vi.fn() }, errorMessage: () => 'Error' }));
 vi.mock('../AdminCrisisMap', () => ({ default: () => null }));
@@ -22,6 +23,39 @@ const reportFilters = {
   crises: [{ id: 'flood', name: 'Flood response', countryCode: 'LK' }, { id: 'nepal', name: 'Nepal response', countryCode: 'NP' }],
 };
 const emptyCounts = { activeCrises: 0, submitted: 0, open: 0, unassigned: 0, overdue: 0, resolved: 0 };
+
+it('shows country-scoped funding figures and keeps admin funding navigation in its workspace', async () => {
+  const workspace = { campaigns: [], donations: [], allocations: [], expenses: [], events: [], reports: [], materialReports: [], flags: [] };
+  vi.mocked(get).mockImplementation(async path => {
+    if (path === '/countries') return countries as never;
+    if (path === '/funding/LK/workspace?manage=true') return {
+      ...workspace, donations: [{ id: 'pledge', state: 'Pledged' }, { id: 'received', state: 'Distributed', receiptReference: 'receipt' }],
+    } as never;
+    if (path === '/funding/NP/workspace?manage=true') return workspace as never;
+    return [] as never;
+  });
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <MemoryRouter initialEntries={['/admin/funding']}>
+      <Routes><Route path="/admin" element={<AppLayout mode="admin" />}>
+        <Route path="funding/:section?" element={<FundingWorkspace manage admin />} />
+      </Route></Routes>
+    </MemoryRouter>
+  </QueryClientProvider>);
+  const fundingNav = within(await screen.findByRole('navigation', { name: 'Funding sections' }));
+  expect(fundingNav.queryByRole('link', { name: 'Profile' })).not.toBeInTheDocument();
+  expect(fundingNav.getByRole('link', { name: 'Overview' })).toHaveAttribute('aria-current', 'page');
+  expect(screen.getByText('Verified donations').parentElement).toHaveTextContent('Verified donations1');
+  expect(screen.getByRole('link', { name: 'Review donations' })).toHaveAttribute('href', '/admin/funding/donations');
+
+  fireEvent.change(screen.getByRole('combobox', { name: 'Country' }), { target: { value: 'NP' } });
+  expect(await screen.findByText('No campaigns have been created for the selected country.')).toBeVisible();
+  expect(screen.getByText('Verified donations').parentElement).toHaveTextContent('Verified donations0');
+  fireEvent.click(screen.getByRole('link', { name: 'Transparency reports' }));
+  expect(await screen.findByText('No campaign totals')).toBeVisible();
+  expect(screen.getByRole('link', { name: 'Transparency reports' })).toHaveAttribute('aria-current', 'page');
+  expect(screen.getByText('Verified donations').parentElement).toHaveTextContent('Verified donations0');
+  expect(screen.getByText('Open campaigns')).toBeVisible();
+});
 
 it('keeps the current admin tab while replacing its data, then preserves the country across tabs', async () => {
   localStorage.setItem('surakuma.country', 'LK');
@@ -82,7 +116,7 @@ it('shows crisis-filtered cards on Overview and keeps report details in Reports'
     if (path.startsWith('/admin/system')) return { integrations: [], notificationQueue: [] } as never;
     if (path.startsWith('/admin/overview')) return {
       stock: { belowThreshold: 1, outOfStock: 0 }, shelters: { openShelters: 1, capacity: 100, reserved: 10, occupancy: 20, available: 70 },
-      partnerVerification: { count: 1 }, systemAccess: { count: 2 },
+      partnerVerification: { count: 1 },
     } as never;
     if (path === '/public/lookups') return { organisations: [], crises: [] } as never;
     return [] as never;
@@ -102,7 +136,7 @@ it('shows crisis-filtered cards on Overview and keeps report details in Reports'
   expect(unassigned).toHaveAttribute('href', '/admin?section=cases');
   expect(unassigned.closest('li')).toHaveAttribute('data-tone', 'red');
   expect(await screen.findByText('70%')).toBeVisible();
-  expect(screen.getByRole('link', { name: /2 pending system administrator access requests/i })).toHaveAttribute('href', '/admin?section=users#system-administrator-requests');
+  expect(screen.queryByRole('link', { name: /pending system administrator access requests/i })).not.toBeInTheDocument();
   expect(screen.queryByRole('heading', { name: 'Assignment queue' })).not.toBeInTheDocument();
   expect(get).not.toHaveBeenCalledWith('/requests/triage');
   expect(figures.getByText('Open cases').closest('li')).toHaveTextContent('5');
@@ -121,7 +155,6 @@ it('shows crisis-filtered cards on Overview and keeps report details in Reports'
   expect(filteredFigures.getByRole('link', { name: /overdue cases/i })).toHaveAttribute('href', '/admin/cases?view=overdue&country=LK&crisisId=flood');
   const filteredUnassigned = filteredFigures.getByRole('link', { name: /unassigned cases/i });
   expect(filteredUnassigned).not.toHaveTextContent('Needs attention');
-  expect(screen.getByRole('link', { name: /2 pending system administrator access requests/i })).toBeVisible();
 
   fireEvent.click(filteredUnassigned);
   expect(await screen.findByRole('heading', { name: 'Assignment queue' })).toBeVisible();
