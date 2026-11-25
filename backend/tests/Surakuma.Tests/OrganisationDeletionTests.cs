@@ -14,12 +14,11 @@ public sealed class OrganisationDeletionTests(ApiFixture fixture) : IClassFixtur
     private const string Directory = "/api/v1/admin/organisations";
 
     [Fact]
-    public async Task SystemAdminCanDeleteUnusedOrganisationFromEveryCountryAndAuditTheRemoval()
+    public async Task SystemAdminCanDeleteUnusedLegacyOrganisationFromEveryCountryAndAuditTheRemoval()
     {
         using var admin = await fixture.Login("admin");
-        var organisation = await CreateOrganisation(admin);
+        var organisation = await CreateLegacyMultiCountryOrganisation(admin);
         var path = $"{Directory}/{organisation.Id}";
-        (await admin.PutAsync(path + "/countries/NP", null)).EnsureSuccessStatusCode();
 
         using (var setup = fixture.Factory.Services.CreateScope())
         {
@@ -56,14 +55,13 @@ public sealed class OrganisationDeletionTests(ApiFixture fixture) : IClassFixtur
         var path = $"{Directory}/{organisation.Id}";
         var preview = await admin.GetFromJsonAsync<OrganisationDeletionController.DeletionImpact>(path + "/deletion");
         Assert.Empty(preview!.Blockers);
-        (await admin.PutAsync(path + "/countries/NP", null)).EnsureSuccessStatusCode();
 
         using (var setup = fixture.Factory.Services.CreateScope())
         {
             var db = setup.ServiceProvider.GetRequiredService<CrisisDbContext>();
             var citizen = await db.Users.SingleAsync(u => u.Email == "citizen@surakuma.test");
-            db.Add(new Crisis { Name = "Ended Nepal response", CountryCode = "NP", PrimaryOrganisationId = organisation.Id, Active = false });
-            db.Add(new Membership { UserId = citizen.Id, OrganisationId = organisation.Id, CountryCode = "NP", Role = Roles.CaseManager, Suspended = true });
+            db.Add(new Crisis { Name = "Ended Sri Lanka response", CountryCode = "LK", PrimaryOrganisationId = organisation.Id, Active = false });
+            db.Add(new Membership { UserId = citizen.Id, OrganisationId = organisation.Id, CountryCode = "LK", Role = Roles.CaseManager, Suspended = true });
             await db.SaveChangesAsync();
         }
 
@@ -71,17 +69,16 @@ public sealed class OrganisationDeletionTests(ApiFixture fixture) : IClassFixtur
         var updated = await admin.GetFromJsonAsync<OrganisationDeletionController.DeletionImpact>(path + "/deletion");
         Assert.Contains(updated!.Blockers, reason => reason.Contains("suspended grants"));
         Assert.Contains(updated.Blockers, reason => reason.Contains("primary centre"));
-        Assert.Equal(["Nepal", "Sri Lanka"], updated.Countries);
+        Assert.Equal(["Sri Lanka"], updated.Countries);
     }
 
     [Fact]
     public async Task DeleteAnywayWithdrawsAccessAndRoutingWhileKeepingTheCases()
     {
         using var admin = await fixture.Login("admin");
-        var organisation = await CreateOrganisation(admin);
+        var organisation = await CreateLegacyMultiCountryOrganisation(admin);
         var path = $"{Directory}/{organisation.Id}";
         var archive = path + "?archiveLinked=true";
-        (await admin.PutAsync(path + "/countries/NP", null)).EnsureSuccessStatusCode();
         Guid crisisId, openCaseId, closedCaseId, shelterId, proposalId;
         string managerId;
         using (var setup = fixture.Factory.Services.CreateScope())
@@ -107,7 +104,7 @@ public sealed class OrganisationDeletionTests(ApiFixture fixture) : IClassFixtur
             {
                 CountryCode = "LK", Kind = "GlobalAccess", State = "Pending",
                 RequesterUserId = managerId, ExpiresAt = DateTimeOffset.UtcNow.AddDays(1),
-                Payload = JsonSerializer.Serialize(new AdministrationController.GrantPayload(managerId))
+                Payload = JsonSerializer.Serialize(new { UserId = managerId })
             };
             foreach (var link in await db.Set<OrganisationCountry>().Where(link => link.OrganisationId == organisation.Id).ToListAsync())
                 link.VerificationState = "Verified";
@@ -182,9 +179,8 @@ public sealed class OrganisationDeletionTests(ApiFixture fixture) : IClassFixtur
     public async Task CountryRemovalOnlyWithdrawsLocalRoutingAccessAndDirectoryListing()
     {
         using var admin = await fixture.Login("admin");
-        var organisation = await CreateOrganisation(admin);
+        var organisation = await CreateLegacyMultiCountryOrganisation(admin);
         var path = $"{Directory}/{organisation.Id}";
-        (await admin.PutAsync(path + "/countries/NP", null)).EnsureSuccessStatusCode();
         (await admin.PostAsJsonAsync("/api/v1/admin/users", new
         {
             role = Roles.CountryAdministrator, countryCode = "NP", email = "removal-np@surakuma.test",
@@ -222,9 +218,21 @@ public sealed class OrganisationDeletionTests(ApiFixture fixture) : IClassFixtur
         Assert.Equal(organisation.Id, (await db.Set<AssistanceRequest>().FindAsync(sriLankaCase.Id))!.OrganisationId);
         Assert.Equal("LK", await db.Set<Membership>().Where(m => m.OrganisationId == organisation.Id).Select(m => m.CountryCode).SingleAsync());
         Assert.True(await db.Set<AuditEvent>().AnyAsync(a => a.Action == "OrganisationCountryRemoved" && a.CountryCode == "NP" && a.Detail == organisation.Name));
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PutAsync(removal, null)).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.DeleteAsync(path + "/countries/LK")).StatusCode);
         (await admin.PutAsync(removal, null)).EnsureSuccessStatusCode();
         Assert.Equal("Pending", await db.Set<OrganisationCountry>().Where(link => link.OrganisationId == organisation.Id && link.CountryCode == "NP").Select(link => link.VerificationState).SingleAsync());
         Assert.False(await db.Set<Membership>().AnyAsync(m => m.OrganisationId == organisation.Id && m.CountryCode == "NP"));
+    }
+
+    private async Task<Organisation> CreateLegacyMultiCountryOrganisation(HttpClient admin)
+    {
+        var organisation = await CreateOrganisation(admin);
+        using var scope = fixture.Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
+        db.Add(new OrganisationCountry { OrganisationId = organisation.Id, CountryCode = "NP", VerificationState = "LegacyActive" });
+        await db.SaveChangesAsync();
+        return organisation;
     }
 
     private static async Task<Organisation> CreateOrganisation(HttpClient admin)
