@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 
 test('public skip link and login controls support keyboard navigation and enlarged text', async ({
   page,
-}) => {
+}, run) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/');
   await expect(
@@ -37,5 +37,5 @@ test('public skip link and login controls support keyboard navigation and enlarg
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
-  await page.screenshot({ path: '../docs/screenshots/login-text-200.png', fullPage: true });
+  await page.screenshot({ path: run.outputPath('login-text-200.png'), fullPage: true });
 });
