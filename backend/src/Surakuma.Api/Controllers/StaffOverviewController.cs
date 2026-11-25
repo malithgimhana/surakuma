@@ -4,7 +4,6 @@ using Microsoft.EntityFrameworkCore;
 using Surakuma.Application;
 using Surakuma.Domain;
 using Surakuma.Infrastructure;
-using VolunteerStatus = Surakuma.Domain.TaskStatus;
 
 namespace Surakuma.Api.Controllers;
 
@@ -17,7 +16,10 @@ public sealed class StaffOverviewController(CrisisDbContext db, AccessService ac
     {
         if (role is not (Roles.Coordinator or Roles.CaseManager or Roles.Logistics or Roles.ShelterAdmin or Roles.VolunteerCoordinator))
             throw new AccessDeniedException();
-        var country = access.SelectedCountry ?? throw new RuleException("Select an operating country.");
+        var country = role == Roles.CaseManager ? await access.CaseManagerCountry(ct) :
+            access.SelectedCountry ?? throw new RuleException("Select an operating country.");
+        if (role == Roles.CaseManager && access.SelectedCountry is { } selected && selected != country)
+            throw new AccessDeniedException();
         var grants = db.Set<Membership>().Where(m => m.UserId == access.UserId && m.Role == role);
         if (!await grants.AnyAsync(ct)) throw new AccessDeniedException();
         var countryGrants = grants.Where(m => m.CountryCode == country);
@@ -25,27 +27,24 @@ public sealed class StaffOverviewController(CrisisDbContext db, AccessService ac
         var assignments = db.Set<CrisisAssignment>().Where(a => a.UserId == access.UserId);
         var crises = db.Set<Crisis>().Where(c => c.CountryCode == country && countryGrants.Any(m => m.CrisisId == null || m.CrisisId == c.Id));
         var countryOrgs = countryGrants.Where(m => m.CrisisId == null).Select(m => m.OrganisationId);
+        if (role == Roles.Coordinator)
+            countryOrgs = countryOrgs.Union(access.AssignedCoordinatorGrants(country).Select(m => m.OrganisationId));
         var now = DateTimeOffset.UtcNow;
         var metrics = new Dictionary<string, long>();
         if (role == Roles.VolunteerCoordinator)
         {
             var roster = await operations.Volunteers(ct, role);
-            var open = roster.Tasks.Where(t => t.Status is not (VolunteerStatus.Completed or VolunteerStatus.Declined)).ToArray();
-            metrics["verified"] = roster.Profiles.Count(v => v.Verified);
-            metrics["available"] = roster.Profiles.Count(v => v.Verified && v.Available);
-            metrics["open"] = open.Length;
-            metrics["deployments"] = open.Count(t => t.Status is VolunteerStatus.Accepted or VolunteerStatus.InProgress);
-            metrics["reports"] = open.Count(t => t.Status == VolunteerStatus.AwaitingVerification);
-            metrics["overdue"] = open.Count(t => t.DueAt < now);
+            foreach (var (key, value) in (await operations.VolunteerMetrics(roster, ct)).Metrics)
+                metrics[key] = value;
         }
         if (role is Roles.ShelterAdmin or Roles.Coordinator)
         {
             var shelters = db.Set<Shelter>().Where(s => s.CountryCode == country && countryOrgs.Contains(s.OrganisationId));
             var near = Math.Clamp(config.GetValue("ShelterDashboard:NearPercent", 80), 1, 99);
             var stale = now.AddHours(-Math.Clamp(config.GetValue("ShelterDashboard:StaleAfterHours", 168), 1, 87600));
-            metrics["pressure"] = await shelters.CountAsync(s => s.Capacity - s.Occupancy - s.Reserved < 0 ||
+            metrics["pressure"] = await shelters.CountAsync(s => s.PendingVerification || s.Capacity - s.Occupancy - s.Reserved < 0 ||
                 s.Capacity <= 0 || (long)s.Occupancy * 100 >= (long)s.Capacity * near ||
-                !s.Open && s.Occupancy + s.Reserved > 0 || s.Open && s.UpdatedAt < stale, ct);
+                !s.Open && s.Occupancy + s.Reserved > 0 || s.Open && (s.OperationalUpdatedAt ?? s.UpdatedAt) < stale, ct);
             if (role == Roles.ShelterAdmin)
             {
                 var stays = db.Set<ShelterAllocation>().Where(p => shelters.Any(s => s.Id == p.ShelterId) &&
@@ -82,28 +81,81 @@ public sealed class StaffOverviewController(CrisisDbContext db, AccessService ac
             if (role == Roles.CaseManager) cases = cases.Where(r => r.AssignedCaseManagerId == access.UserId);
             var open = cases.Where(r => !CaseReporting.Ended.Contains(r.Status));
             var overdueBefore = CaseReporting.OverdueBefore(now);
-            metrics["critical"] = await open.CountAsync(r => r.Priority == Priority.Critical, ct);
+            metrics["critical"] = await open.CountAsync(r => r.Priority == Priority.Critical ||
+                role == Roles.Coordinator && r.ImmediateDanger, ct);
             metrics["overdue"] = await open.CountAsync(r => r.CreatedAt < overdueBefore, ct);
             metrics["escalated"] = await cases.CountAsync(r => r.Escalated, ct);
             if (role == Roles.CaseManager)
             {
                 metrics["assigned"] = await open.CountAsync(ct);
                 metrics["verification"] = await open.CountAsync(r => r.Status == RequestStatus.UnderReview, ct);
-                metrics["ai"] = await open.CountAsync(r => db.Set<Recommendation>().Any(a => a.RequestId == r.Id &&
-                    (a.ReviewState == "Pending" || a.ReviewState == "Defer")), ct);
+                metrics["ai"] = await operations.PendingAiCases(open).CountAsync(ct);
+                metrics["followUps"] = await operations.FollowUpCases(cases).CountAsync(ct);
+                var needs = await open.GroupBy(r => r.Category)
+                    .Select(group => new
+                    {
+                        Category = group.Key,
+                        Cases = group.Count(),
+                        HouseholdMembers = group.Sum(r => (long)r.HouseholdSize),
+                        Critical = group.Count(r => r.Priority == Priority.Critical)
+                    }).OrderByDescending(group => group.HouseholdMembers).ThenBy(group => group.Category).ToListAsync(ct);
+                var attention = await cases.Where(r => r.Escalated ||
+                        !CaseReporting.Ended.Contains(r.Status) && (r.Priority == Priority.Critical ||
+                         r.CreatedAt < overdueBefore || r.Status == RequestStatus.Submitted || r.Status == RequestStatus.UnderReview ||
+                         r.Unit == null && r.Category != AidCategory.Shelter))
+                    .OrderByDescending(r => r.CreatedAt).ThenBy(r => r.Id).Take(4)
+                    .Select(r => new { r.Id, r.Reference, r.Category, r.HouseholdSize, r.Priority, r.Status, r.CreatedAt, r.Unit, r.Escalated })
+                    .ToListAsync(ct);
                 var decisions = await (from decision in db.Set<HumanDecision>()
                                        join request in cases on decision.RequestId equals request.Id
-                                       orderby decision.CreatedAt descending
-                                       select new { request.Id, request.Reference, decision.Action, decision.CreatedAt }).Take(6).ToListAsync(ct);
-                return new { HasAccess = true, metrics, decisions };
+                                       where decision.ActorId == access.UserId
+                                       orderby decision.CreatedAt descending, decision.Id
+                                       select new { request.Id, request.Reference, request.Category, decision.Action, decision.CreatedAt }).Take(4).ToListAsync(ct);
+                var regions = await db.Set<AdministrativeDivision>().Where(d => d.CountryCode == country &&
+                        cases.Any(r => r.AdministrativeDivisionId == d.Id))
+                    .OrderBy(d => d.Name).ThenBy(d => d.Id).Select(d => new { d.Id, d.Name, d.LevelName }).ToListAsync(ct);
+                return new { HasAccess = true, metrics, decisions, needs, attention, regions };
             }
             metrics["unassigned"] = await open.CountAsync(r => r.OrganisationId == null || r.AssignedCaseManagerId == null, ct);
             metrics["assignments"] = await open.CountAsync(r => r.AssignedCaseManagerId != null, ct);
-            metrics["shortages"] = await operations.ShortageCases(cases).CountAsync(ct);
-            var assignedCrises = await crises.Where(c => assignments.Any(a => a.CrisisId == c.Id)).OrderByDescending(c => c.Active)
-                .ThenBy(c => c.Name).Select(c => new { c.Id, c.Name, c.Active }).ToListAsync(ct);
+            var shortageIds = await operations.ShortageCases(cases).Select(r => r.Id).ToArrayAsync(ct);
+            metrics["shortages"] = shortageIds.Length;
+            metrics["cases"] = await cases.CountAsync(ct);
+            metrics["approved"] = await cases.CountAsync(r => r.Status == RequestStatus.Approved, ct);
+            metrics["followUps"] = await operations.FollowUpCases(cases).CountAsync(ct);
+            var authorization = open.Where(r => r.Status == RequestStatus.Approved &&
+                r.RequiresCoordinatorAuthorization && r.AuthorizedAt == null);
+            var coordinationActions = await Operations.OrderTriage(cases.Where(r => r.Escalated ||
+                    shortageIds.Contains(r.Id) || authorization.Any(s => s.Id == r.Id) ||
+                    !CaseReporting.Ended.Contains(r.Status) &&
+                    (r.ImmediateDanger || r.Priority == Priority.Critical || r.CreatedAt < overdueBefore)))
+                .Take(6).Select(r => new
+                {
+                    r.Id, r.Reference, r.Status, r.Priority, r.Category, r.LocationText, r.CreatedAt, r.Escalated,
+                    Critical = !CaseReporting.Ended.Contains(r.Status) && (r.ImmediateDanger || r.Priority == Priority.Critical),
+                    Overdue = !CaseReporting.Ended.Contains(r.Status) && r.CreatedAt < overdueBefore,
+                    Shortage = shortageIds.Contains(r.Id),
+                    AwaitingAuthorization = authorization.Any(s => s.Id == r.Id)
+                }).ToListAsync(ct);
+            var scopedCrises = crises.Where(c => assignments.Any(a => a.CrisisId == c.Id));
+            var assignedCrises = await scopedCrises.OrderByDescending(c => c.Active)
+                .ThenBy(c => c.Name).ThenBy(c => c.Id).Select(c => new
+                {
+                    c.Id, c.Name, c.Active, c.Type, c.District,
+                    Centre = db.Set<Organisation>().Where(o => o.Id == c.PrimaryOrganisationId)
+                        .Select(o => o.Name).FirstOrDefault(),
+                    OpenCases = open.Count(r => r.CrisisId == c.Id)
+                }).ToListAsync(ct);
             metrics["crises"] = assignedCrises.Count;
-            return new { HasAccess = true, metrics, crises = assignedCrises };
+            var activity = await db.Set<AuditEvent>().Where(a => (a.CountryCode == null || a.CountryCode == country) &&
+                    (a.EntityType == nameof(AssistanceRequest) && cases.Any(r => r.Id == a.EntityId) ||
+                     a.EntityType == nameof(Crisis) && scopedCrises.Any(c => c.Id == a.EntityId)))
+                .OrderByDescending(a => a.CreatedAt).ThenBy(a => a.Id).Take(5)
+                .Select(a => new { a.Id, a.EntityId, a.EntityType, a.Action, a.CreatedAt,
+                    Reference = cases.Where(r => r.Id == a.EntityId).Select(r => r.Reference).FirstOrDefault(),
+                    Crisis = scopedCrises.Where(c => c.Id == a.EntityId).Select(c => c.Name).FirstOrDefault() })
+                .ToListAsync(ct);
+            return new { HasAccess = true, metrics, crises = assignedCrises, Attention = coordinationActions, activity };
         }
         return new { HasAccess = true, metrics };
     }
