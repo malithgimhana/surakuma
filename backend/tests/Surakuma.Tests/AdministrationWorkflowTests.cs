@@ -28,7 +28,6 @@ public sealed class AdministrationWorkflowTests(ApiFixture fixture) : IClassFixt
             var request = new AssistanceRequest { CrisisId = crisisId, CitizenId = citizen.Id, SubmissionKey = Guid.NewGuid().ToString() };
             db.AddRange(request,
                 new OutboxMessage { RequestId = request.Id, UserId = citizen.Id, State = "ScopeTest" + country, Message = "Delivery " + country },
-                new AdminProposal { Kind = "GlobalAccess", CountryCode = country, Reason = "Scope test " + country, Payload = JsonSerializer.Serialize(new { UserId = citizen.Id }) },
                 new AdminAlert { ConditionKey = "scope-test-" + country, CountryCode = country, Message = "Alert " + country, ResolvedAt = DateTimeOffset.UtcNow });
             await db.SaveChangesAsync();
 
@@ -47,8 +46,6 @@ public sealed class AdministrationWorkflowTests(ApiFixture fixture) : IClassFixt
         Assert.DoesNotContain("Delivery NP", await Read("admin/delivery-management?state=ScopeTestNP"));
         Assert.Contains("Alert LK", await Read("admin/alerts"));
         Assert.DoesNotContain("Alert NP", await Read("admin/alerts"));
-        Assert.Contains("Scope test LK", await Read("admin/approvals"));
-        Assert.DoesNotContain("Scope test NP", await Read("admin/approvals"));
 
         var audit = (await admin.GetFromJsonAsync<JsonElement>("/api/v1/admin/audit?countryCode=LK&includeTotal=true")).GetProperty("items");
         var ids = audit.EnumerateArray().Select(a => a.GetProperty("entityId").GetGuid()).ToArray();
@@ -162,6 +159,27 @@ public sealed class AdministrationWorkflowTests(ApiFixture fixture) : IClassFixt
         var filtered = await admin.GetFromJsonAsync<JsonElement>(url + "&role=CountryAdministrator");
         Assert.Equal(1, filtered.GetProperty("total").GetInt32());
         Assert.Equal("Alpha", filtered.GetProperty("items")[0].GetProperty("name").GetString());
+    }
+
+    [Fact]
+    public async Task UserDirectoryHidesSystemAdministratorsFromSystemAdministrators()
+    {
+        using var admin = await fixture.Login("admin");
+        const string url = "/api/v1/admin/users";
+        var all = await admin.GetFromJsonAsync<JsonElement>(url + "?includeTotal=true&pageSize=100");
+        var items = all.GetProperty("items");
+        Assert.NotEmpty(items.EnumerateArray());
+        Assert.All(items.EnumerateArray(), row => Assert.False(row.GetProperty("isSystemAdministrator").GetBoolean()));
+
+        var legacy = await admin.GetFromJsonAsync<JsonElement>(url + "?search=admin%40surakuma.test");
+        Assert.Empty(legacy.EnumerateArray());
+
+        foreach (var filter in new[] { "search=admin%40surakuma.test", "role=Administrator" })
+        {
+            var page = await admin.GetFromJsonAsync<JsonElement>(url + "?includeTotal=true&countryCode=LK&" + filter);
+            Assert.Equal(0, page.GetProperty("total").GetInt32());
+            Assert.Empty(page.GetProperty("items").EnumerateArray());
+        }
     }
 
     async Task<(string Id, HttpClient Client)> Staff(string role, string country = "LK", bool citizen = false)
@@ -324,7 +342,6 @@ public sealed class AdministrationWorkflowTests(ApiFixture fixture) : IClassFixt
 
         Assert.Equal(HttpStatusCode.Forbidden, (await actor.PutAsJsonAsync("/api/v1/countries/LK/services", settings)).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await citizen.PutAsJsonAsync("/api/v1/countries/NP/services", settings)).StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, (await actor.GetAsync("/api/v1/admin/approvals")).StatusCode);
         Assert.Equal(HttpStatusCode.NoContent, (await actor.PutAsJsonAsync("/api/v1/countries/NP/services", settings)).StatusCode);
         Assert.Equal(HttpStatusCode.NoContent, (await actor.PutAsJsonAsync("/api/v1/countries/NP/services", settings)).StatusCode);
 
@@ -337,40 +354,37 @@ public sealed class AdministrationWorkflowTests(ApiFixture fixture) : IClassFixt
         Assert.Equal(actorId, update.GetProperty("actorId").GetString());
         Assert.Contains("Emergency contacts updated", update.GetProperty("detail").GetString());
 
-        var notifications = await admin.GetFromJsonAsync<JsonElement>("/api/v1/notifications?countryCode=LK&unreadOnly=true");
+        var notifications = await admin.GetFromJsonAsync<JsonElement>("/api/v1/notifications?countryCode=NP&unreadOnly=true");
         var notice = Assert.Single(notifications.EnumerateArray(), n => n.GetProperty("message").GetString()!.Contains(notificationText));
+        Assert.DoesNotContain(notificationText, await admin.GetStringAsync("/api/v1/notifications?countryCode=LK&unreadOnly=true"));
         Assert.DoesNotContain(notificationText, await actor.GetStringAsync("/api/v1/notifications?countryCode=NP"));
         Assert.DoesNotContain(notificationText, await citizen.GetStringAsync("/api/v1/notifications?countryCode=NP"));
-        Assert.Equal(HttpStatusCode.NoContent, (await admin.PostAsync($"/api/v1/notifications/{notice.GetProperty("id").GetGuid()}/read?countryCode=LK", null)).StatusCode);
-        Assert.DoesNotContain(notificationText, await admin.GetStringAsync("/api/v1/notifications?countryCode=LK&unreadOnly=true"));
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.PostAsync($"/api/v1/notifications/{notice.GetProperty("id").GetGuid()}/read?countryCode=NP", null)).StatusCode);
+        Assert.DoesNotContain(notificationText, await admin.GetStringAsync("/api/v1/notifications?countryCode=NP&unreadOnly=true"));
     }
 
     [Fact]
-    public async Task SystemAdministratorAccessStillRequiresDifferentAdminAndCannotApplyTwice()
+    public async Task SystemAdministratorAccessCannotBeGrantedThroughStaffAdministration()
     {
-        using var admin = await fixture.Login("admin"); var (_, other) = await Staff(Roles.Administrator);
+        using var admin = await fixture.Login("admin");
         var (targetId, targetClient) = await Staff(Roles.CountryAdministrator);
         using var target = targetClient;
         using var scope = fixture.Factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
-        var email = await db.Users.Where(u => u.Id == targetId).Select(u => u.Email).SingleAsync();
-        var legacy = new AdminProposal { Kind = "CountryServices", CountryCode = "LK", Reason = "Legacy settings request" };
+        var account = await db.Users.SingleAsync(u => u.Id == targetId);
+        var legacy = new AdminProposal { Kind = "GlobalAccess", CountryCode = "LK", Payload = JsonSerializer.Serialize(new { UserId = targetId }) };
         db.Add(legacy);
         await db.SaveChangesAsync();
-        using (other)
-        {
-            var response = await admin.PostAsJsonAsync("/api/v1/admin/users", new { email, role = Roles.Administrator, countryCode = "NP" });
-            response.EnsureSuccessStatusCode();
-            var id = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
-            var requests = await other.GetStringAsync("/api/v1/admin/approvals?countryCode=");
-            Assert.Contains(id.ToString(), requests);
-            Assert.DoesNotContain(legacy.Id.ToString(), requests);
-            Assert.Equal(HttpStatusCode.NotFound, (await other.PostAsJsonAsync($"/api/v1/admin/approvals/{legacy.Id}/decision", new { action = "Approve", reason = "Old request" })).StatusCode);
-            Assert.Equal(HttpStatusCode.BadRequest, (await admin.PostAsJsonAsync($"/api/v1/admin/approvals/{id}/decision", new { action = "Approve", reason = "Checked" })).StatusCode);
-            Assert.Equal(HttpStatusCode.NoContent, (await other.PostAsJsonAsync($"/api/v1/admin/approvals/{id}/decision", new { action = "Approve", reason = "Checked" })).StatusCode);
-            Assert.Equal(HttpStatusCode.BadRequest, (await other.PostAsJsonAsync($"/api/v1/admin/approvals/{id}/decision", new { action = "Approve", reason = "Again" })).StatusCode);
-            Assert.True(await db.ActiveSystemAdministrators.AnyAsync(u => u.Id == targetId));
-        }
+        var proposalsBefore = await db.Set<AdminProposal>().CountAsync();
+
+        var grant = new { email = account.Email, role = Roles.Administrator, countryCode = "LK" };
+        Assert.Equal(HttpStatusCode.BadRequest, (await admin.PostAsJsonAsync("/api/v1/admin/users", grant)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await target.PostAsJsonAsync("/api/v1/admin/users", grant)).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await admin.GetAsync("/api/v1/admin/approvals")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await admin.PostAsJsonAsync($"/api/v1/admin/approvals/{legacy.Id}/decision", new { action = "Approve", reason = "Old request" })).StatusCode);
+
+        Assert.Equal(proposalsBefore, await db.Set<AdminProposal>().CountAsync());
+        Assert.False(await db.ActiveSystemAdministrators.AnyAsync(u => u.Id == targetId));
     }
     [Fact]
     public async Task PendingPartnerCannotReceiveStaffAndCountryAdminCannotVerify()
@@ -378,12 +392,38 @@ public sealed class AdministrationWorkflowTests(ApiFixture fixture) : IClassFixt
         using var admin = await fixture.Login("admin"); var (_, national) = await Staff(Roles.CountryAdministrator);
         using (national)
         {
-            var created = await admin.PostAsJsonAsync("/api/v1/admin/organisations", new { name = "Pending partner", countryCode = "LK" }); created.EnsureSuccessStatusCode(); var id = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+            const string organisations = "/api/v1/admin/organisations";
+            using var coordinator = await fixture.Login("coordinator");
+            Assert.Equal(HttpStatusCode.Forbidden, (await coordinator.PostAsJsonAsync(organisations, new { name = "Pending partner", countryCode = "LK" })).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await national.PostAsJsonAsync(organisations, new { name = "Pending partner", countryCode = "NP" })).StatusCode);
+            var created = await national.PostAsJsonAsync(organisations, new { name = "Pending partner", countryCode = "LK" });
+            created.EnsureSuccessStatusCode();
+            var id = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+            var localDirectory = await national.GetFromJsonAsync<JsonElement>(organisations + "?countryCode=LK");
+            var localPartner = Assert.Single(localDirectory.EnumerateArray(), partner => partner.GetProperty("id").GetGuid() == id);
+            Assert.Equal("Pending", localPartner.GetProperty("verification").GetProperty("verificationState").GetString());
+            var foreignDirectory = await admin.GetFromJsonAsync<JsonElement>(organisations + "?countryCode=NP");
+            Assert.DoesNotContain(foreignDirectory.EnumerateArray(), partner => partner.GetProperty("id").GetGuid() == id);
+            async Task<Notification[]> PartnerNotifications(HttpClient client, string country) =>
+                (await client.GetFromJsonAsync<Notification[]>($"/api/v1/notifications?countryCode={country}") ?? [])
+                .Where(n => n.ScopeOrganisationId == id).ToArray();
+            Assert.Contains("pending verification", Assert.Single(await PartnerNotifications(admin, "LK")).Message);
+            Assert.Empty(await PartnerNotifications(admin, "NP"));
             var input = new { email = Guid.NewGuid()+"@surakuma.test", name = "Staff", password = fixture.Password, organisationId = id, countryCode = "LK", role = "CaseManager" };
             Assert.Equal(HttpStatusCode.BadRequest, (await admin.PostAsJsonAsync("/api/v1/admin/users", input)).StatusCode);
             var verify = new { evidence = "Registration checked https://example.org/registration", decision = "Verified", reason = "Reviewed" };
-            Assert.Equal(HttpStatusCode.Forbidden, (await national.PostAsJsonAsync($"/api/v1/admin/organisations/{id}/countries/LK/verification", verify)).StatusCode);
-            Assert.Equal(HttpStatusCode.NoContent, (await admin.PostAsJsonAsync($"/api/v1/admin/organisations/{id}/countries/LK/verification", verify)).StatusCode);
+            var reviewPath = $"/api/v1/admin/organisations/{id}/countries/LK/verification";
+            var evidence = new { verify.evidence, decision = (string?)null, reason = "" };
+            Assert.Equal(HttpStatusCode.NoContent, (await national.PostAsJsonAsync(reviewPath, evidence)).StatusCode);
+            Assert.Equal(HttpStatusCode.NoContent, (await national.PostAsJsonAsync(reviewPath, evidence)).StatusCode);
+            var reviewNotifications = await PartnerNotifications(admin, "LK");
+            Assert.Equal(2, reviewNotifications.Length);
+            Assert.Single(reviewNotifications, n => n.Message.Contains("evidence was submitted"));
+            Assert.Empty(await PartnerNotifications(national, "LK"));
+            Assert.Empty(await PartnerNotifications(coordinator, "LK"));
+            Assert.Equal(HttpStatusCode.Forbidden, (await national.PostAsJsonAsync(reviewPath, verify)).StatusCode);
+            Assert.Equal(HttpStatusCode.NoContent, (await admin.PostAsJsonAsync(reviewPath, verify)).StatusCode);
+            Assert.Contains("was verified", Assert.Single(await PartnerNotifications(national, "LK")).Message);
             Assert.True((await admin.PostAsJsonAsync("/api/v1/admin/users", input)).IsSuccessStatusCode);
         }
     }
