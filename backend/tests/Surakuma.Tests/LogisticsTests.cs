@@ -44,6 +44,7 @@ public sealed class LogisticsTests(ApiFixture fixture) : IClassFixture<ApiFixtur
         Assert.Equal(HttpStatusCode.BadRequest, (await logistics.PostAsJsonAsync(path + "/orders", order)).StatusCode);
         (await logistics.PostAsJsonAsync(path + "/orders", order with { quantity = 1500 })).EnsureSuccessStatusCode();
         var shipment = $"{path}/orders/{order.operationId}";
+        (await logistics.PostAsJsonAsync($"/api/v1/fulfillment/orders/{order.operationId}/prepare", new { packedQuantity = 1500, note = "Packed for transfer." })).EnsureSuccessStatusCode();
         (await logistics.PostAsJsonAsync(shipment + "/dispatch", new { reason = "Synthetic dispatch." })).EnsureSuccessStatusCode();
         var delivery = new
         {
@@ -123,6 +124,7 @@ public sealed class LogisticsTests(ApiFixture fixture) : IClassFixture<ApiFixtur
         Assert.Equal(HttpStatusCode.BadRequest, (await admin.PostAsJsonAsync($"{module}/resources/{origin}/stock",
             new { operationId = Guid.NewGuid(), delta = -301, reason = "Cannot adjust below reservations" })).StatusCode);
         var orderId = reservation.operationId;
+        (await admin.PostAsJsonAsync($"/api/v1/fulfillment/orders/{orderId}/prepare", new { packedQuantity = 200, note = "Packed." })).EnsureSuccessStatusCode();
         (await admin.PostAsJsonAsync($"{module}/orders/{orderId}/dispatch", new { reason = "Released to carrier" })).EnsureSuccessStatusCode();
         await CheckBalance(origin, 300, 0, 300);
         Assert.Equal(HttpStatusCode.BadRequest, (await admin.PostAsJsonAsync($"{module}/orders/{orderId}/cancel", new { reason = "Already departed" })).StatusCode);
@@ -154,10 +156,13 @@ public sealed class LogisticsTests(ApiFixture fixture) : IClassFixture<ApiFixtur
         var transfer = new { operationId = Guid.NewGuid(), kind = "Transfer", resourceId = origin, destinationResourceId = receiver,
             quantity = 120, reason = "Reposition stock" };
         Assert.Equal(HttpStatusCode.Forbidden, (await sriLanka.PostAsJsonAsync($"{module}/orders", transfer)).StatusCode);
-        (await admin.PostAsJsonAsync($"{module}/orders", transfer)).EnsureSuccessStatusCode();
+        var createdTransfer = await admin.PostAsJsonAsync($"{module}/orders", transfer);
+        createdTransfer.EnsureSuccessStatusCode();
+        Assert.Matches(@"^TRF-[0-9]{4,}$", (await createdTransfer.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("reference").GetString()!);
         await CheckBalance(origin, 300, 120, 180);
         await CheckBalance(receiver, 0, 0, 0);
         var transferId = transfer.operationId;
+        (await admin.PostAsJsonAsync($"/api/v1/fulfillment/orders/{transferId}/prepare", new { packedQuantity = 120, note = "Packed." })).EnsureSuccessStatusCode();
         (await admin.PostAsJsonAsync($"{module}/orders/{transferId}/dispatch", new { reason = "Shipment departed the origin" })).EnsureSuccessStatusCode();
         await CheckBalance(origin, 180, 0, 180);
         await CheckBalance(receiver, 0, 0, 0);
