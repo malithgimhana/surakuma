@@ -20,7 +20,8 @@ public sealed class CourseworkWorkflowTests(ApiFixture fixture) : IClassFixture<
         var need = await db.Set<AssistanceRequest>().AsNoTracking().SingleAsync(x => x.SubmissionKey == "seed-food");
         var resource = await db.Set<Resource>().AsNoTracking().SingleAsync(x => x.Name == "Family food packs");
         using var admin = await fixture.Login("admin");
-        using var donor = await fixture.Login("citizen");
+        using var donor = await fixture.RegisterDonor("Synthetic donor");
+        using var otherDonor = await fixture.RegisterDonor("Other synthetic donor");
         using var volunteer = await fixture.Login("volunteer");
         using var logistics = await fixture.Login("logistics");
         using var anonymous = fixture.Client();
@@ -42,6 +43,14 @@ public sealed class CourseworkWorkflowTests(ApiFixture fixture) : IClassFixture<
         var materials = new { operationId = Guid.NewGuid(), campaignId = campaign, kind = "Material", category = "FoodWater", amount = 4, unit = "packs" };
         var moneyId = Id(await Post(donor, funding + "/donations", money));
         Assert.Equal(moneyId, Id(await Post(donor, funding + "/donations", money)));
+        const string donorInbox = "/api/v1/notifications?donorOnly=true&countryCode=";
+        var pledgeNotice = Assert.Single((await donor.GetFromJsonAsync<Notification[]>(donorInbox + "LK"))!);
+        Assert.Equal(Roles.Donor, pledgeNotice.ScopeRole);
+        Assert.Empty((await otherDonor.GetFromJsonAsync<Notification[]>(donorInbox + "LK"))!);
+        Assert.Empty((await donor.GetFromJsonAsync<Notification[]>(donorInbox + "NP"))!);
+        Assert.Equal(HttpStatusCode.Forbidden, (await officer.GetAsync(donorInbox + "LK")).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await donor.PostAsync($"/api/v1/notifications/{pledgeNotice.Id}/read?donorOnly=true&countryCode=LK", null)).StatusCode);
+        Assert.True(Assert.Single((await donor.GetFromJsonAsync<Notification[]>(donorInbox + "LK"))!).Read);
         var materialId = Id(await Post(donor, funding + "/donations", materials));
         var cancelledId = Id(await Post(donor, funding + "/donations", money with { operationId = Guid.NewGuid(), amount = 20 }));
         await Post(donor, funding + $"/donations/{cancelledId}/cancel");
@@ -51,8 +60,10 @@ public sealed class CourseworkWorkflowTests(ApiFixture fixture) : IClassFixture<
         Assert.Equal(0, beforeTotals.GetProperty("received").GetDecimal());
         var reviewFlag = Id(Assert.Single(before.GetProperty("flags").EnumerateArray()));
         await Post(officer, funding + $"/investigations/{reviewFlag}/review", new { outcome = "Monitor", reason = "Verify supporting documents without restricting aid." });
-        Assert.Empty((await volunteer.GetFromJsonAsync<JsonElement>(funding + "/workspace")).GetProperty("donations").EnumerateArray());
-        Assert.Equal(HttpStatusCode.NotFound, (await volunteer.PostAsync(funding + $"/donations/{materialId}/cancel", null)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await volunteer.GetAsync(funding + "/workspace")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await volunteer.PostAsync(funding + $"/donations/{materialId}/cancel", null)).StatusCode);
+        Assert.Empty((await otherDonor.GetFromJsonAsync<JsonElement>(funding + "/workspace")).GetProperty("donations").EnumerateArray());
+        Assert.Equal(HttpStatusCode.NotFound, (await otherDonor.PostAsync(funding + $"/donations/{materialId}/cancel", null)).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await donor.PostAsJsonAsync(funding + $"/donations/{moneyId}/confirm", new { reference = "unverified" })).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await officer.PostAsJsonAsync(funding + $"/donations/{moneyId}/allocations",
             new { operationId = Guid.NewGuid(), requestId = need.Id, amount = 100 })).StatusCode);
@@ -86,12 +97,33 @@ public sealed class CourseworkWorkflowTests(ApiFixture fixture) : IClassFixture<
         Assert.Equal(expenseId, Id(await Post(officer, expensePath, expense)));
         Assert.Equal(HttpStatusCode.BadRequest, (await officer.PostAsJsonAsync(expensePath,
             expense with { operationId = Guid.NewGuid(), amount = 300, reference = "OVER-BUDGET" })).StatusCode);
+        var campaignPath = funding + $"/campaigns/{campaign}";
+        var edit = new CampaignUpdateInput("Updated family relief fund", "Food, water and household essentials", 750);
+        Assert.Equal(HttpStatusCode.Forbidden, (await donor.PutAsJsonAsync(campaignPath, edit)).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await officer.PutAsJsonAsync($"/api/v1/funding/NP/campaigns/{campaign}", edit)).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await officer.PutAsJsonAsync(campaignPath, edit with { Budget = 749.99m })).StatusCode);
+        using var saved = await officer.PutAsJsonAsync(campaignPath, edit);
+        saved.EnsureSuccessStatusCode();
+        var editedCampaign = (await saved.Content.ReadFromJsonAsync<FundingCampaign>())!;
+        Assert.Equal(campaign, editedCampaign.Id);
+        Assert.Equal(need.OrganisationId, editedCampaign.OrganisationId);
+        Assert.Equal(need.CrisisId, editedCampaign.CrisisId);
+        Assert.True(editedCampaign.Open);
+        Assert.Equal(edit.Name, editedCampaign.Name);
+        Assert.Equal(edit.Purpose, editedCampaign.Purpose);
+        Assert.Equal(edit.Budget, editedCampaign.Budget);
+        (await officer.PutAsJsonAsync(campaignPath, edit)).EnsureSuccessStatusCode();
+        Assert.Equal(1, await db.Set<AuditEvent>().CountAsync(a => a.EntityId == campaign && a.Action == "FundingCampaignUpdated"));
+
         using var publicReport = await donor.GetAsync(funding + "/workspace");
         publicReport.EnsureSuccessStatusCode();
         var result = await publicReport.Content.ReadFromJsonAsync<JsonElement>();
         Assert.DoesNotContain("VERIFIED-INVOICE-01", result.GetRawText());
         Assert.DoesNotContain("SYNTHETIC-TRANSFER-100", result.GetRawText());
+        Assert.Contains(result.GetProperty("expenses").EnumerateArray(), entry => Id(entry) == expenseId &&
+            entry.GetProperty("createdAt").GetDateTimeOffset() != default && entry.GetProperty("reference").ValueKind == JsonValueKind.Null);
         var totals = Assert.Single(result.GetProperty("reports").EnumerateArray());
+        Assert.Equal(edit.Budget, totals.GetProperty("budget").GetDecimal());
         Assert.Equal(1250, totals.GetProperty("received").GetDecimal());
         Assert.Equal(1100, totals.GetProperty("allocated").GetDecimal());
         Assert.Equal(750, totals.GetProperty("expended").GetDecimal());
@@ -105,6 +137,10 @@ public sealed class CourseworkWorkflowTests(ApiFixture fixture) : IClassFixture<
         Assert.Equal("Captured", await db.Set<NotificationDelivery>().Where(d => d.EventId == eventId).Select(d => d.State).SingleAsync());
         await worker.ProcessOne(CancellationToken.None);
         Assert.Equal(1, await db.Set<NotificationDelivery>().CountAsync(d => d.EventId == eventId));
+
+        var outsideScope = Id(await Post(admin, funding + "/campaigns", new { organisationId = need.OrganisationId,
+            name = "Country-wide relief fund", purpose = "Unrestricted to a specific crisis", budget = 500 }));
+        Assert.Equal(HttpStatusCode.Forbidden, (await officer.PutAsJsonAsync(funding + $"/campaigns/{outsideScope}", edit)).StatusCode);
     }
 
     [Fact]
@@ -144,6 +180,10 @@ public sealed class CourseworkWorkflowTests(ApiFixture fixture) : IClassFixture<
         await Post(coordinator, path + $"/investigations/{flagId}/review", new { outcome = "Monitor", reason = "Reviewed both original references." });
         var consolidate = new { primaryRequestId = primary, reason = "Confirmed both submissions describe the same household need." };
         Assert.Equal(HttpStatusCode.Forbidden, (await citizen.PostAsJsonAsync($"{requests}/{original}/consolidate", consolidate)).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await manager.PostAsJsonAsync($"{requests}/{original}/consolidate", consolidate)).StatusCode);
+        var advice = await manager.GetFromJsonAsync<JsonElement>($"{requests}/{original}/recommendations");
+        var duplicate = advice.GetProperty("duplicates").EnumerateArray().Single(d => d.GetProperty("candidateId").GetGuid() == primary);
+        (await manager.PostAsJsonAsync($"{requests}/{original}/duplicates/{Id(duplicate)}", new { action = "Confirmed" })).EnsureSuccessStatusCode();
         await Post(manager, $"{requests}/{original}/consolidate", consolidate);
         var history = await citizen.GetFromJsonAsync<JsonElement>($"{requests}/{original}");
         Assert.Equal("Cancelled", history.GetProperty("request").GetProperty("status").GetString());
@@ -174,8 +214,10 @@ public sealed class CourseworkWorkflowTests(ApiFixture fixture) : IClassFixture<
         foreach (var caseId in caseIds)
             foreach (var status in new[] { "UnderReview", "Verified", "Approved" })
                 (await manager.PatchAsJsonAsync($"{requests}/{caseId}/status", new { status, reason = "Authorized synthetic review." })).EnsureSuccessStatusCode();
+        var seededDue = await db.Set<VolunteerTask>().Where(t => t.VolunteerId == volunteer.Id && t.StartsAt == null)
+            .Select(t => t.DueAt).SingleAsync();
         var firstTask = new { requestId = caseIds[0], volunteerId = volunteer.Id, title = "Synthetic shift", requiredSkill = "distribution",
-            startsAt = now.AddMinutes(5), dueAt = now.AddHours(2) };
+            startsAt = seededDue, dueAt = seededDue.AddHours(2) };
         var assigned = Id(await Post(volunteers, "/api/v1/volunteer-tasks", firstTask));
         var encodedStart = Uri.EscapeDataString(firstTask.startsAt.ToString("O"));
         var encodedEnd = Uri.EscapeDataString(firstTask.dueAt.ToString("O"));
@@ -220,7 +262,8 @@ public sealed class CourseworkWorkflowTests(ApiFixture fixture) : IClassFixture<
             organisationId = target.Id, title = "Synthetic food pack handoff", kind = "Resource", unit = "packs",
             category = "FoodWater", quantity = 5, supportRequestId = request, description = "Stock is available for handoff after approval." }));
         var receivePath = supply + $"/contributions/{offer}/receipts";
-        var receipt = new { operationId = Guid.NewGuid(), resourceId = resource.Id, quantity = 5, reference = "SYNTHETIC-HANDOFF-01" };
+        var receipt = new { operationId = Guid.NewGuid(), resourceId = resource.Id, quantity = 3, reference = "SYNTHETIC-HANDOFF-01",
+            discrepancy = "Two packs are still expected." };
         Assert.Equal(HttpStatusCode.BadRequest, (await logistics.PostAsJsonAsync(receivePath, receipt)).StatusCode);
         Assert.Equal(resource.Stock, await db.Set<Resource>().Where(r => r.Id == resource.Id).Select(r => r.Stock).SingleAsync());
         await Post(admin, $"/api/v1/partner/contributions/{offer}/accept?countryCode=LK", new { note = "Reviewed the supply offer and approved the proposed handoff." });
@@ -230,10 +273,17 @@ public sealed class CourseworkWorkflowTests(ApiFixture fixture) : IClassFixture<
         Assert.Contains(options.GetProperty("resources").EnumerateArray(), r => Id(r) == resource.Id);
         var receiptId = Id(await Post(logistics, receivePath, receipt));
         Assert.Equal(receiptId, Id(await Post(logistics, receivePath, receipt)));
+        Assert.Equal(HttpStatusCode.BadRequest, (await logistics.PostAsJsonAsync(receivePath,
+            receipt with { operationId = Guid.NewGuid() })).StatusCode);
+        var tracked = await shelterAdmin.GetFromJsonAsync<JsonElement>(supply + "?staffRole=ShelterAdmin&countryCode=LK");
+        Assert.Equal(receipt.discrepancy, Assert.Single(tracked.GetProperty("receipts").EnumerateArray()).GetProperty("discrepancy").GetString());
+        Assert.Equal(1, tracked.GetProperty("statistics").GetProperty("active").GetInt32());
+        Assert.Equal(2, (await logistics.GetFromJsonAsync<JsonElement>(receivePath)).GetProperty("remaining").GetDecimal());
+        await Post(logistics, receivePath, receipt with { operationId = Guid.NewGuid(), quantity = 2, reference = "SECOND-RECEIPT", discrepancy = "" });
         Assert.Equal(resource.Stock + 5, await db.Set<Resource>().Where(r => r.Id == resource.Id).Select(r => r.Stock).SingleAsync());
         Assert.Equal(5, await db.Set<SupplyRequest>().Where(r => r.Id == request).Select(r => r.ReceivedQuantity).SingleAsync());
-        Assert.Equal(HttpStatusCode.BadRequest, (await logistics.PostAsJsonAsync(receivePath,
-            receipt with { operationId = Guid.NewGuid(), reference = "SECOND-RECEIPT" })).StatusCode);
+        tracked = await shelterAdmin.GetFromJsonAsync<JsonElement>(supply + "?staffRole=ShelterAdmin&countryCode=LK");
+        Assert.Equal(1, tracked.GetProperty("statistics").GetProperty("delivered").GetInt32());
     }
 
 
@@ -247,10 +297,8 @@ public sealed class CourseworkWorkflowTests(ApiFixture fixture) : IClassFixture<
         using var citizen = await fixture.Login("citizen");
         using var foreign = await fixture.Login("coordinator");
         using var anonymous = fixture.Client();
-        var organisation = Id((await anonymous.GetFromJsonAsync<JsonElement>("/api/v1/public/lookups"))
-            .GetProperty("organisations").EnumerateArray().First(o => o.GetProperty("name").GetString()!.Contains("Community Response")));
-        using var registration = await admin.PutAsync($"/api/v1/admin/organisations/{organisation}/countries/{country}", null);
-        registration.EnsureSuccessStatusCode();
+        var organisation = Id(await Post(admin, "/api/v1/admin/organisations",
+            new { name = $"Coursework response centre {country}", countryCode = country }));
         await Post(admin, $"/api/v1/admin/organisations/{organisation}/countries/{country}/verification",
             new { evidence = "Synthetic national partner documentation.", decision = "Verified", reason = "Checked authorised operations." });
         var regions = await anonymous.GetFromJsonAsync<JsonElement>($"/api/v1/countries/{country}/divisions");
@@ -313,7 +361,9 @@ public sealed class CourseworkWorkflowTests(ApiFixture fixture) : IClassFixture<
 
         var foodCase = await Request("FoodWater", 3);
         var shelterCase = await Request("Shelter", 1);
+        await Post(local, $"/api/v1/fulfillment/cases/{foodCase}/authorize" + countryQuery, new { reason = "Coordinator handoff reviewed." });
         var shipment = Id(await Post(local, "/api/v1/allocations" + countryQuery, new { requestId = foodCase, resourceId = inventory, quantity = 3 }));
+        await Post(local, $"/api/v1/fulfillment/allocations/{shipment}/prepare" + countryQuery, new { packedQuantity = 3, note = "Regional shipment packed." });
         (await local.PostAsync($"/api/v1/allocations/{shipment}/Dispatch" + countryQuery, null)).EnsureSuccessStatusCode();
         await Post(local, $"/api/v1/allocations/{shipment}/Deliver" + countryQuery, new {
             reference = "SYNTHETIC-" + country, confirmedQuantity = 3, method = "ReceivingStaff", receivedBy = "Synthetic receiver",
