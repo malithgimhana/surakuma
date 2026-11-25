@@ -16,7 +16,8 @@ public sealed class RecoveryController(CrisisDbContext db, UserManager<AppUser> 
     public sealed record ResetInput(string Email, string Token, string Password);
     async Task Queue(AppUser user, CancellationToken ct)
     {
-        if (user.Disabled || await db.Set<SecurityEmail>().AnyAsync(e => e.UserId == user.Id && e.CreatedAt > DateTimeOffset.UtcNow.AddMinutes(-5), ct)) return;
+        if (user.Disabled || await db.Set<SecurityEmail>().AnyAsync(e => e.UserId == user.Id
+            && e.Kind == SecurityEmailKind.PasswordReset && e.CreatedAt > DateTimeOffset.UtcNow.AddMinutes(-5), ct)) return;
         var token = await users.GeneratePasswordResetTokenAsync(user);
         db.Add(new SecurityEmail { UserId = user.Id, ProtectedToken = protection.CreateProtector("Surakuma.PasswordRecovery").Protect(token) });
         await db.SaveChangesAsync(ct);
