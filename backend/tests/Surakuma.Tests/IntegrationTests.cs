@@ -30,14 +30,15 @@ public sealed class ApiFixture : IAsyncLifetime
         string server = Environment.GetEnvironmentVariable("SURAKUMA_TEST_SERVER") ?? ".\\SQLEXPRESS";
         Factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder => builder.UseEnvironment("Testing").ConfigureAppConfiguration((_, c) => c.AddInMemoryCollection(new Dictionary<string, string?>
         {
-            ["ConnectionStrings:Default"] = $"Server={server};Database={DatabaseName};Trusted_Connection=True;TrustServerCertificate=True;Connect Timeout=10",
+            ["ConnectionStrings:Default"] = $"Server={server};Database={DatabaseName};Trusted_Connection=True;TrustServerCertificate=True;Connect Timeout=10;Command Timeout=120",
             ["Jwt:Key"] = key,
             ["Seed:Password"] = Password,
             ["Email:Provider"] = "Capture",
-            ["Ai:ApiKey"] = "",
+            ["Ai:OpenAiApiKey"] = "",
             ["Mapping:ApiKey"] = "",
             ["Storage:EvidencePath"] = EvidenceDirectory,
-            ["RateLimits:AuthPermitLimit"] = "1000"
+            ["RateLimits:AuthPermitLimit"] = "1000",
+            ["RateLimits:GlobalPermitLimit"] = "10000"
         })).ConfigureServices(services => { var worker = services.SingleOrDefault(d => d.ServiceType == typeof(IHostedService) && d.ImplementationType == typeof(NotificationWorker)); if (worker is not null) services.Remove(worker); }));
         using var scope = Factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
@@ -52,6 +53,20 @@ public sealed class ApiFixture : IAsyncLifetime
         {
             email = account + "@surakuma.test",
             password = Password
+        });
+        response.EnsureSuccessStatusCode();
+        var data = await response.Content.ReadFromJsonAsync<JsonElement>();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", data.GetProperty("accessToken").GetString());
+        return client;
+    }
+    public async Task<HttpClient> RegisterDonor(string name)
+    {
+        var client = Client();
+        var response = await client.PostAsJsonAsync("/api/v1/auth/donor/register", new
+        {
+            email = Guid.NewGuid().ToString("N") + "@surakuma.test",
+            password = Password,
+            name
         });
         response.EnsureSuccessStatusCode();
         var data = await response.Content.ReadFromJsonAsync<JsonElement>();
@@ -78,6 +93,46 @@ public sealed class ApiFixture : IAsyncLifetime
 }
 public sealed partial class IntegrationTests(ApiFixture fixture) : IClassFixture<ApiFixture>
 {
+    [Fact]
+    public async Task DonorRegistrationCreatesOnlyDonorRoleAndKeepsCitizenSignInSeparate()
+    {
+        const string register = "/api/v1/auth/donor/register";
+        const string login = "/api/v1/auth/donor/login";
+        const string workspace = "/api/v1/funding/LK/workspace";
+        var email = Guid.NewGuid().ToString("N") + "@surakuma.test";
+        using var donor = fixture.Client();
+        using var registration = await donor.PostAsJsonAsync(register, new
+        {
+            email, password = fixture.Password, name = "Synthetic donor", organisationName = "Community group", role = "Citizen"
+        });
+        registration.EnsureSuccessStatusCode();
+        var session = await registration.Content.ReadFromJsonAsync<JsonElement>();
+        var user = session.GetProperty("user");
+        Assert.Equal(Roles.Donor, Assert.Single(user.GetProperty("roles").EnumerateArray()).GetString());
+        var id = user.GetProperty("id").GetString();
+        using var scope = fixture.Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
+        Assert.False(await db.Set<Household>().AnyAsync(h => h.UserId == id));
+        donor.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", session.GetProperty("accessToken").GetString());
+        var profile = (await donor.GetFromJsonAsync<JsonElement>(workspace)).GetProperty("profile");
+        Assert.Equal("Community group", profile.GetProperty("organisationName").GetString());
+        Assert.Equal(HttpStatusCode.Forbidden, (await donor.PostAsJsonAsync("/api/v1/requests", new { })).StatusCode);
+
+        using var returning = fixture.Client();
+        using var signedIn = await returning.PostAsJsonAsync(login, new { email, password = fixture.Password });
+        signedIn.EnsureSuccessStatusCode();
+        var returned = (await signedIn.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("user");
+        Assert.Equal(id, returned.GetProperty("id").GetString());
+        Assert.Equal(Roles.Donor, Assert.Single(returned.GetProperty("roles").EnumerateArray()).GetString());
+        Assert.Equal(HttpStatusCode.Unauthorized, (await returning.PostAsJsonAsync(login, new
+        {
+            email = "citizen@surakuma.test", password = fixture.Password
+        })).StatusCode);
+        using var citizen = await fixture.Login("citizen");
+        Assert.Equal(HttpStatusCode.Forbidden, (await citizen.GetAsync(workspace)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await citizen.PutAsJsonAsync("/api/v1/funding/profile", new { displayName = "Citizen" })).StatusCode);
+    }
+
     [Fact]
     public async Task ReverseGeocodingRequiresAuthenticationValidCoordinatesAndHandlesUnavailableProvider()
     {
@@ -144,8 +199,28 @@ public sealed partial class IntegrationTests(ApiFixture fixture) : IClassFixture
         first.EnsureSuccessStatusCode();
         var second = await client.PostAsJsonAsync("/api/v1/requests", input);
         second.EnsureSuccessStatusCode();
-        Assert.Equal((await first.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid(), (await second.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid());
+        var created = await first.Content.ReadFromJsonAsync<JsonElement>();
+        var repeated = await second.Content.ReadFromJsonAsync<JsonElement>();
+        var caseId = created.GetProperty("id").GetGuid();
+        var reference = created.GetProperty("reference").GetString()!;
+        Assert.Equal(caseId, repeated.GetProperty("id").GetGuid());
+        Assert.Matches(@"^SK-[0-9]{4,}$", reference);
+        Assert.Equal(reference, repeated.GetProperty("reference").GetString());
+        const string legacyReference = "SK-12A4C67D89";
+        using (var scope = fixture.Factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
+            var message = await db.Set<OutboxMessage>().SingleAsync(m => m.RequestId == caseId);
+            Assert.StartsWith(reference + ": ", message.Message);
+            var request = await db.Set<AssistanceRequest>().SingleAsync(r => r.Id == caseId);
+            request.LegacyReference = legacyReference;
+            await db.SaveChangesAsync();
+        }
+        var found = await client.GetFromJsonAsync<JsonElement>("/api/v1/requests/mine?search=" + legacyReference);
+        Assert.Equal(reference, Assert.Single(found.GetProperty("items").EnumerateArray()).GetProperty("reference").GetString());
         using var other = await fixture.Login("citizen");
+        var outside = await other.GetFromJsonAsync<JsonElement>("/api/v1/requests/mine?search=" + legacyReference);
+        Assert.Empty(outside.GetProperty("items").EnumerateArray());
         Assert.Equal(HttpStatusCode.NotFound, (await other.GetAsync(first.Headers.Location)).StatusCode);
     }
     [Fact]
@@ -174,16 +249,76 @@ public sealed partial class IntegrationTests(ApiFixture fixture) : IClassFixture
         Assert.Contains(history.GetProperty("decisions").EnumerateArray(), d => d.GetProperty("action").GetString() == "Modify");
     }
     [Fact]
+    public async Task RegeneratingAiReplacesDraftsAndKeepsDecisionHistory()
+    {
+        using var manager = await fixture.Login("case");
+        using var scope = fixture.Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
+        var seed = await db.Set<AssistanceRequest>().SingleAsync(x => x.SubmissionKey == "seed-food");
+        var request = new AssistanceRequest
+        {
+            CitizenId = seed.CitizenId, OrganisationId = seed.OrganisationId, CrisisId = seed.CrisisId,
+            Category = seed.Category, Quantity = seed.Quantity, Unit = seed.Unit, Synthetic = true,
+            Status = RequestStatus.UnderReview, SubmissionKey = Guid.NewGuid().ToString("N")
+        };
+        var olderDraft = new Recommendation { RequestId = request.Id, CreatedAt = DateTimeOffset.UtcNow.AddDays(-1) };
+        var current = new Recommendation { RequestId = request.Id };
+        db.AddRange(request, olderDraft, current);
+        await db.SaveChangesAsync();
+
+        string path = $"/api/v1/requests/{request.Id}";
+        async Task<JsonElement> Detail() => await manager.GetFromJsonAsync<JsonElement>($"{path}/recommendations");
+        async Task<Guid> Generate()
+        {
+            using var response = await manager.PostAsync($"{path}/recommendations/generate", null);
+            response.EnsureSuccessStatusCode();
+            return (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+        }
+        Guid CurrentId(JsonElement detail) => Assert.Single(detail.GetProperty("recommendations").EnumerateArray()).GetProperty("id").GetGuid();
+
+        Assert.Equal(current.Id, CurrentId(await Detail()));
+        using var defer = await manager.PostAsJsonAsync($"{path}/decisions", new { recommendationId = current.Id, action = "Defer", reason = "Awaiting verification." });
+        defer.EnsureSuccessStatusCode();
+        Guid replaced = await Generate();
+        Assert.Equal(replaced, CurrentId(await Detail()));
+        Guid latest = await Generate();
+        Assert.NotEqual(replaced, latest);
+        var detail = await Detail();
+        Assert.Equal(latest, CurrentId(detail));
+        Assert.Equal(current.Id, Assert.Single(detail.GetProperty("decisions").EnumerateArray()).GetProperty("recommendationId").GetGuid());
+
+        foreach (var stale in new[] { olderDraft.Id, current.Id, replaced })
+        {
+            using var decision = await manager.PostAsJsonAsync($"{path}/decisions", new { recommendationId = stale, action = "Approve", reason = "" });
+            Assert.Equal(HttpStatusCode.NotFound, decision.StatusCode);
+        }
+
+        string queuePath = $"/api/v1/requests?view=pending-ai&search={request.Reference}";
+        Assert.Single((await manager.GetFromJsonAsync<JsonElement>(queuePath)).GetProperty("items").EnumerateArray());
+        using var reject = await manager.PostAsJsonAsync($"{path}/decisions", new { recommendationId = latest, action = "Reject", reason = "Staff assessment complete." });
+        reject.EnsureSuccessStatusCode();
+        Assert.Empty((await manager.GetFromJsonAsync<JsonElement>(queuePath)).GetProperty("items").EnumerateArray());
+
+        var stored = await db.Set<Recommendation>().AsNoTracking().Where(x => x.RequestId == request.Id).Select(x => x.Id).ToListAsync();
+        Assert.Equal(2, stored.Count);
+        Assert.Contains(current.Id, stored);
+        Assert.Contains(latest, stored);
+    }
+    [Fact]
     public async Task SqlTransactionsPreventConcurrentStockOverAllocation()
     {
         Guid requestId, resourceId;
         using (var scope = fixture.Factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
-            var request = await db.Set<AssistanceRequest>().FirstAsync(x => x.Category == AidCategory.FoodWater && x.Status == RequestStatus.Approved);
+            var seed = await db.Set<AssistanceRequest>().SingleAsync(x => x.SubmissionKey == "seed-food");
+            var request = new AssistanceRequest { CrisisId = seed.CrisisId, CitizenId = seed.CitizenId,
+                OrganisationId = seed.OrganisationId, Category = AidCategory.FoodWater, Status = RequestStatus.Approved,
+                Quantity = 10, Unit = "packs", SubmissionKey = "concurrent-" + Guid.NewGuid().ToString("N") };
             requestId = request.Id;
-            var resource = new Resource { OrganisationId = request.OrganisationId ?? throw new InvalidOperationException("Test request must have an organisation."), Name = "Concurrent allocation test", Category = AidCategory.FoodWater, Stock = 6 };
-            db.Add(resource);
+            var resource = new Resource { OrganisationId = request.OrganisationId ?? throw new InvalidOperationException("Test request must have an organisation."),
+                Name = "Concurrent allocation test", Category = AidCategory.FoodWater, Stock = 6, Unit = "packs" };
+            db.AddRange(request, resource);
             await db.SaveChangesAsync();
             resourceId = resource.Id;
         }
