@@ -4,22 +4,24 @@ namespace Surakuma.Application;
 
 public sealed record AllocationDemand(AssistanceRequest Request, decimal Committed, DateTimeOffset WaitingSince);
 public sealed record RankedResource(Guid ResourceId, string Name, string Unit, decimal Available, decimal SuggestedQuantity, double Score, double? DistanceKm, bool TransportAvailable, bool ShortForRequest, string Reason, decimal AvailableInRequestUnit, decimal RemainingAfterReservation);
-public sealed record AllocationRecommendations(decimal Outstanding, IReadOnlyList<RankedResource> Candidates, bool Shortage, int QueuePosition, int CompetingRequests, string ShortageExplanation, string? Unit, bool UnitRequiresClarification);
+public sealed record FulfilmentEvidence(string Algorithm, string Source, string ProcessingState, string ReviewState, IReadOnlyList<string> Needs);
+public sealed record AllocationRecommendations(decimal Outstanding, IReadOnlyList<RankedResource> Candidates, bool Shortage, int QueuePosition, int CompetingRequests, string ShortageExplanation, string? Unit, bool UnitRequiresClarification,
+    FulfilmentEvidence? Evidence = null);
 
 public interface IAllocationStrategy
 {
-    AllocationRecommendations Recommend(AssistanceRequest request, decimal committed, IReadOnlyList<Resource> resources, IReadOnlyList<AllocationDemand> competing);
+    AllocationRecommendations Recommend(AssistanceRequest request, decimal committed, IReadOnlyList<Resource> resources, IReadOnlyList<AllocationDemand> competing, FulfilmentEvidence? evidence = null);
 }
 
 public sealed class RankedAllocationStrategy : IAllocationStrategy
 {
-    public AllocationRecommendations Recommend(AssistanceRequest request, decimal committed, IReadOnlyList<Resource> resources, IReadOnlyList<AllocationDemand> competing)
+    public AllocationRecommendations Recommend(AssistanceRequest request, decimal committed, IReadOnlyList<Resource> resources, IReadOnlyList<AllocationDemand> competing, FulfilmentEvidence? evidence = null)
     {
         decimal outstanding = Math.Max(0, request.Quantity - request.DeliveredQuantity - committed);
         if (request.UnitRequiresClarification || request.Category == AidCategory.Shelter)
             return new(outstanding, [], false, 0, 0, request.UnitRequiresClarification
                 ? "Confirm the requested unit before assessing stock or reserving aid."
-                : "Use the household placement workflow for this request.", request.Unit, request.UnitRequiresClarification);
+                : "Use the household placement workflow for this request.", request.Unit, request.UnitRequiresClarification, evidence);
         var words = Tokens(request.Description + " " + request.AccessibilityNeeds);
         var compatible = resources.Where(x => x.Category == request.Category && x.Available > 0 && QuantityUnits.Compatible(x.Unit, request.Unit)).ToList();
         var candidates = compatible.Where(_ => outstanding > 0).Select(resource =>
@@ -31,12 +33,17 @@ public sealed class RankedAllocationStrategy : IAllocationStrategy
             double? distance = request.Latitude.HasValue && request.Longitude.HasValue ? Distance(request.Latitude.Value, request.Longitude.Value, resource.Latitude, resource.Longitude) : null;
             var suitability = Tokens(resource.Name + " " + resource.Suitability);
             int matches = suitability.Intersect(words).Count();
+            var verifiedTerms = RequestSignals.Local(resource.Name + " " + resource.Suitability);
+            var matchedNeeds = (evidence?.Needs ?? []).Intersect(verifiedTerms).ToArray();
             double urgency = (int)request.Priority * 3;
-            double score = (resource.TransportAvailable ? 30 : 0) + coverage * 35 + Math.Min(matches, 5) * 3 + (distance.HasValue ? 15 / (1 + distance.Value / 25) : 0) + urgency;
+            double score = (resource.TransportAvailable ? 30 : 0) + coverage * 35 + Math.Min(matches + matchedNeeds.Length, 5) * 3 +
+                (distance.HasValue ? 15 / (1 + distance.Value / 25) : 0) + urgency;
             string reason = $"Category and unit match; {available:0.#####} {request.Unit} available for {outstanding:0.#####} {request.Unit} outstanding; " +
                 (resource.TransportAvailable ? "transport available" : "transport unavailable (not reservable)") +
                 $"; {matches} suitability word matches; " + (distance.HasValue ? $"{distance.Value:0.0} km straight-line distance" : "request coordinates unavailable") +
-                $"; priority {request.Priority}. Staff must verify suitability.";
+                $"; priority {request.Priority}. " +
+                (matchedNeeds.Length == 0 ? "" : $"Recorded suitability matches {string.Join(", ", matchedNeeds)}. ") +
+                "Staff must verify suitability.";
             return new RankedResource(resource.Id, resource.Name, resource.Unit, resource.Available, suggested, Math.Round(score, 2), distance.HasValue ? Math.Round(distance.Value, 1) : null, resource.TransportAvailable, remaining > 0, reason, available, remaining);
         }).Where(x => x.SuggestedQuantity > 0).OrderByDescending(x => x.TransportAvailable).ThenByDescending(x => x.Score).ThenBy(x => x.ResourceId).ToList();
         var queue = competing.Where(x => x.Request.Category == request.Category && x.Request.CrisisId == request.CrisisId && x.Request.OrganisationId == request.OrganisationId && x.Request.Status is RequestStatus.Approved or RequestStatus.InProgress or RequestStatus.PartiallyFulfilled)
@@ -59,7 +66,7 @@ public sealed class RankedAllocationStrategy : IAllocationStrategy
             : shortage
             ? $"Potential shortage: {queue.Count} eligible cases need {demand:0.#####} {request.Unit} in total; the assigned organisation has {stock:0.#####} {request.Unit} in compatible transport-ready stock. Prioritise by urgency and waiting time. Escalate for review if needed."
             : $"{stock:0.#####} {request.Unit} of compatible stock is available against {demand:0.#####} {request.Unit} of queued demand. Check product suitability before reserving.";
-        return new(outstanding, candidates, shortage, index < 0 ? 0 : index + 1, queue.Count, explanation, request.Unit, false);
+        return new(outstanding, candidates, shortage, index < 0 ? 0 : index + 1, queue.Count, explanation, request.Unit, false, evidence);
     }
     private static HashSet<string> Tokens(string text) => text.ToLowerInvariant().Split([' ', ',', '.', ';', ':', '/', '-', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries).Where(x => x.Length >= 4).ToHashSet();
     internal static double Distance(double lat1, double lon1, double lat2, double lon2)
