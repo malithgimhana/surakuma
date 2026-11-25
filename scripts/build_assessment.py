@@ -80,7 +80,7 @@ def diagrams():
     f.box(20, 350, 225, 135, "Domain", ["Case lifecycle", "Stock and capacity"])
     f.box(280, 550, 440, 130, "Infrastructure", ["EfStore, Identity, provider adapters", "SQL outbox NotificationWorker"])
     f.box(20, 750, 280, 110, "SQL Server", ["Cases, history, inventory", "Identity, outbox and audit"])
-    f.box(360, 750, 280, 110, "External adapters", ["Gemini, Brevo and ORS", "Fallback or unavailable"])
+    f.box(360, 750, 280, 110, "External adapters", ["OpenAI, Brevo and ORS", "Fallback or unavailable"])
     f.box(750, 180, 230, 100, "OSM tiles", ["Public online map"])
     for a, b in [((500,115),(500,180)), ((500,280),(500,350)), ((500,485),(500,550)), ((280,417),(245,417))]: f.line([a,b])
     f.line([(400,680),(400,710),(160,710),(160,750)])
@@ -377,7 +377,7 @@ def report():
     p("AI generation stores provider, model, category, urgency, explanation, fallback flag and review state. Confidence is nullable and explicitly unavailable when no calibrated estimate exists. Similarity is a separate token-overlap heuristic, not a probability that a request is fraudulent or invalid. Candidate requests remain available after duplicate review.")
     p("Authorised staff approve, modify, reject or defer advice. Modification/rejection requires a reason. The original recommendation remains preserved; HumanDecision records actor, action, reason, final priority and timestamps. A case is verified and approved separately. Category cannot be changed after allocation or delivery has begun without resolving existing commitments.")
     table(["Integration","Current behaviour","Live acceptance still needed"],[
-        ("Gemini","Minimal description only for synthetic requests; deterministic labelled fallback on missing key, outage or invalid output.","Activate account/key; record real provider/model, response and human decision."),
+        ("OpenAI","Full-text analysis requires an approved synthetic account. Restricted triage and embeddings can use standardized labels.","Record provider, model, response and human decision in an isolated rehearsal."),
         ("Brevo","Capture mode stores local notification evidence; retries/review states are persisted.","Verify sender and deliver one update to an authorised inbox."),
         ("openrouteservice","Backend proxy, timeouts and unavailable responses; manual location remains possible.","Public Sri Lankan geocode and driving route with real key."),
         ("OpenStreetMap","Browser requests attributed online map tiles.","Network availability and tile-policy compliance; no offline tile cache is supplied.")
@@ -414,7 +414,7 @@ def report():
     page("Evaluation and limitations")
     p("The strongest evidence is the coherent operational path and the rules tested under real SQL Server concurrency. A request's partial quantity remains open; stock and occupancy have distinct accounting; AI advice and human approval remain distinct. Provider failures preserve manual operation. These behaviours address the assessment's emphasis on consistency, governance and accountability [1].")
     p("The accepted local prototype boundary leaves several brief areas incomplete: donation/campaign and expenditure records, SMS, AI chat, forecasting/anomaly workflows, automated multilingual generation, richer partner assistance requests, recurring volunteer scheduling, location-aware volunteer ranking and geographic coverage reporting. Payments are optional in the brief and not implemented. Explicit case sharing does not constitute a full partner support-request workspace.")
-    p("Live Gemini/Brevo/routing calls remain unverified until account setup. Translation keys are complete but wording needs native-speaker review, including staff-entered public text. Automated axe checks cover selected pages only. Elderly-user, keyboard/screen-reader and text-enlargement UAT must be performed and recorded; blank review forms are supplied without fabricated results.")
+    p("See the request intelligence validation guide for current OpenAI results. Live Brevo and routing require separate account checks. Translation wording needs native-speaker review, including staff-entered public text. Automated axe checks cover selected pages only. Elderly-user, keyboard/screen-reader and text-enlargement UAT must be performed and recorded; blank review forms are supplied without fabricated results.")
     p("The build was implemented sequentially by one developer. Team members may prepare demonstrations and perform real testing/documentation later. Presentation ownership must not be recorded as implementation authorship. Existing source files are not yet backed by a complete historical sequence of Git commits; current files and test records cannot retroactively manufacture that history.")
     h("Completion gates before submission")
     p("Fill cover and contribution fields; review the report against the lecturer's instructions; complete live provider checks; obtain language/UAT reviews; inspect the recorded demonstration and its viewing method; then rebuild the submission ZIP. Do not tick a human approval or live-service result solely because the corresponding code exists.")
@@ -438,7 +438,7 @@ def report():
         "[3] Microsoft. Using transactions in EF Core. https://learn.microsoft.com/en-us/ef/core/saving/transactions (accessed 22 October 2026).",
         "[4] Microsoft. Introduction to Identity on ASP.NET Core. https://learn.microsoft.com/en-us/aspnet/core/security/authentication/identity?view=aspnetcore-10.0 (accessed 22 October 2026).",
         "[5] OWASP. Authorization Cheat Sheet. https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html (accessed 22 October 2026).",
-        "[6] Google. Gemini API models, pricing and terms. https://ai.google.dev/gemini-api/docs/models ; https://ai.google.dev/gemini-api/docs/pricing ; https://ai.google.dev/gemini-api/terms . Setup references; account access and current terms still require review before use.",
+        "[6] OpenAI. GPT-6 Luna model and Responses API guide. https://developers.openai.com/api/docs/models/gpt-6-luna and https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=responses .",
         "[7] Brevo. Pricing plans. https://help.brevo.com/hc/en-us/articles/208589409-About-Brevo-s-pricing-plans . Setup reference; sender activation is pending.",
         "[8] GIScience. openrouteservice FAQ. https://giscience.github.io/openrouteservice/frequently-asked-questions . Setup reference; live geocoding/routing is pending.",
         "[9] OpenStreetMap Foundation. Tile usage policy. https://operations.osmfoundation.org/policies/tiles/ . Map-tile usage reference.",
