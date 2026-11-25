@@ -12,8 +12,8 @@ test('country selection resets public information and scopes crisis and country 
 }) => {
   const writes: { path: string; body: Record<string, unknown> }[] = [];
   const partnerId = '12345678-1234-1234-1234-123456789abc';
-  const organisations: { id: string; name: string; enabled: boolean; primaryCrises: []; verification?: { verificationState: string } }[] =
-    [{ id: partnerId, name: 'Response organisation', enabled: false, primaryCrises: [] }];
+  const organisations: { id: string; countryCode: string; name: string; enabled: boolean; primaryCrises: []; verification?: { verificationState: string } }[] =
+    [{ id: partnerId, countryCode: 'NP', name: 'Response organisation', enabled: true, primaryCrises: [], verification: { verificationState: 'Verified' } }];
   const crises: { id: string; countryCode: string; name: string; active: boolean }[] = [];
   const countries = [
     {
@@ -80,16 +80,15 @@ test('country selection resets public information and scopes crisis and country 
       });
       return route.fulfill({ status: 204 });
     }
-    else if (path === '/public/lookups') data = { crises: [], organisations };
+    else if (path === '/public/lookups')
+      data = { crises: [], organisations: organisations.filter(o => o.countryCode === url.searchParams.get('countryCode') && o.verification?.verificationState === 'Verified') };
     else if (path === '/admin/organisations') {
       if (route.request().method() === 'POST') {
-        const partner = { id: 'new', name: route.request().postDataJSON().name, enabled: true, primaryCrises: [] as [] };
+        const { name, countryCode } = route.request().postDataJSON();
+        const partner = { id: 'new', name, countryCode, enabled: true, primaryCrises: [] as [] };
         organisations.push(partner);
         data = partner;
-      } else data = organisations.filter(o => o.enabled);
-    } else if (path === `/admin/organisations/${partnerId}/countries/NP`) {
-      organisations[0].enabled = true;
-      organisations[0].verification = { verificationState: 'Verified' };
+      } else data = organisations.filter(o => o.enabled && o.countryCode === url.searchParams.get('countryCode'));
     }
     else if (path === '/admin/audit' || path === '/admin/deliveries')
       data = { items: [], total: 0, pageNumber: 1, pageSize: 10 };
@@ -118,11 +117,6 @@ test('country selection resets public information and scopes crisis and country 
   await expect(page.getByLabel('Nepali title', { exact: true })).toBeEnabled();
   await page.goto('/admin?section=organisations');
   const existing = page.getByRole('button', { name: /Response organisation.*Verified/ });
-  await expect(existing).toHaveCount(0);
-  await page.getByRole('button', { name: 'Add organisation' }).click();
-  await page.getByLabel('Organisation setup').selectOption('existing');
-  await page.getByLabel('Organisation ID', { exact: true }).fill(partnerId);
-  await page.getByRole('button', { name: 'Enable in Nepal', exact: true }).click();
   await expect(existing.getByText('Verified', { exact: true })).toBeVisible();
   await page.getByRole('link', { name: 'Assign staff' }).click();
   await expect(page.getByLabel('Organisation', { exact: true })).toHaveValue(partnerId);
@@ -191,11 +185,10 @@ for (const role of ['Administrator', 'CountryAdministrator']) {
         '/admin/reports': { generatedAt: '2026-11-15T14:01:08Z', countries: [], stock: [] },
         '/admin/overview': { stock: { belowThreshold: 0, outOfStock: 0 },
           shelters: { openShelters: 0, capacity: 0, occupancy: 0, reserved: 0, available: 0 },
-          partnerVerification: { count: 0 }, systemAccess: null },
+          partnerVerification: { count: 0 } },
         '/logistics': { countries: [{ code: 'LK', name: 'Sri Lanka' }], depots: [], inventory: [],
           crises: [], areas: [], partners: [], orders: [], actors: {} },
         '/admin/audit': { items: [], total: 0 },
-        '/admin/approvals': { items: [], activeGlobalAdministrators: 2 },
         '/admin/deliveries': { items: [], total: 0 },
         '/admin/system': { checkedAt: '2026-11-12T00:00:00Z', integrations: [], notificationQueue: [] },
         '/notifications/unread-count': { count: 0 },
@@ -267,7 +260,7 @@ for (const role of ['Administrator', 'CountryAdministrator']) {
         await expect(logout).toBeInViewport();
       }
       if (label === 'Users & access')
-        await expect(page.getByRole('heading', { name: 'System Administrator access requests' })).toHaveCount(globalAdmin ? 1 : 0);
+        await expect(page.getByRole('heading', { name: 'System Administrator access requests' })).toHaveCount(0);
       if (label === 'Shelters') await expect(page.getByRole('heading', { name: 'Community shelter' })).toBeVisible();
     }
 
@@ -348,7 +341,6 @@ test('Overview switches countries and refreshes its authorized dashboard data', 
         stock: { belowThreshold: selected.open / 4, outOfStock: 1 },
         shelters: { openShelters: 1, capacity: 100, reserved: 10, occupancy: selected.open, available: 90 - selected.open },
         partnerVerification: { count: 1, oldestAt: '2026-11-17T07:20:00Z' },
-        systemAccess: { count: 2, oldestAt: '2026-11-17T07:15:00Z' },
       },
       '/admin/alerts': [
         { id: 'case', conditionKey: 'unassigned:case', countryCode: selected.code, message: `${selected.code} case is awaiting assignment.`,
@@ -385,7 +377,7 @@ test('Overview switches countries and refreshes its authorized dashboard data', 
     .evaluate(region => region.scrollWidth <= region.clientWidth);
   await expect.poll(fits).toBe(true);
   await expect(page.getByRole('link', { name: /78 \/ 100/ })).toBeVisible();
-  await expect(page.getByRole('link', { name: /2 pending System Administrator access requests/ })).toBeVisible();
+  await expect(page.getByRole('link', { name: /pending System Administrator access requests/i })).toHaveCount(0);
   const marker = page.locator('.overview-crisis-map path.leaflet-interactive');
   await expect(marker).toBeVisible();
   await page.screenshot({ path: test.info().outputPath('overview-lk-desktop.png'), fullPage: true });
@@ -406,7 +398,6 @@ test('Overview switches countries and refreshes its authorized dashboard data', 
   await expect(page.getByRole('link', { name: /Kathmandu response/ })).toBeVisible();
   await expect(page.getByRole('link', { name: /Kelani flood/ })).toHaveCount(0);
   await expect(page.getByText('NP case is awaiting assignment.')).toBeVisible();
-  await expect(page.getByRole('link', { name: /2 pending System Administrator access requests/ })).toBeVisible();
   await comparison.getByRole('button', { name: /India/ }).click();
   await expect(page.getByRole('combobox', { name: 'Country', exact: true })).toHaveValue('IN');
   await expect(openCount).toHaveText('8');
