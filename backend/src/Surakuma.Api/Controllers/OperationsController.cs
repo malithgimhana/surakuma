@@ -1,11 +1,11 @@
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using System.Data;
-using System.Security.Claims;
 using Surakuma.Application;
 using Surakuma.Domain;
 using Surakuma.Infrastructure;
@@ -29,6 +29,7 @@ public sealed partial class OperationsController(Operations ops, AccessService a
     public Task<List<ShelterCandidate>> ShelterRecommendations(Guid id, CancellationToken ct) => ops.ShelterRecommendations(id, ct);
     [HttpGet("resources")] public Task<List<Resource>> Resources(CancellationToken ct) => ops.Resources(ct);
     [HttpPost("resources")] public Task<Resource> Resource(ResourceInput input, CancellationToken ct) => ops.AddResource(input, ct);
+    [HttpPost("resources/batch")] public Task<List<Resource>> ResourceBatch(ResourceBatchInput input, CancellationToken ct) => ops.AddResources(input, ct);
     [HttpPost("resources/{id:guid}/replenish")]
     public async Task<IActionResult> Replenish(Guid id, MovementInput input, CancellationToken ct)
     {
@@ -36,9 +37,12 @@ public sealed partial class OperationsController(Operations ops, AccessService a
         return NoContent();
     }
     [HttpGet("resources/{id:guid}/movements")] public Task<List<StockMovement>> Movements(Guid id, CancellationToken ct) => ops.StockHistory(id, ct);
-    [HttpGet("requests/{id:guid}/allocation-recommendations")] public Task<AllocationRecommendations> AllocationRecommendations(Guid id, CancellationToken ct) => ops.AllocationRecommendations(id, ct);
+    [HttpGet("requests/{id:guid}/allocation-recommendations")]
+    public Task<AllocationRecommendations> AllocationRecommendations(Guid id, CancellationToken ct, Guid? needId = null) =>
+        ops.AllocationRecommendations(id, ct, needId);
     [HttpPost("requests/{id:guid}/allocation-recommendations/ignore")] public async Task<IActionResult> IgnoreAllocationRecommendation(Guid id, IgnoreAllocationRecommendationInput input, CancellationToken ct) { await ops.IgnoreAllocationRecommendation(id, input.RecommendedResourceId, ct); return NoContent(); }
     [HttpPost("allocations")] public Task<ResourceAllocation> Allocate(AllocateInput input, CancellationToken ct) => ops.Allocate(input, ct);
+    [HttpPost("allocations/group")] public Task<List<ResourceAllocation>> AllocateGroup(AllocateInput input, CancellationToken ct) => ops.AllocateGroup(input, ct);
     [HttpPost("allocations/{id:guid}/{operation}")]
     public Task<ResourceAllocation> Allocation(Guid id, string operation,
         [FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] DeliveryInput? delivery,
@@ -53,60 +57,227 @@ public sealed partial class OperationsController(Operations ops, AccessService a
     public async Task<object> Volunteers(CancellationToken ct)
     {
         var roster = await ops.Volunteers(ct);
-        var userIds = roster.Profiles.Select(x => x.UserId).Distinct().ToArray();
-        var names = await users.Users.Where(x => userIds.Contains(x.Id)).Select(x => new { x.Id, x.DisplayName }).ToDictionaryAsync(x => x.Id, x => x.DisplayName, ct);
-        return new { roster.Profiles, roster.Tasks, roster.History, Names = names };
+        var userIds = roster.Profiles.Select(x => x.UserId);
+        if (access.IsVolunteerWorkspace || access.IsCoordinatorWorkspace)
+            userIds = userIds.Concat(roster.History.Select(x => x.ActorId));
+        var ids = userIds.Distinct().ToArray();
+        var names = await users.Users.Where(x => ids.Contains(x.Id)).Select(x => new { x.Id, x.DisplayName }).ToDictionaryAsync(x => x.Id, x => x.DisplayName, ct);
+        var profiles = roster.Profiles.Select(RosterProfile);
+        if (access.IsCoordinatorWorkspace)
+        {
+            var coordinationMetrics = await ops.VolunteerMetrics(roster, ct);
+            var taskCases = roster.Tasks.Select(t => t.RequestId).Distinct().ToArray();
+            var scopedCases = await access.StaffCases(Roles.Coordinator, ct);
+            var references = await scopedCases.Where(r => taskCases.Contains(r.Id))
+                .ToDictionaryAsync(r => r.Id, r => r.Reference, ct);
+            return new { Profiles = profiles, roster.Tasks, roster.History, Names = names,
+                CaseReferences = references, OverdueTaskIds = coordinationMetrics.Overdue };
+        }
+        if (!access.IsVolunteerWorkspace) return new { Profiles = profiles, roster.Tasks, roster.History, Names = names };
+
+        var country = await access.VolunteerWorkspaceCountry(ct);
+        var grants = (await access.Memberships(ct)).Where(m => m.Role == Roles.VolunteerCoordinator && m.CountryCode == country &&
+            m.OrganisationId != null).ToArray();
+        var organisationIds = grants.Select(m => m.OrganisationId!.Value).Distinct().ToArray();
+        var manageable = grants.Where(m => m.CrisisId == null).Select(m => m.OrganisationId!.Value).Distinct().ToArray();
+        var organisations = await db.Set<Organisation>().Where(o => organisationIds.Contains(o.Id)).OrderBy(o => o.Name)
+            .Select(o => new { o.Id, o.Name, CanManage = manageable.Contains(o.Id) }).ToListAsync(ct);
+        var requestIds = roster.Tasks.Select(t => t.RequestId)
+            .Concat(roster.Profiles.Where(v => v.TaskRequestId.HasValue).Select(v => v.TaskRequestId!.Value))
+            .Distinct().ToArray();
+        var cases = await (from r in db.Set<AssistanceRequest>()
+                           join c in db.Set<Crisis>() on r.CrisisId equals c.Id
+                           where c.CountryCode == country && requestIds.Contains(r.Id)
+                           select new { r.Id, r.Reference, r.LocationText, Crisis = c.Name, r.Category })
+            .ToDictionaryAsync(x => x.Id, ct);
+        var taskIds = roster.Tasks.Select(t => t.Id).ToArray();
+        var profileIds = roster.Profiles.Select(v => v.Id).ToArray();
+        var activity = await db.Set<AuditEvent>().Where(e => e.CountryCode == country &&
+                (e.EntityType == nameof(VolunteerTask) && taskIds.Contains(e.EntityId) ||
+                 e.EntityType == nameof(VolunteerProfile) && profileIds.Contains(e.EntityId)))
+            .OrderByDescending(e => e.CreatedAt).ThenByDescending(e => e.Id).Take(12)
+            .Select(e => new { e.Id, e.Action, e.EntityId, e.CreatedAt }).ToListAsync(ct);
+        var (metrics, available, committed, overdue) = await ops.VolunteerMetrics(roster, ct);
+        return new { Profiles = profiles, roster.Tasks, roster.History, Names = names,
+            Country = country, Organisations = organisations, Cases = cases, Activity = activity,
+            Metrics = metrics, Available = available, Committed = committed, Overdue = overdue };
     }
-    [HttpPost("volunteers")] public Task<VolunteerProfile> Volunteer(VolunteerProfile input, CancellationToken ct) => ops.SaveVolunteer(input, ct);
-    [HttpGet("volunteer-tasks/cases")] public Task<List<VolunteerCase>> VolunteerCases(string? search, CancellationToken ct) => ops.VolunteerCases(search, ct);
+    [HttpPost("volunteers")]
+    public async Task<object> Volunteer(VolunteerProfile input, CancellationToken ct) => RosterProfile(await ops.SaveVolunteer(input, ct));
+
+    [HttpGet("volunteers/{id:guid}/availability")]
+    public async Task<List<AvailabilityWindowView>> VolunteerSchedule(Guid id, CancellationToken ct)
+    {
+        var profile = (await ops.Volunteers(ct)).Profiles.SingleOrDefault(v => v.Id == id) ?? throw new MissingException();
+        return await db.Set<VolunteerAvailabilityWindow>().Where(w => w.UserId == profile.UserId && w.EndsAt > DateTimeOffset.UtcNow)
+            .OrderBy(w => w.StartsAt).Select(w => new AvailabilityWindowView(w.Id, w.StartsAt, w.EndsAt)).ToListAsync(ct);
+    }
+    private static object RosterProfile(VolunteerProfile v) => new { v.Id, v.UserId, v.OrganisationId, v.CountryCode, v.Skills,
+        v.Availability, v.Verified, v.Available, v.ServiceRegionId, v.TaskRequestId, v.TaskDispatchId, v.CreatedAt, v.UpdatedAt, v.Version };
+
+    [HttpPost("volunteers/task-registration")]
+    public async Task<object> RegisterTaskVolunteer(TaskVolunteerInput input, [FromServices] IDataProtectionProvider protection, CancellationToken ct)
+    {
+        await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+        var (request, country) = await ops.TaskVolunteerScope(input.RequestId, input.CaseDispatchId, ct);
+        await ops.ValidateTaskVolunteerProfileSetup(input.Profile, request, country, ct);
+        var user = await users.FindByEmailAsync(input.Email.Trim());
+        if (input.UseExistingAccount)
+        {
+            if (user == null || user.Disabled || user.IsSystemAdministrator || user.Id == request.CitizenId ||
+                !(await users.GetRolesAsync(user)).SequenceEqual([Roles.Citizen]) ||
+                await db.Set<VolunteerProfile>().AnyAsync(v => v.UserId == user.Id, ct))
+                throw new RuleException("Choose an active citizen account without a volunteer profile, or register a new account.");
+        }
+        else
+        {
+            if (user != null) throw new RuleException("This email is already registered. Choose Use existing account for a citizen volunteer.");
+            if (string.IsNullOrWhiteSpace(input.Name) || input.Password is null)
+                throw new RuleException("Provide a name and an initial password for the new account.");
+            user = await CreateStaffIdentity(input.Email, input.Name, input.Password, country);
+        }
+        if (!(await users.AddToRoleAsync(user, Roles.Volunteer)).Succeeded)
+            throw new RuleException("Could not assign the Volunteer role.");
+        var grant = new Membership { UserId = user.Id, Role = Roles.Volunteer, OrganisationId = request.OrganisationId,
+            CountryCode = country, CrisisId = request.CrisisId };
+        db.Add(grant);
+        if (!input.UseExistingAccount && input.Password is { } password)
+            db.Add(StaffInvitationEmail.Queue(user, grant, password, protection));
+        if (input.UseExistingAccount)
+        {
+            if (!(await users.UpdateSecurityStampAsync(user)).Succeeded) throw new RuleException("Could not refresh the account's access.");
+            foreach (var session in await db.Set<RefreshSession>().Where(x => x.UserId == user.Id && !x.Revoked).ToListAsync(ct))
+                session.Revoked = true;
+        }
+        ops.Audit("StaffAccessGranted", grant, "Volunteer for a specific case assignment.", country);
+        var setup = new VolunteerProfileSetup(input.Profile.Skills, input.Profile.Availability ?? "", input.Profile.Available,
+            input.Profile.ServiceRegionId ?? request.AdministrativeDivisionId);
+        var profile = AddVolunteerProfile(user.Id, grant.OrganisationId!.Value, country, setup);
+        profile.TaskRequestId = request.Id;
+        profile.TaskDispatchId = input.CaseDispatchId;
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+        return RosterProfile(profile);
+    }
+
+    [HttpPost("volunteers/{id:guid}/verify")]
+    public async Task<object> VerifyVolunteer(Guid id, CancellationToken ct) => RosterProfile(await ops.VerifyVolunteer(id, ct));
+
+    [HttpGet("volunteer-tasks/mine")]
+    public async Task<object> MyVolunteerTasks(CancellationToken ct)
+    {
+        var grants = db.Set<Membership>().Where(m => m.UserId == access.UserId && m.Role == Roles.Volunteer);
+        var country = access.SelectedCountry;
+        if (!await grants.AnyAsync(m => country == null || m.CountryCode == country, ct)) throw new AccessDeniedException();
+
+        var profile = await db.Set<VolunteerProfile>().Where(v => v.UserId == access.UserId &&
+                (country == null || v.CountryCode == country) &&
+                grants.Any(m => m.CountryCode == v.CountryCode && m.OrganisationId == v.OrganisationId))
+            .Select(v => new { v.Id, v.OrganisationId, v.CountryCode, v.Verified })
+            .SingleOrDefaultAsync(ct);
+        if (profile is null)
+            return new { HasProfile = false, Verified = false, Assignments = Array.Empty<object>(), History = Array.Empty<object>() };
+
+        var assignments = await (from task in db.Set<VolunteerTask>()
+                                 join request in db.Set<AssistanceRequest>() on task.RequestId equals request.Id
+                                 join crisis in db.Set<Crisis>() on request.CrisisId equals crisis.Id
+                                 where task.VolunteerId == profile.Id && crisis.CountryCode == profile.CountryCode &&
+                                     grants.Any(m => m.CountryCode == crisis.CountryCode && m.OrganisationId == profile.OrganisationId &&
+                                         (m.CrisisId == null || m.CrisisId == crisis.Id))
+                                 orderby task.DueAt, task.Id
+                                 select new { Task = task, request.Category, request.LocationText, Crisis = crisis.Name })
+            .ToListAsync(ct);
+        var taskIds = assignments.Select(a => a.Task.Id).ToArray();
+        var history = await db.Set<VolunteerTaskEvent>().Where(e => taskIds.Contains(e.TaskId))
+            .OrderBy(e => e.CreatedAt).ThenBy(e => e.Id)
+            .Select(e => new { e.Id, e.TaskId, e.CreatedAt, e.Action, e.WorkDescription, e.Outcome, e.PeopleAssisted, e.Issues, e.Note })
+            .ToListAsync(ct);
+        return new { HasProfile = true, profile.Verified, Assignments = assignments, History = history };
+    }
+
+    [HttpGet("volunteers/registered-users")]
+    public async Task<object> VolunteerUsers(Guid organisationId, string? search, CancellationToken ct)
+    {
+        var country = await access.VolunteerWorkspaceCountry(ct);
+        if (!access.IsVolunteerWorkspace) throw new AccessDeniedException();
+        await access.RequireLocation(organisationId, country, [Roles.VolunteerCoordinator], ct);
+        var registered = users.Users.Where(u => !u.Disabled && db.Set<Membership>().Any(m => m.UserId == u.Id && m.Role == Roles.Volunteer &&
+            m.OrganisationId == organisationId && m.CountryCode == country && m.CrisisId == null) &&
+            !db.Set<VolunteerProfile>().Any(v => v.UserId == u.Id));
+        search = search?.Trim();
+        if (!string.IsNullOrWhiteSpace(search))
+            registered = registered.Where(u => u.DisplayName.Contains(search) || u.Id.Contains(search) ||
+                u.NormalizedEmail != null && u.NormalizedEmail.Contains(search.ToUpperInvariant()));
+        return await registered.OrderBy(u => u.DisplayName).ThenBy(u => u.Id).Take(20)
+            .Select(u => new { u.Id, Name = u.DisplayName }).ToListAsync(ct);
+    }
+
+    [HttpGet("volunteer-tasks/cases")]
+    public Task<List<VolunteerCase>> VolunteerCases(string? search, CancellationToken ct, bool unassigned = false, Guid? requestId = null)
+        => ops.VolunteerCases(search, ct, unassigned, requestId);
     [HttpGet("volunteer-tasks/candidates")]
     public Task<List<VolunteerCandidate>> VolunteerRecommendations(Guid requestId,
-        DateTimeOffset startsAt, DateTimeOffset dueAt, string? skill, CancellationToken ct)
-        => ops.VolunteerRecommendations(requestId, startsAt, dueAt, skill, ct);
+        DateTimeOffset? startsAt, DateTimeOffset dueAt, string? skill, CancellationToken ct, Guid? dispatchId = null)
+        => ops.VolunteerRecommendations(requestId, startsAt ?? DateTimeOffset.UtcNow, dueAt, skill, ct, dispatchId);
+    [HttpPost("volunteer-tasks/skill-suggestion"), EnableRateLimiting("ai-drafts")]
+    public async Task<IActionResult> VolunteerSkill(VolunteerSkillInput input, CancellationToken ct) =>
+        Ok(new { Draft = await ops.VolunteerSkill(input, ct) });
     [HttpPost("volunteer-tasks")] public Task<VolunteerTask> Task(TaskInput input, CancellationToken ct) => ops.AssignTask(input, ct);
     [HttpPost("volunteer-tasks/{id:guid}")] public Task<VolunteerTask> UpdateTask(Guid id, TaskUpdateInput input, CancellationToken ct) => ops.UpdateTask(id, input, ct);
     [HttpGet("notifications")]
-    public async Task<List<Notification>> Notifications(CancellationToken ct, bool unreadOnly = false, bool partnerOnly = false)
+    public async Task<List<Notification>> Notifications(CancellationToken ct, bool unreadOnly = false, bool partnerOnly = false,
+        bool donorOnly = false, string? inboxRole = null)
     {
-        var query = VisibleNotifications(partnerOnly);
+        var query = await VisibleNotifications(partnerOnly, donorOnly, inboxRole, ct);
         if (unreadOnly)
             query = query.Where(n => !n.Read);
         return await query.OrderByDescending(n => n.CreatedAt).Take(100).ToListAsync(ct);
     }
     [HttpGet("notifications/unread-count")]
-    public async Task<object> UnreadNotifications(CancellationToken ct, bool partnerOnly = false)
-        => new { count = await VisibleNotifications(partnerOnly).CountAsync(x => !x.Read, ct) };
-    private IQueryable<Notification> VisibleNotifications(bool partnerOnly)
+    public async Task<object> UnreadNotifications(CancellationToken ct, bool partnerOnly = false, bool donorOnly = false, string? inboxRole = null)
+        => new { count = await (await VisibleNotifications(partnerOnly, donorOnly, inboxRole, ct)).CountAsync(x => !x.Read, ct) };
+
+    private async Task<IQueryable<Notification>> VisibleNotifications(bool partnerOnly, bool donorOnly, string? inboxRole, CancellationToken ct)
     {
-        if (partnerOnly)
+        var role = donorOnly ? Roles.Donor : partnerOnly ? Roles.Partner : inboxRole ?? Request.Query["staffRole"].FirstOrDefault();
+        if (role != null && (!Roles.All.Contains(role) || !User.IsInRole(role))) throw new AccessDeniedException();
+        var country = role switch
         {
-            return notifications.Visible(access.UserId, access.SelectedCountry).Where(n => n.ScopeRole == Roles.Partner &&
-                db.Set<Membership>().Any(m => m.UserId == access.UserId && m.Role == Roles.Partner &&
-                    m.OrganisationId == n.ScopeOrganisationId && m.CountryCode == n.ScopeCountryCode &&
-                    (m.CrisisId == null || m.CrisisId == n.CrisisId) &&
-                    db.Set<OrganisationCountry>().Any(o => o.OrganisationId == m.OrganisationId && o.CountryCode == m.CountryCode &&
-                        (o.VerificationState == "Verified" || o.VerificationState == "LegacyActive"))));
-        }
-        if (!NotificationChannels.ReceivesCitizenEmail(User.FindAll(ClaimTypes.Role).Select(c => c.Value)))
-            return notifications.Visible(access.UserId, access.SelectedCountry);
+            Roles.Coordinator => await access.CoordinatorCountry(ct),
+            Roles.CaseManager => await access.CaseManagerCountry(ct),
+            Roles.Logistics => await access.LogisticsCountry(ct),
+            Roles.ShelterAdmin => await access.ShelterWorkspaceCountry(ct),
+            Roles.VolunteerCoordinator => await access.VolunteerWorkspaceCountry(ct),
+            _ => access.SelectedCountry,
+        };
+        if (access.SelectedCountry is { } selected && country != selected) throw new AccessDeniedException();
+        var donor = db.Set<Notification>().Where(n => n.UserId == access.UserId && n.IsInternal && n.ScopeRole == Roles.Donor &&
+            (country == null || n.ScopeCountryCode == country));
+        if (role == Roles.Donor) return donor;
+
         var citizen = db.Set<Notification>().Where(n => !n.IsInternal && n.UserId == access.UserId
             && db.Set<AssistanceRequest>().Any(r => r.Id == n.RequestId && r.CitizenId == access.UserId
                 && db.Set<Crisis>().Any(c => c.Id == r.CrisisId
-                    && (access.SelectedCountry == null || c.CountryCode == access.SelectedCountry))));
-        return citizen.Union(notifications.Visible(access.UserId, access.SelectedCountry));
+                    && (country == null || c.CountryCode == country))));
+        if (role == Roles.Citizen) return citizen;
+
+        var visible = notifications.Visible(access.UserId, country, role);
+        if (role != null) return visible;
+        if (User.IsInRole(Roles.Donor)) visible = visible.Union(donor);
+        return User.IsInRole(Roles.Citizen) ? visible.Union(citizen) : visible;
     }
     [HttpPost("notifications/{id:guid}/read")]
-    public async Task<IActionResult> Read(Guid id, CancellationToken ct, bool partnerOnly = false)
+    public async Task<IActionResult> Read(Guid id, CancellationToken ct, bool partnerOnly = false, bool donorOnly = false, string? inboxRole = null)
     {
-        var visible = VisibleNotifications(partnerOnly).Where(n => n.Id == id);
+        var visible = (await VisibleNotifications(partnerOnly, donorOnly, inboxRole, ct)).Where(n => n.Id == id);
         if (await MarkNotificationsRead(visible, ct) == 0 && !await visible.AnyAsync(ct))
             throw new MissingException();
         return NoContent();
     }
     [HttpPost("notifications/read-all")]
-    public async Task<IActionResult> ReadAll(CancellationToken ct, bool partnerOnly = false)
+    public async Task<IActionResult> ReadAll(CancellationToken ct, bool partnerOnly = false, bool donorOnly = false, string? inboxRole = null)
     {
-        await MarkNotificationsRead(VisibleNotifications(partnerOnly), ct);
+        await MarkNotificationsRead(await VisibleNotifications(partnerOnly, donorOnly, inboxRole, ct), ct);
         return NoContent();
     }
     private Task<int> MarkNotificationsRead(IQueryable<Notification> visible, CancellationToken ct)
@@ -120,6 +291,13 @@ public sealed partial class OperationsController(Operations ops, AccessService a
     [HttpGet("crises")]
     public async Task<object> Crises(CancellationToken ct, string? countryCode = null)
     {
+        if (access.IsCoordinatorWorkspace)
+        {
+            var country = await access.CoordinatorCountry(ct);
+            if (countryCode != null && countryCode != country) throw new AccessDeniedException();
+            return await access.CoordinatorCrises(country)
+                .OrderByDescending(c => c.CreatedAt).ThenBy(c => c.Id).ToListAsync(ct);
+        }
         var assignments = await db.Set<CrisisAssignment>().Where(x => x.UserId == access.UserId).Select(x => x.CrisisId).ToListAsync(ct);
         var memberships = await access.Memberships(ct);
         var admin = await access.IsAdmin(ct);
@@ -158,7 +336,11 @@ public sealed partial class OperationsController(Operations ops, AccessService a
     [HttpPost("crises")]
     public async Task<Crisis> AddCrisis(Crisis input, CancellationToken ct)
     {
-        if (OutsideSelectedCountry(input.CountryCode) || !await access.CountryAccess(input.CountryCode, [Roles.Coordinator], ct))
+        var canCreate = access.IsCoordinatorWorkspace
+            ? input.CountryCode == await access.CoordinatorCountry(ct) && (await access.Memberships(ct)).Any(m =>
+                m.Role == Roles.Coordinator && m.CountryCode == input.CountryCode && m.CrisisId == null)
+            : await access.CountryAccess(input.CountryCode, [Roles.Coordinator], ct);
+        if (OutsideSelectedCountry(input.CountryCode) || !canCreate)
             throw new AccessDeniedException();
         if (string.IsNullOrWhiteSpace(input.Name) || input.Name.Length > 150 || input.Latitude is < -90 or > 90 || input.Longitude is < -180 or > 180)
             throw new RuleException("Provide a crisis name and valid coordinates.");
@@ -266,8 +448,14 @@ public sealed partial class OperationsController(Operations ops, AccessService a
     {
         if (string.IsNullOrWhiteSpace(query) || query.Length > 150 || countryCode is not ("LK" or "IN" or "NP"))
             return BadRequest();
-        var result = await cache.GetOrCreateAsync("geo:" + countryCode + ":" + query.Trim().ToLowerInvariant(),
-            async entry => { entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(12); return await maps.GeocodeAsync(query, ct, countryCode); });
+        query = query.Trim();
+        string key = "geo:" + countryCode + ":" + query.ToLowerInvariant();
+        if (cache.TryGetValue(key, out object? cached))
+            return Ok(cached);
+
+        var result = await maps.GeocodeAsync(query, ct, countryCode);
+        if (result is not null)
+            cache.Set(key, result, TimeSpan.FromHours(12));
         return result is null ? StatusCode(503, new ProblemDetails { Title = "Location search unavailable. Enter a location or select a map point.", Status = 503 }) : Ok(result);
     }
     [EnableRateLimiting("maps"), HttpPost("maps/reverse-geocode")]
@@ -307,17 +495,15 @@ public sealed partial class OperationsController(Operations ops, AccessService a
                               join crisis in db.Set<Crisis>() on request.CrisisId equals crisis.Id
                               where crisis.CountryCode == countryCode
                               select request.CitizenId;
-        var usersQuery = db.Users.Where(u => (global || !u.IsSystemAdministrator)
-            && (countryCode == null || u.IsSystemAdministrator || visible.Any(m => m.UserId == u.Id) || localRequesters.Contains(u.Id)));
+        var usersQuery = db.Users.Where(u => !u.IsSystemAdministrator
+            && (countryCode == null || visible.Any(m => m.UserId == u.Id) || localRequesters.Contains(u.Id)));
         if (!string.IsNullOrWhiteSpace(search))
         {
             var term = search.Trim();
             usersQuery = usersQuery.Where(u => u.DisplayName.Contains(term) || (u.Email != null && u.Email.Contains(term)));
         }
         if (role == "NoStaffRoles")
-            usersQuery = usersQuery.Where(u => !u.IsSystemAdministrator && !visible.Any(m => m.UserId == u.Id));
-        else if (role == Roles.Administrator)
-            usersQuery = usersQuery.Where(u => u.IsSystemAdministrator);
+            usersQuery = usersQuery.Where(u => !visible.Any(m => m.UserId == u.Id));
         else if (!string.IsNullOrEmpty(role))
             usersQuery = usersQuery.Where(u => visible.Any(m => m.UserId == u.Id && m.Role == role));
 
@@ -349,51 +535,38 @@ public sealed partial class OperationsController(Operations ops, AccessService a
         return includeTotal ? new { items, total, pageNumber = page, pageSize } : (object)items;
     }
     [HttpPost("admin/users")]
-    public async Task<object> AddStaff(StaffInput input, CancellationToken ct)
+    public async Task<object> AddStaff(StaffInput input, [FromServices] IDataProtectionProvider protection, CancellationToken ct)
     {
         await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
-        var administratorRole = input.Role is Roles.CountryAdministrator or Roles.Administrator;
+        var countryAdministrator = input.Role == Roles.CountryAdministrator;
         var global = await access.IsAdmin(ct);
-        if (!global && (administratorRole || !await access.CountryAccess(input.CountryCode, [], ct))) throw new AccessDeniedException();
-        if (input.CrisisId.HasValue && administratorRole) throw new RuleException("Administrator grants cannot be limited to a crisis. Choose a crisis staff role instead.");
+        if (!global && (countryAdministrator || input.Role == Roles.Administrator || !await access.CountryAccess(input.CountryCode, [], ct))) throw new AccessDeniedException();
+        if (input.CrisisId.HasValue && countryAdministrator) throw new RuleException("Administrator grants cannot be limited to a crisis. Choose a crisis staff role instead.");
         if (!await db.Set<Country>().AnyAsync(x => x.Code == input.CountryCode, ct) || (input.CrisisId.HasValue && !await db.Set<Crisis>().AnyAsync(x => x.Id == input.CrisisId && x.CountryCode == input.CountryCode, ct))) throw new RuleException("Invalid country or crisis scope.");
-        if (!Roles.All.Contains(input.Role) || input.Role == Roles.Citizen) throw new RuleException("Choose a valid staff role.");
-        var organisationId = administratorRole ? null : input.OrganisationId;
-        if (!administratorRole)
+        if (!Roles.All.Contains(input.Role) || input.Role is Roles.Citizen or Roles.Donor or Roles.Administrator) throw new RuleException("Choose a valid staff role.");
+        var organisationId = countryAdministrator ? null : input.OrganisationId;
+        if (!countryAdministrator)
         {
             if (!organisationId.HasValue) throw new RuleException("Choose a staff organisation.");
             await access.RequirePartner(organisationId.Value, input.CountryCode, ct);
         }
-        var user = await users.FindByEmailAsync(input.Email);
-        if (input.Role == Roles.Administrator)
+        if (input.VolunteerProfile != null)
         {
-            var target = user ?? throw new RuleException("Choose an existing account for system administrator access.");
-            if (target.Disabled) throw new RuleException("Reactivate the account first.");
-            if (target.IsSystemAdministrator) throw new RuleException("The account already has system administrator access.");
-            var proposal = new AdminProposal { Kind = "GlobalAccess", CountryCode = input.CountryCode, RequesterUserId = access.UserId, Reason = "Global administrator access requested", OriginalVersion = target.SecurityStamp ?? "", Payload = System.Text.Json.JsonSerializer.Serialize(new AdministrationController.GrantPayload(target.Id)) };
-            db.Add(proposal);
-            ops.Audit("AdministrationProposalCreated", proposal);
-            await db.SaveChangesAsync(ct);
-            await tx.CommitAsync(ct);
-            return new { proposal.Id, proposal.State };
+            if (input.Role != Roles.Volunteer || input.CrisisId.HasValue)
+                throw new RuleException("Register local volunteers with a country-level Volunteer grant.");
+            await ops.ValidateVolunteerProfileSetup(input.VolunteerProfile, input.CountryCode, ct);
         }
+        var user = await users.FindByEmailAsync(input.Email);
+        var newAccount = user is null;
         if (!global && user?.IsSystemAdministrator == true) throw new AccessDeniedException();
         if (user is null)
         {
             if (string.IsNullOrWhiteSpace(input.Name) || input.Name.Length > 100 || input.Password is null || input.Password.Length < 10)
                 throw new RuleException("Provide a name and an initial password of at least 10 characters for the new account.");
-            user = new AppUser { UserName = input.Email, Email = input.Email, DisplayName = input.Name, LockoutEnabled = true };
-            var result = await users.CreateAsync(user, input.Password);
-            if (!result.Succeeded)
-                throw new RuleException(string.Join(" ", result.Errors.Select(x => x.Description)));
-            db.Add(new AuditEvent
-            {
-                Action = "StaffAccountCreated", ActorId = access.UserId,
-                EntityType = "User", EntityId = Guid.Parse(user.Id), CountryCode = input.CountryCode, Detail = "Staff account created."
-            });
+            user = await CreateStaffIdentity(input.Email, input.Name, input.Password, input.CountryCode);
         }
-        if (!await users.IsInRoleAsync(user, input.Role))
-            await users.AddToRoleAsync(user, input.Role);
+        if (!await users.IsInRoleAsync(user, input.Role) && !(await users.AddToRoleAsync(user, input.Role)).Succeeded)
+            throw new RuleException("Could not assign the staff role.");
         var grant = await db.Set<Membership>().IgnoreQueryFilters().SingleOrDefaultAsync(x => x.UserId == user.Id
             && x.Role == input.Role && x.OrganisationId == organisationId && x.CountryCode == input.CountryCode && x.CrisisId == input.CrisisId, ct);
         if (grant is null)
@@ -403,19 +576,52 @@ public sealed partial class OperationsController(Operations ops, AccessService a
         }
         else if (grant.Suspended)
             throw new RuleException("Reactivate the existing grant from Account actions.");
+        if (input.VolunteerProfile is { } volunteerSetup)
+        {
+            var profile = await db.Set<VolunteerProfile>().SingleOrDefaultAsync(x => x.UserId == user.Id, ct);
+            if (profile == null) AddVolunteerProfile(user.Id, organisationId!.Value, input.CountryCode, volunteerSetup);
+            else if (profile.TaskRequestId != null || profile.OrganisationId != organisationId || profile.CountryCode != input.CountryCode)
+                throw new RuleException("This account already has a volunteer profile in a different scope.");
+        }
         if (input.CrisisId.HasValue && input.Role != Roles.FundingOfficer &&
             !await db.Set<CrisisAssignment>().AnyAsync(x => x.UserId == user.Id && x.CrisisId == input.CrisisId, ct))
             db.Add(new CrisisAssignment { UserId = user.Id, CrisisId = input.CrisisId.Value });
         if (!(await users.UpdateSecurityStampAsync(user)).Succeeded) throw new RuleException("Could not invalidate sessions.");
         foreach (var session in await db.Set<RefreshSession>().Where(x => x.UserId == user.Id && !x.Revoked).ToListAsync(ct)) session.Revoked = true;
+        if (newAccount)
+            db.Add(StaffInvitationEmail.Queue(user, grant, input.Password!, protection));
         ops.Audit("StaffAccessGranted", grant, input.Role);
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         return new
         {
             user.Id,
-            user.Email
+            user.Email,
+            invitationQueued = newAccount
         };
+    }
+
+    private async Task<AppUser> CreateStaffIdentity(string email, string name, string password, string country)
+    {
+        var user = new AppUser { UserName = email.Trim(), Email = email.Trim(), DisplayName = name.Trim(), LockoutEnabled = true };
+        var result = await users.CreateAsync(user, password);
+        if (!result.Succeeded)
+            throw new RuleException(string.Join(" ", result.Errors.Select(x => x.Description)));
+        db.Add(new AuditEvent
+        {
+            Action = "StaffAccountCreated", ActorId = access.UserId, EntityType = "User",
+            EntityId = Guid.Parse(user.Id), CountryCode = country, Detail = "Staff account created."
+        });
+        return user;
+    }
+
+    private VolunteerProfile AddVolunteerProfile(string userId, Guid organisationId, string country, VolunteerProfileSetup input)
+    {
+        var profile = new VolunteerProfile { UserId = userId, OrganisationId = organisationId, CountryCode = country,
+            Skills = input.Skills.Trim(), Availability = input.Availability.Trim(), Available = input.Available, ServiceRegionId = input.ServiceRegionId };
+        db.Add(profile);
+        ops.Audit("VolunteerSaved", profile, countryCode: country);
+        return profile;
     }
     [HttpDelete("admin/memberships/{id:guid}")]
     public async Task<IActionResult> Revoke(Guid id, CancellationToken ct)
@@ -467,14 +673,17 @@ public sealed partial class OperationsController(Operations ops, AccessService a
     [HttpPost("admin/organisations")]
     public async Task<Organisation> AddOrg(OrganisationInput input, CancellationToken ct)
     {
-        await Admin(ct);
+        if (!await access.CountryAccess(input.CountryCode, [], ct)) throw new AccessDeniedException();
         if (string.IsNullOrWhiteSpace(input.Name) || input.Name.Length > 150)
             throw new RuleException("Provide an organisation name under 150 characters.");
-        if (!await db.Set<Country>().AnyAsync(x => x.Code == input.CountryCode, ct)) throw new RuleException("Choose a supported country.");
+        var country = await db.Set<Country>().SingleOrDefaultAsync(x => x.Code == input.CountryCode, ct)
+            ?? throw new RuleException("Choose a supported country.");
         var org = new Organisation { Name = input.Name.Trim() };
         db.Add(org);
-        db.Add(new OrganisationCountry { OrganisationId = org.Id, CountryCode = input.CountryCode });
-        ops.Audit("OrganisationCreated", org, countryCode: input.CountryCode);
+        db.Add(new OrganisationCountry { OrganisationId = org.Id, CountryCode = country.Code });
+        ops.Audit("OrganisationCreated", org, countryCode: country.Code);
+        await notifications.PartnerVerificationRequested(org.Id, country.Code,
+            $"{org.Name} was registered in {country.Name} and is pending verification.", access.UserId, ct);
         await db.SaveChangesAsync(ct);
         return org;
     }
@@ -495,9 +704,12 @@ public sealed partial class OperationsController(Operations ops, AccessService a
         }).Where(x => (actor == null || x.ActorId == actor || (x.ActorName != null && x.ActorName.Contains(actor)))
             && (search == null || x.Action.Contains(search) || x.Detail.Contains(search) || x.EntityType.Contains(search)
                 || x.EntityId.ToString().Contains(search) || (x.EntityType == nameof(AssistanceRequest)
-                    && db.Set<AssistanceRequest>().Any(r => r.Id == x.EntityId && r.Reference.Contains(search)))));
+                    && db.Set<AssistanceRequest>().Any(r => r.Id == x.EntityId &&
+                        (r.Reference.Contains(search) || (r.LegacyReference != null && r.LegacyReference.Contains(search)))))));
         var total = includeTotal ? await query.CountAsync(ct) : 0;
-        var items = await query.OrderByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
+        var rows = await query.OrderByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
+        var items = rows.Select(row => row.Action is "AiGenerated" or "CrisisBriefingDrafted"
+            ? row with { Detail = AiPresentation.Source(row.Detail) } : row).ToList();
         if (includeTotal && today is { } start)
         {
             string[] highRiskActions = ["SystemAdministratorGranted", "SystemAdministratorRevoked", "StaffAccessRevoked", "StaffSuspended",
@@ -525,10 +737,12 @@ public sealed partial class OperationsController(Operations ops, AccessService a
             EventMessage = x.Message,
             RecipientName = db.Users.Where(u => u.Id == x.UserId).Select(u => u.DisplayName).FirstOrDefault(),
             CaseReference = db.Set<AssistanceRequest>().Where(r => r.Id == x.RequestId).Select(r => r.Reference).FirstOrDefault(),
+            LegacyCaseReference = db.Set<AssistanceRequest>().Where(r => r.Id == x.RequestId).Select(r => r.LegacyReference).FirstOrDefault(),
             Provider = db.Set<NotificationDelivery>().Where(d => d.EventId == x.Id && d.RecipientId == x.UserId).Select(d => d.Provider).FirstOrDefault(),
             InAppStored = dashboard && db.Set<Notification>().Any(n => n.EventId == x.Id && n.UserId == x.UserId && n.RequestId == x.RequestId),
             Recovered = dashboard && x.State == "Sent" && attempts.Any(a => a.EventId == x.Id && (a.State == "Failed" || a.State == "Retry" || a.State == "Review")),
         }).Where(x => search == null || x.EventMessage.Contains(search) || (x.CaseReference != null && x.CaseReference.Contains(search))
+            || (x.LegacyCaseReference != null && x.LegacyCaseReference.Contains(search))
             || (x.RecipientName != null && x.RecipientName.Contains(search)));
         var total = includeTotal ? await query.CountAsync(ct) : 0;
         var items = await query.OrderByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
