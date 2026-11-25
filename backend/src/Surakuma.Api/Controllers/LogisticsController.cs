@@ -24,7 +24,12 @@ public sealed class LogisticsController(CrisisDbContext db, IStore store, Access
     public sealed record ActionInput([MaxLength(1000)] string? Reason = null, DeliveryInput? Delivery = null);
     public sealed record Shipment(Guid Id, LogisticsOrderKind Kind, Guid ResourceId, Guid? DestinationResourceId,
         Guid? CrisisId, string Origin, string Destination, decimal Quantity, AllocationStatus Status,
-        string ActorId, string Reason, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, Guid? RequestId);
+        string ActorId, string Reason, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, Guid? RequestId,
+        DateTimeOffset? DispatchedAt, DateTimeOffset? PackedAt, DateTimeOffset? ScheduledArrivalAt, string Reference,
+        Guid? CaseDispatchId, DateTimeOffset? CentreReceivedAt);
+    private sealed record StockRow(Guid Id, string Name, string? Code, string CountryCode, Guid? DepotId,
+        Guid OrganisationId, AidCategory Category, string Unit, decimal Stock, decimal Reserved, decimal Available,
+        string LocationText, decimal? LowStockThreshold, string Suitability, bool TransportAvailable, bool CanShip, string Reference);
 
     [HttpGet]
     public async Task<object> Dashboard(CancellationToken ct, bool specialist = false)
@@ -32,10 +37,11 @@ public sealed class LogisticsController(CrisisDbContext db, IStore store, Access
         var global = !specialist && await access.IsAdmin(ct);
         var grants = await access.Memberships(ct);
         if (specialist && !grants.Any(m => m.Role == Roles.Logistics)) throw new AccessDeniedException();
-        var specialistCountry = specialist ? access.SelectedCountry ?? throw new RuleException("Select the logistics country.") : null;
-        var locations = db.Set<Membership>().Where(m => m.UserId == access.UserId && m.Role == Roles.Logistics
-            && m.CountryCode == specialistCountry && m.CrisisId == null);
-        var allowed = grants.Where(m => m.Role == (specialist ? Roles.Logistics : Roles.CountryAdministrator) && m.CrisisId == null
+        var specialistCountry = specialist ? await access.LogisticsCountry(ct) : null;
+        var logisticsGrants = db.Set<Membership>().Where(m => m.UserId == access.UserId && m.Role == Roles.Logistics
+            && m.CountryCode == specialistCountry);
+        var locations = logisticsGrants.Where(m => m.CrisisId == null);
+        var allowed = grants.Where(m => m.Role == (specialist ? Roles.Logistics : Roles.CountryAdministrator) && (specialist || m.CrisisId == null)
                 && (!specialist || m.CountryCode == specialistCountry))
             .Select(m => m.CountryCode).Distinct().ToArray();
         if (!specialist && !global && allowed.Length == 0) throw new AccessDeniedException();
@@ -43,39 +49,70 @@ public sealed class LogisticsController(CrisisDbContext db, IStore store, Access
             .Select(c => new { c.Code, c.Name }).ToListAsync(ct);
         var codes = countries.Select(c => c.Code).ToArray();
         var resources = db.Set<Resource>().Where(r => codes.Contains(r.CountryCode));
-        if (specialist) resources = resources.Where(r => locations.Any(m => m.OrganisationId == r.OrganisationId));
-        var inventory = await resources.OrderBy(r => r.Name).ThenBy(r => r.Id)
-            .Select(r => new { r.Id, r.Name, r.Code, r.CountryCode, r.DepotId, r.OrganisationId, r.Category, r.Unit,
-                r.Stock, r.Reserved, Available = r.Stock - r.Reserved, r.LocationText, r.LowStockThreshold,
-                r.Suitability, r.TransportAvailable }).ToListAsync(ct);
-        var depots = await db.Set<Depot>().Where(d => codes.Contains(d.CountryCode) &&
-                (!specialist || locations.Any(m => m.OrganisationId == d.OrganisationId))).OrderBy(d => d.Name)
-            .Select(d => new { d.Id, d.Name, d.Location, d.CountryCode, d.OrganisationId }).ToListAsync(ct);
+        if (specialist) resources = resources.Where(r => locations.Any(m => m.OrganisationId == r.OrganisationId && (m.DepotId == null || m.DepotId == r.DepotId)));
+        var inventory = await ProjectStock(resources.OrderBy(r => r.Name).ThenBy(r => r.Id)).ToListAsync(ct);
+        var caseGrants = logisticsGrants.Where(m => m.CrisisId != null);
+        var crisisScoped = db.Set<Resource>().Where(r => r.CountryCode == specialistCountry &&
+            !resources.Any(managed => managed.Id == r.Id) &&
+            caseGrants.Any(m => m.OrganisationId == r.OrganisationId && (m.DepotId == null || m.DepotId == r.DepotId)));
+        var caseInventory = specialist ? await ProjectStock(crisisScoped).ToListAsync(ct) : [];
+        var caseStockScope = grants.Where(m => specialist && m.Role == Roles.Logistics && m.CountryCode == specialistCountry && m.CrisisId != null)
+            .Select(m => new { m.OrganisationId, m.CrisisId, m.DepotId });
+        var depotOptions = await db.Set<Depot>().Where(d => codes.Contains(d.CountryCode) &&
+                (!specialist || logisticsGrants.Any(m => m.OrganisationId == d.OrganisationId && (m.DepotId == null || m.DepotId == d.Id))))
+            .OrderBy(d => d.Name)
+            .Select(d => new { d.Id, d.Name, d.Location, d.CountryCode, d.OrganisationId,
+                CanManageStock = !specialist || locations.Any(m => m.OrganisationId == d.OrganisationId && (m.DepotId == null || m.DepotId == d.Id)) })
+            .ToListAsync(ct);
+        var depots = depotOptions.Where(d => d.CanManageStock).Select(d => new { d.Id, d.Name, d.Location, d.CountryCode, d.OrganisationId });
         var crises = db.Set<Crisis>().Where(c => codes.Contains(c.CountryCode));
         var crisisOptions = await crises.OrderBy(c => c.Name).Select(c => new { c.Id, c.Name, c.CountryCode, c.Active }).ToListAsync(ct);
         var areas = await db.Set<OperationalArea>().Where(a => crises.Any(c => c.Id == a.CrisisId)).OrderBy(a => a.Name)
             .Select(a => new { a.Id, a.Name, a.CrisisId }).ToListAsync(ct);
-        var partners = await (from registration in db.Set<OrganisationCountry>()
+        var partnerOptions = await (from registration in db.Set<OrganisationCountry>()
                               join organisation in db.Set<Organisation>() on registration.OrganisationId equals organisation.Id
                               where codes.Contains(registration.CountryCode)
-                                  && (!specialist || locations.Any(m => m.OrganisationId == organisation.Id))
+                                  && (!specialist || logisticsGrants.Any(m => m.OrganisationId == organisation.Id))
                                   && (registration.VerificationState == "Verified" || registration.VerificationState == "LegacyActive")
                               orderby organisation.Name
-                              select new { organisation.Id, organisation.Name, registration.CountryCode }).ToListAsync(ct);
+                              select new { organisation.Id, organisation.Name, registration.CountryCode,
+                                  CanManageStock = !specialist || locations.Any(m => m.OrganisationId == organisation.Id),
+                                  CanRegisterDepot = !specialist || logisticsGrants.Any(m => m.OrganisationId == organisation.Id && m.DepotId == null) })
+            .ToListAsync(ct);
+        var partners = partnerOptions.Where(p => p.CanManageStock).Select(p => new { p.Id, p.Name, p.CountryCode });
+        var resourceRegistration = new { Depots = depotOptions, Partners = partnerOptions };
+        var organisationIds = grants.Where(m => specialist && m.Role == Roles.Logistics && m.CountryCode == specialistCountry)
+            .Select(m => m.OrganisationId).Distinct().ToArray();
+        var organisations = await db.Set<Organisation>().Where(o => organisationIds.Contains(o.Id)).OrderBy(o => o.Name)
+            .Select(o => new { o.Id, o.Name }).ToListAsync(ct);
         var shipments = await db.Set<LogisticsOrder>()
             .Where(o => resources.Any(r => r.Id == o.ResourceId)
                 && (o.DestinationResourceId == null || resources.Any(r => r.Id == o.DestinationResourceId))
                 && (o.CrisisId == null || crises.Any(c => c.Id == o.CrisisId)))
             .Select(o => new Shipment(o.Id, o.Kind, o.ResourceId, o.DestinationResourceId, o.CrisisId, o.Origin, o.Destination,
-                o.Quantity, o.Status, o.ActorId, o.Reason, o.CreatedAt, o.UpdatedAt, null)).ToListAsync(ct);
+                o.Quantity, o.Status, o.ActorId, o.Reason, o.CreatedAt, o.UpdatedAt, null,
+                db.Set<StockMovement>().Where(m => m.OperationId == o.Id && m.Kind == "Dispatched")
+                    .Select(m => (DateTimeOffset?)m.CreatedAt).FirstOrDefault(), o.PackedAt, o.ScheduledArrivalAt, o.Reference, null, null)).ToListAsync(ct);
         var cases = specialist ? await access.StaffCases(Roles.Logistics, ct) : db.Set<AssistanceRequest>();
         var allocations = await (from allocation in db.Set<ResourceAllocation>()
-                                 join resource in resources on allocation.ResourceId equals resource.Id
+                                 join resource in db.Set<Resource>() on allocation.ResourceId equals resource.Id
                                  join request in cases on allocation.RequestId equals request.Id
                                  join crisis in crises on request.CrisisId equals crisis.Id
+                                 where resource.CountryCode == crisis.CountryCode && (resources.Any(r => r.Id == resource.Id)
+                                     || (specialist && caseGrants.Any(m => m.CrisisId == request.CrisisId && m.OrganisationId == resource.OrganisationId && (m.DepotId == null || m.DepotId == resource.DepotId))))
                                  select new Shipment(allocation.Id, LogisticsOrderKind.Dispatch, resource.Id, null,
-                                     crisis.Id, resource.LocationText, request.Reference, allocation.Quantity, allocation.Status,
-                                     allocation.ApprovedBy, "", allocation.CreatedAt, allocation.UpdatedAt, request.Id)).ToListAsync(ct);
+                                     crisis.Id, resource.LocationText,
+                                     db.Set<CaseDispatch>().Where(d => d.Id == allocation.CaseDispatchId)
+                                         .Select(d => db.Set<Depot>().Where(centre => centre.Id == d.CentreId).Select(centre => centre.Name).FirstOrDefault()).FirstOrDefault()
+                                     ?? db.Set<AdministrativeDivision>().Where(d => d.Id == request.AdministrativeDivisionId)
+                                         .Select(d => d.Name).FirstOrDefault() ?? request.Reference,
+                                     allocation.Quantity, allocation.Status, allocation.ApprovedBy, "",
+                                     db.Set<CaseDispatch>().Where(d => d.Id == allocation.CaseDispatchId)
+                                         .Select(d => (DateTimeOffset?)d.CreatedAt).FirstOrDefault() ?? allocation.CreatedAt, allocation.UpdatedAt, request.Id,
+                                     db.Set<StockMovement>().Where(m => m.OperationId == allocation.Id && m.Kind == "Dispatch")
+                                         .Select(m => (DateTimeOffset?)m.CreatedAt).FirstOrDefault(), allocation.PackedAt, allocation.ScheduledArrivalAt,
+                                     db.Set<CaseDispatch>().Where(d => d.Id == allocation.CaseDispatchId).Select(d => d.Reference).FirstOrDefault() ?? allocation.Reference,
+                                     allocation.CaseDispatchId, db.Set<CaseDispatch>().Where(d => d.Id == allocation.CaseDispatchId).Select(d => d.ReceivedAt).FirstOrDefault())).ToListAsync(ct);
         var orders = shipments.Concat(allocations).OrderByDescending(o => o.UpdatedAt).ThenBy(o => o.Id).ToArray();
         var orderIds = shipments.Select(o => o.Id).ToArray();
         var allocationIds = allocations.Select(o => o.Id).ToArray();
@@ -85,13 +122,98 @@ public sealed class LogisticsController(CrisisDbContext db, IStore store, Access
         var actorIds = orders.Select(o => o.ActorId).Concat(receipts.Select(r => r.ActorId)).Distinct().ToArray();
         var actors = await db.Users.Where(u => actorIds.Contains(u.Id)).Select(u => new { u.Id, u.DisplayName })
             .ToDictionaryAsync(u => u.Id, u => u.DisplayName, ct);
-        return new { countries, depots, inventory, crises = crisisOptions, areas, partners, orders, actors, receipts };
+        return new { countries, depots, inventory, caseInventory, caseStockScope, crises = crisisOptions, areas, partners, resourceRegistration, organisations, orders, actors, receipts };
+    }
+
+    private IQueryable<StockRow> ProjectStock(IQueryable<Resource> resources) => resources.Select(r =>
+        new StockRow(r.Id, r.Name, r.Code, r.CountryCode, r.DepotId, r.OrganisationId, r.Category, r.Unit,
+            r.Stock, r.Reserved, r.Stock - r.Reserved, r.LocationText, r.LowStockThreshold, r.Suitability, r.TransportAvailable,
+            db.Set<OrganisationCountry>().Any(o => o.OrganisationId == r.OrganisationId && o.CountryCode == r.CountryCode &&
+                (o.VerificationState == "Verified" || o.VerificationState == "LegacyActive")), r.Reference));
+
+    private static readonly RequestStatus[] FulfilmentStates =
+        [RequestStatus.Approved, RequestStatus.InProgress, RequestStatus.PartiallyFulfilled, RequestStatus.Fulfilled, RequestStatus.Closed];
+
+    private async Task<IQueryable<AssistanceRequest>> FulfilmentCases(CancellationToken ct)
+    {
+        var country = await access.LogisticsCountry(ct);
+        return (await access.StaffCases(Roles.Logistics, ct)).AsNoTracking()
+            .Where(r => FulfilmentStates.Contains(r.Status) && r.Category != AidCategory.Shelter &&
+                db.Set<Crisis>().Any(c => c.Id == r.CrisisId && c.CountryCode == country));
+    }
+
+    private sealed record CaseRow(Guid Id, string Reference, Guid CrisisId, Guid? OrganisationId, AidCategory Category,
+        Priority Priority, RequestStatus Status, decimal Quantity, string? Unit, decimal DeliveredQuantity,
+        decimal ReservedQuantity, decimal InTransitQuantity, bool HasReservations, bool InTransit, string? Region, bool Synthetic, bool RequiresCoordinatorAuthorization, DateTimeOffset? AuthorizedAt, bool PackingComplete, int NeedCount, bool NeedsPending, List<CaseItemRow> Items, string? LegacyReference, bool RequiresCentreHandover, bool AtCentre, bool HasPackedItems);
+
+    private sealed record CaseItemRow(Guid Id, Guid RequestId, string Name, AidCategory Category, string Unit,
+        decimal RequiredQuantity, decimal ApprovedQuantity, decimal DeliveredQuantity, DateTimeOffset CreatedAt,
+        DateTimeOffset UpdatedAt, decimal ReservedQuantity, decimal InTransitQuantity);
+
+    private IQueryable<CaseRow> ProjectCases(IQueryable<AssistanceRequest> cases)
+    {
+        var allocations = db.Set<ResourceAllocation>();
+        return cases.Select(r => new CaseRow(r.Id, r.Reference, r.CrisisId, r.OrganisationId, r.Category,
+            r.Priority, r.Status, r.Quantity, r.Unit, r.DeliveredQuantity,
+            allocations.Where(a => a.RequestId == r.Id && a.NeedId == null && a.Status == AllocationStatus.Reserved).Sum(a => a.RequestQuantity ?? 0),
+            allocations.Where(a => a.RequestId == r.Id && a.NeedId == null && a.Status == AllocationStatus.Dispatched).Sum(a => a.RequestQuantity ?? 0),
+            allocations.Any(a => a.RequestId == r.Id && a.Status == AllocationStatus.Reserved),
+            allocations.Any(a => a.RequestId == r.Id && a.Status == AllocationStatus.Dispatched && a.CentreReceivedQuantity == null),
+            db.Set<AdministrativeDivision>().Where(d => d.Id == r.AdministrativeDivisionId).Select(d => d.Name).FirstOrDefault(),
+            r.Synthetic, r.RequiresCoordinatorAuthorization, r.AuthorizedAt,
+            allocations.Any(a => a.RequestId == r.Id && a.Status == AllocationStatus.Reserved) &&
+            !allocations.Any(a => a.RequestId == r.Id && a.Status == AllocationStatus.Reserved && a.PackedAt == null),
+            db.Set<CaseNeed>().Count(n => n.RequestId == r.Id),
+            db.Set<CaseNeed>().Any(n => n.RequestId == r.Id && n.ApprovedQuantity > n.DeliveredQuantity +
+                allocations.Where(a => a.RequestId == n.RequestId && a.NeedId == n.Id &&
+                    (a.Status == AllocationStatus.Reserved || a.Status == AllocationStatus.Dispatched)).Sum(a => a.RequestQuantity ?? 0)),
+            db.Set<CaseNeed>().Where(n => n.RequestId == r.Id).OrderBy(n => n.CreatedAt).ThenBy(n => n.Id)
+                .Select(n => new CaseItemRow(n.Id, n.RequestId, n.Name, n.Category, n.Unit, n.RequiredQuantity,
+                    n.ApprovedQuantity, n.DeliveredQuantity, n.CreatedAt, n.UpdatedAt,
+                    allocations.Where(a => a.RequestId == n.RequestId && a.NeedId == n.Id && a.Status == AllocationStatus.Reserved)
+                        .Sum(a => a.RequestQuantity ?? 0),
+                    allocations.Where(a => a.RequestId == n.RequestId && a.NeedId == n.Id && a.Status == AllocationStatus.Dispatched)
+                        .Sum(a => a.RequestQuantity ?? 0))).ToList(), r.LegacyReference, r.RequiresCentreHandover,
+            allocations.Any(a => a.RequestId == r.Id && a.Status == AllocationStatus.Dispatched && a.CentreReceivedQuantity != null),
+            allocations.Any(a => a.RequestId == r.Id && a.Status == AllocationStatus.Reserved && a.PackedAt != null)));
+    }
+
+    [HttpGet("cases")]
+    public async Task<object> Cases(CancellationToken ct) =>
+        await ProjectCases((await FulfilmentCases(ct)).OrderByDescending(r => r.Priority).ThenBy(r => r.Reference)).ToListAsync(ct);
+
+    [HttpGet("cases/{id:guid}")]
+    public async Task<object> Case(Guid id, CancellationToken ct)
+    {
+        var row = await ProjectCases((await FulfilmentCases(ct)).Where(r => r.Id == id)).SingleOrDefaultAsync(ct)
+            ?? throw new MissingException();
+        var country = await access.LogisticsCountry(ct);
+        var grants = db.Set<Membership>().Where(m => m.UserId == access.UserId && m.Role == Roles.Logistics &&
+            m.CountryCode == country && (m.CrisisId == null || m.CrisisId == row.CrisisId));
+        var resources = db.Set<Resource>().Where(r => r.CountryCode == country && grants.Any(m => m.OrganisationId == r.OrganisationId && (m.DepotId == null || m.DepotId == r.DepotId)));
+        var allocations = await (from a in db.Set<ResourceAllocation>()
+            join r in resources on a.ResourceId equals r.Id
+            where a.RequestId == id
+            orderby a.CreatedAt, a.Id
+            select new
+            {
+                a.Id, a.Reference, a.ResourceId, a.Quantity, a.RequestQuantity, a.Status, r.Name, r.Unit,
+                Depot = db.Set<Depot>().Where(d => d.Id == r.DepotId).Select(d => d.Name).FirstOrDefault() ?? r.LocationText,
+                a.CreatedAt, a.UpdatedAt, a.PackedAt, a.ScheduledArrivalAt, a.NeedId, a.CaseDispatchId,
+                ConfirmedQuantity = db.Set<DeliveryConfirmation>().Where(d => d.AllocationId == a.Id).Select(d => (decimal?)d.ConfirmedQuantity).FirstOrDefault(),
+                HasException = db.Set<DeliveryConfirmation>().Any(d => d.AllocationId == a.Id && d.ExceptionDetail != "")
+            }).ToListAsync(ct);
+        var history = await db.Set<RequestHistory>().Where(h => h.RequestId == id).OrderBy(h => h.CreatedAt).ThenBy(h => h.Id)
+            .Select(h => new { h.Id, h.Status, h.CreatedAt }).ToListAsync(ct);
+        return new { Case = row, Allocations = allocations, History = history };
     }
 
     [HttpPost("depots")]
     public Task<Depot> AddDepot(DepotInput input, CancellationToken ct) => store.TransactionAsync(async () =>
     {
-        await access.RequireLocation(input.OrganisationId, input.CountryCode, [Roles.Logistics], ct);
+        await access.RequireLocation(input.OrganisationId, input.CountryCode, [Roles.Logistics], ct, includeCrisisAssignments: true);
+        await access.RequireDepot(new Resource { OrganisationId = input.OrganisationId, CountryCode = input.CountryCode }, ct,
+            includeCrisisAssignments: true);
         await access.RequirePartner(input.OrganisationId, input.CountryCode, ct);
         RequireReference(input.OperationId);
         var name = input.Name.Trim();
@@ -132,6 +254,7 @@ public sealed class LogisticsController(CrisisDbContext db, IStore store, Access
             return existing;
         }
         resource.ChangePhysical(input.Delta);
+        await notifications.StockAlert(resource, ct);
         var place = await Place(resource, ct);
         var movement = new StockMovement { Id = input.OperationId, OperationId = input.OperationId, ResourceId = id,
             Quantity = input.Delta, Kind = kind,
@@ -159,7 +282,8 @@ public sealed class LogisticsController(CrisisDbContext db, IStore store, Access
         await store.TransactionAsync(async () =>
         {
             var resource = await RequireResource(id, ct);
-            if (input.LowStockThreshold is { } threshold) QuantityUnits.ValidateInventory(threshold, resource.Unit);
+            if (input.LowStockThreshold is { } threshold && threshold != resource.LowStockThreshold)
+                QuantityUnits.ValidateStockLevel(threshold, resource.Unit);
             if (resource.DepotId != null && input.DepotId != resource.DepotId)
                 throw new RuleException("Use a transfer to move stock between registered depots.");
             if (input.DepotId != null && resource.DepotId == null)
@@ -227,7 +351,7 @@ public sealed class LogisticsController(CrisisDbContext db, IStore store, Access
             return existing;
         }
         source.Reserve(input.Quantity);
-        var order = new LogisticsOrder { Id = input.OperationId, Kind = input.Kind, ResourceId = source.Id,
+        var order = new LogisticsOrder { RequiresPacking = true, Id = input.OperationId, Kind = input.Kind, ResourceId = source.Id,
             DestinationResourceId = receiver?.Id, CrisisId = input.CrisisId, OperationalAreaId = input.OperationalAreaId,
             Origin = await Place(source, ct), Destination = destination, Quantity = input.Quantity, ActorId = access.UserId, Reason = reason };
         db.Add(order);
@@ -254,6 +378,7 @@ public sealed class LogisticsController(CrisisDbContext db, IStore store, Access
         var quantity = order.Quantity;
         if (after == AllocationStatus.Dispatched)
         {
+            if (order.RequiresPacking && order.PackedAt == null) throw new RuleException("Confirm packing before dispatch.");
             await access.RequirePartner(source.OrganisationId, source.CountryCode, ct);
             if (receiver != null) await access.RequirePartner(receiver.OrganisationId, receiver.CountryCode, ct);
             if (order.CrisisId is { } crisisId && !await db.Set<Crisis>().AnyAsync(c => c.Id == crisisId && c.Active, ct))
@@ -291,7 +416,7 @@ public sealed class LogisticsController(CrisisDbContext db, IStore store, Access
     {
         var allocation = await db.Set<ResourceAllocation>().AsNoTracking().SingleOrDefaultAsync(a => a.Id == id, ct)
             ?? throw new MissingException();
-        await RequireResource(allocation.ResourceId, ct);
+        if (!access.IsLogisticsWorkspace) await RequireResource(allocation.ResourceId, ct);
         var caseAction = operation switch
         {
             "dispatch" => "Dispatch",
@@ -315,6 +440,7 @@ public sealed class LogisticsController(CrisisDbContext db, IStore store, Access
     {
         var resource = await store.FindAsync<Resource>(id, ct) ?? throw new MissingException();
         await access.RequireLocation(resource.OrganisationId, resource.CountryCode, [Roles.Logistics], ct);
+        await access.RequireDepot(resource, ct);
         return resource;
     }
 
