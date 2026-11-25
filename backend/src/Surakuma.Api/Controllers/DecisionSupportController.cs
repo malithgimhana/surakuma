@@ -12,7 +12,7 @@ public sealed class DecisionSupportController(DecisionSupportService service) : 
 {
     [HttpGet]
     public Task<DecisionWorkspace> Workspace(Guid crisisId, CancellationToken ct) => service.Workspace(crisisId, ct);
-    [HttpPost("forecasts")]
+    [HttpPost("forecasts"), EnableRateLimiting("ai-drafts")]
     public Task<ForecastView> Forecast(Guid crisisId, ForecastInput input, CancellationToken ct) => service.Forecast(crisisId, input, ct);
     [HttpPost("briefings"), EnableRateLimiting("ai-drafts")]
     public Task<BriefingView> Briefing(Guid crisisId, BriefingInput input, CancellationToken ct) => service.Briefing(crisisId, input, ct);
