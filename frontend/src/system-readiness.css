@@ -1,0 +1,212 @@
+.integration-dashboard {
+  container-type: inline-size;
+  --integration-inset: #f5f8fc;
+  --integration-icon: #e9f2fc;
+}
+
+[data-theme='dark'] .integration-dashboard {
+  --integration-inset: #131e2d;
+  --integration-icon: #304258;
+}
+
+.integration-dashboard .page-header {
+  align-items: flex-start;
+  margin-bottom: 20px;
+}
+
+.integration-refresh {
+  display: grid;
+  justify-items: end;
+  flex-shrink: 0;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.integration-dashboard .integration-refresh p { font-size: 0.8125rem; }
+
+.integration-refresh .button {
+  white-space: nowrap;
+  font-size: 0.875rem;
+  min-height: 40px;
+  padding: 8px 14px;
+}
+
+.integration-panels {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 16px;
+}
+
+.integration-panels .integration-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 18px;
+  border-radius: 16px;
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.integration-panel.card > h2 {
+  margin: 0;
+  font-size: 1.15rem;
+  line-height: 1.25;
+}
+
+.integration-panel-subtitle {
+  margin: 5px 0 0;
+}
+
+.integration-services {
+  margin-block: 8px 12px;
+}
+
+.integration-service {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 12px;
+  padding-block: 14px;
+}
+
+.integration-service + .integration-service {
+  border-top: 1px solid var(--border);
+}
+
+.integration-service-icon {
+  display: grid;
+  grid-row: span 2;
+  place-items: center;
+  align-self: start;
+  width: 44px;
+  aspect-ratio: 1;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  color: var(--navy);
+  background: var(--integration-icon);
+}
+
+.integration-service-icon svg {
+  width: 23px;
+  height: auto;
+  stroke-width: 1.7;
+}
+
+.integration-service-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+
+.integration-service-heading h3 {
+  margin: 0;
+  color: var(--navy);
+  font-size: 0.95rem;
+  line-height: 1.25;
+}
+
+.integration-state {
+  color: #20354c;
+  background: #e2eaf3;
+  border-radius: 11px;
+  padding: 3px 8px;
+  font-size: 0.8rem;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.integration-state[data-tone='blue'] { color: #103f75; background: #b8dcff; }
+.integration-state[data-tone='amber'] { color: #573800; background: #ffd78f; }
+.integration-state[data-tone='red'] { color: #642822; background: #ffc7c4; }
+
+.integration-service-details {
+  grid-column: 2;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+
+.integration-service-details p {
+  margin: 4px 0 0;
+}
+
+.integration-provider {
+  font-weight: 550;
+}
+
+.integration-service-details code {
+  font-size: 0.88em;
+  color: var(--navy);
+}
+
+.integration-queue {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0 0;
+}
+
+.integration-queue > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 12px;
+  background: var(--integration-inset);
+}
+
+.integration-queue dt {
+  font-size: 0.9rem;
+  font-weight: 650;
+}
+
+.integration-queue dd {
+  margin: 0;
+  color: var(--navy);
+  font-size: 1.5rem;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.integration-queue-notes {
+  display: grid;
+  gap: 5px;
+  margin: 14px 0 16px;
+}
+
+.integration-queue-notes p {
+  margin: 0;
+}
+
+.integration-empty {
+  margin-block: 14px;
+}
+
+.integration-panel-footer {
+  border-top: 1px solid var(--border);
+  margin-top: auto;
+  padding-top: 12px;
+}
+
+.integration-activity-link {
+  margin-bottom: -7px;
+  font-size: inherit;
+  font-weight: 650;
+}
+
+@container (max-width: 860px) {
+  .integration-panels { grid-template-columns: minmax(0, 1fr); }
+}
+
+@container (max-width: 500px) {
+  .integration-dashboard .page-header {
+    flex-direction: column;
+    gap: 12px;
+  }
+  .integration-refresh { justify-items: start; }
+  .integration-service { grid-template-columns: 44px minmax(0, 1fr); }
+  .integration-service-heading { justify-content: flex-start; }
+}
