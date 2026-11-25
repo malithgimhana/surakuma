@@ -19,8 +19,19 @@ test('mobile citizen form supports three languages and accessible fields', async
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true);
   }
+  await page.getByRole('radio', { name: /^Food & water/ }).press('Space');
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
   await expect(page.getByLabel('Describe what you need', { exact: true })).toBeVisible();
+  const picker = page.getByRole('combobox', { name: /^(Language|භාෂාව|மொழி)$/ });
+  for (const [language, question, water] of [
+    ['si', 'ඔබට අවශ්‍ය ද්‍රව්‍යය කුමක්ද?', 'පානීය ජලය'],
+    ['ta', 'உங்களுக்கு எந்தப் பொருள் தேவை?', 'குடிநீர்'],
+  ]) {
+    await picker.selectOption(language);
+    await expect(page.getByLabel(question).getByRole('option', { name: water })).toHaveCount(1);
+    await page.screenshot({ path: run.outputPath(`citizen-intake-${language}.png`), fullPage: true });
+  }
+  await picker.selectOption('en');
   const result = await new AxeBuilder({ page })
     .withTags(['wcag2a', 'wcag2aa', 'wcag21aa'])
     .analyze();
@@ -29,6 +40,8 @@ test('mobile citizen form supports three languages and accessible fields', async
   ).toEqual([]);
   await page.screenshot({ path: run.outputPath('citizen-form-375.png'), fullPage: true });
   await page.getByLabel('Crisis event').selectOption({ index: 1 });
+  await page.getByLabel('Which item do you need?').selectOption('DryRations');
+  await page.getByLabel('When will it run out?').selectOption('WithinDay');
   await page.getByLabel('Describe what you need').fill('Synthetic request to check draft photo handling.');
   await page.getByLabel('Measurement unit').focus();
   await page.keyboard.press('ArrowDown');
