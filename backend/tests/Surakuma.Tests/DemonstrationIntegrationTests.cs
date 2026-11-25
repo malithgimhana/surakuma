@@ -140,6 +140,7 @@ public sealed partial class IntegrationTests
         Assert.Equal(HttpStatusCode.BadRequest, (await volunteers.PostAsJsonAsync("/api/v1/volunteer-tasks", taskInput)).StatusCode);
         Assert.DoesNotContain((await volunteers.GetFromJsonAsync<List<VolunteerCase>>("/api/v1/volunteer-tasks/cases"))!, r => r.Id == foodId);
         await Transition(foodId, "Approved");
+        await Post(coordinator, $"fulfillment/cases/{foodId}/authorize", new { reason = "Coordinator approved the fulfillment handoff." });
         Assert.Contains((await volunteers.GetFromJsonAsync<List<VolunteerCase>>("/api/v1/volunteer-tasks/cases"))!, r => r.Id == foodId);
 
         // Piece-counted water is separate from the shared fixture's pack stock.
@@ -150,6 +151,7 @@ public sealed partial class IntegrationTests
         {
             var allocation = await Post(logistics, "allocations", new AllocateInput(foodId, resourceId, quantity));
             Guid id = allocation.GetProperty("id").GetGuid();
+            await Post(logistics, $"fulfillment/allocations/{id}/prepare", new { packedQuantity = quantity, note = "Packed and counted." });
             (await logistics.PostAsync($"/api/v1/allocations/{id}/Dispatch", null)).EnsureSuccessStatusCode();
             var receipt = new DeliveryInput($"DEMO-{id:N}", quantity, null, "Synthetic household representative", "RecipientAcknowledgment");
             (await logistics.PostAsJsonAsync($"/api/v1/allocations/{id}/Deliver", receipt)).EnsureSuccessStatusCode();
@@ -185,12 +187,22 @@ public sealed partial class IntegrationTests
         await Transition(shelterCaseId, "UnderReview");
         await Transition(shelterCaseId, "Verified");
         await Transition(shelterCaseId, "Approved");
-        var shelter = await Post(shelters, "shelters", new ShelterInput(orgId, "Acceptance accessible shelter", "Synthetic location", 6.95, 79.92, 4, true, true, "Step-free access"));
+        var shelterInput = new ShelterInput(orgId, "Acceptance accessible shelter", "Synthetic location",
+            6.95, 79.92, 4, true, true, "Step-free access");
+        var shelter = await Post(shelters, "shelters", shelterInput);
         Guid shelterId = shelter.GetProperty("id").GetGuid();
+        Assert.True(shelter.GetProperty("pendingVerification").GetBoolean());
+        (await shelters.PutAsJsonAsync($"/api/v1/shelters/{shelterId}", shelterInput with { VerifyOperations = true }))
+            .EnsureSuccessStatusCode();
         var placement = await Post(shelters, "shelter-allocations", new ShelterPlaceInput(shelterCaseId, shelterId));
         Guid placementId = placement.GetProperty("id").GetGuid();
         (await shelters.PostAsync($"/api/v1/shelter-allocations/{placementId}/CheckIn", null)).EnsureSuccessStatusCode();
 
+        var existingAssignments = await volunteer.GetFromJsonAsync<JsonElement>("/api/v1/volunteers");
+        var seededAssignment = existingAssignments.GetProperty("tasks").EnumerateArray()
+            .Single(t => t.GetProperty("title").GetString() == "Prepare household food pack delivery");
+        await Post(volunteer, $"volunteer-tasks/{seededAssignment.GetProperty("id").GetGuid()}",
+            new TaskUpdateInput("Decline", "Unavailable for the earlier assignment."));
         var task = await Post(volunteers, "volunteer-tasks", taskInput);
         Assert.Equal(HttpStatusCode.BadRequest, (await volunteers.PostAsJsonAsync("/api/v1/volunteer-tasks", taskInput)).StatusCode);
         Guid taskId = task.GetProperty("id").GetGuid();
