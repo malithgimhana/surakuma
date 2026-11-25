@@ -25,8 +25,10 @@ public sealed class CitizenEmailTests
         var english = CitizenEmailContent.Create(CitizenEmailUpdate.FromOutbox(entry, "en"), "http://localhost:5173");
         Assert.Equal(heading, english.Subject);
         Assert.Contains($"Status: {label}", english.Text);
-        Assert.Contains("<h1 style=", english.Html);
+        Assert.Contains("<h1 class=\"heading\"", english.Html);
         Assert.Contains($">{WebUtility.HtmlEncode(heading)}</h1>", english.Html);
+        Assert.Contains($">{reference}</p>", english.Html);
+        Assert.Contains($">{label}</p>", english.Html);
 
         foreach (var (language, scriptStart, scriptEnd) in new[] { ("si", '\u0d80', '\u0dff'), ("ta", '\u0b80', '\u0bff') })
         {
@@ -55,8 +57,21 @@ public sealed class CitizenEmailTests
         Assert.Contains(message, content.Text);
         Assert.Contains(WebUtility.HtmlEncode(message), content.Html);
         Assert.Contains("Sign in to Surakuma to view your request.", content.Text);
-        Assert.Contains("SURAKUMA", content.Html);
+        Assert.Contains("Humanitarian Response Platform", content.Html);
+        Assert.DoesNotContain("class=\"details-reference\"", content.Html);
+        Assert.Contains("Sign in to Surakuma to view your request.", content.Html);
         Assert.DoesNotContain("href=", content.Html);
         Assert.DoesNotContain("<img", content.Html);
+    }
+
+    [Fact]
+    public void DonationUpdatesKeepTheirOwnButtonAndBranding()
+    {
+        var update = new CitizenEmailUpdate("A donation update is available.", Funding: true);
+        var content = CitizenEmailContent.Create(update, "https://surakuma.example.test");
+
+        Assert.Contains("View donation updates: https://surakuma.example.test/donor/notifications", content.Text);
+        Assert.Contains("href=\"https://surakuma.example.test/donor/notifications\"", content.Html);
+        Assert.Contains("src=\"https://surakuma.example.test/surakuma-email-logo.png\"", content.Html);
     }
 }
