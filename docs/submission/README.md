@@ -33,7 +33,7 @@ The 21-page Word report was exported with Microsoft Word, rendered through the d
 
 ## Rebuild report and recording
 
-The authoring source is scripts/build_assessment.py. It creates SVG figures by default, and creates the DOCX with `--document` after `scripts/render_diagrams.cjs` converts SVGs to PNGs using Sharp. Python requires python-docx; the diagram rasteriser requires Node and Sharp. The Codex bundled runtimes were used for this generated package.
+The authoring source is scripts/build_assessment.py. It creates SVG figures by default, and creates the DOCX with `--document` after `scripts/render_diagrams.cjs` converts SVGs to PNGs using Sharp. Python requires python-docx; the diagram rasteriser requires Node and Sharp.
 
 `scripts/Export-Report.ps1` exports with a dedicated hidden instance of installed Microsoft Word. LibreOffice is absent on the build machine. `scripts/render_report.py` uses the document skill's render_docx.py page-rendering pipeline with that Word PDF, then Poppler produces page PNGs for inspection. The script does not alter the managed skill package.
 
