@@ -16,5 +16,5 @@ Accept: application/json
 GET {{baseUrl}}/api/v1/alerts
 Accept: application/json
 
-### Protected operations and authentication are documented in Swagger and docs/api/contracts.md.
+### See Swagger at https://localhost:7043/swagger for protected operations and authentication.
 ### Use the generated local demo password; never save credentials in this file.

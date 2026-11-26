@@ -1,8 +1,7 @@
 import { test, expect } from '@playwright/test';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { writeFileSync } from 'node:fs';
 
-test('Swagger executes the public shelter endpoint and returns HTTP 200', async ({ page }) => {
+test('Swagger executes the public shelter endpoint and returns HTTP 200', async ({ page }, testInfo) => {
   const api = process.env.SURAKUMA_API_PROXY ?? 'https://localhost:7043';
   await page.goto(api + '/swagger/index.html');
   const operation = page
@@ -17,14 +16,13 @@ test('Swagger executes the public shelter endpoint and returns HTTP 200', async 
     operation.locator('.live-responses-table .response-col_status:not(.col_header)'),
   ).toContainText('200');
   await operation.locator('.responses-wrapper').scrollIntoViewIfNeeded();
-  await page.screenshot({ path: '../docs/screenshots/swagger-public-shelters.png' });
+  const screenshot = 'swagger-public-shelters.png';
+  await page.screenshot({ path: testInfo.outputPath(screenshot) });
   const response = await page.request.get(api + '/api/v1/shelters');
   expect(response.status()).toBe(200);
   const shelters = await response.json();
-  const folder = resolve(import.meta.dirname, '../../docs/testing');
-  mkdirSync(folder, { recursive: true });
   writeFileSync(
-    resolve(folder, 'swagger-evidence.json'),
+    testInfo.outputPath('swagger-evidence.json'),
     JSON.stringify(
       {
         runtimeTimestamp: new Date().toISOString(),
@@ -33,7 +31,7 @@ test('Swagger executes the public shelter endpoint and returns HTTP 200', async 
         swaggerExecutionStatus: 200,
         directApiStatus: response.status(),
         returnedFacilities: shelters.length,
-        screenshot: 'docs/screenshots/swagger-public-shelters.png',
+        screenshot,
         note: 'Public synthetic facility response. No login body, token, API key or private request data was recorded.',
       },
       null,

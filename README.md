@@ -1,125 +1,40 @@
-# සුරැකුම · Surakuma
+# Surakuma · සුරැකුම
 
-A local, full-stack humanitarian aid coordination coursework prototype. React/TypeScript → ASP.NET Core 10 → SQL Server. All initial records are synthetic demonstration data. This is not a monitored emergency service.
+Surakuma is a humanitarian aid coordination platform. Citizens can request help, find shelters, and track their requests. Response teams can review cases, allocate supplies, coordinate volunteers, and confirm delivery.
 
-For the complete setup, VS Code commands, demo accounts, role workflows, API, troubleshooting, maintenance and proposed enhancements, see [the complete project guide](docs/complete-guide.md). Installation-specific demo passwords are kept separately in the ignored `backend/data/LOCAL-DEMO-LOGINS.md` when generated locally.
+The frontend uses React, TypeScript, and Vite. The ASP.NET Core 10 API uses Entity Framework Core and SQL Server.
 
-## Run on Windows
+## Run locally on Windows
 
-Prerequisites: .NET 10 SDK, Node.js 24+, a running SQL Server Express/Developer instance, and Windows-authenticated database creation permission. The default instance is `.\SQLEXPRESS`. No Docker or paid account is required.
+Install the **.NET 10 SDK**, **Node.js 24 with npm**, and **SQL Server Express LocalDB** with the default `MSSQLLocalDB` instance. Use a Windows account that can create a database on the instance. The first setup downloads NuGet and npm dependencies.
 
-From the repository root, in PowerShell:
-
-```powershell
-.\scripts\Setup.ps1
-# If your instance differs:
-# .\scripts\Setup.ps1 -SqlServer '.\SQLEXPRESS01'
-```
-
-In two separate terminals:
+Clone this repository with Git or download and extract its source ZIP. Open PowerShell in the repository folder and run:
 
 ```powershell
+sqllocaldb start MSSQLLocalDB
+dotnet dev-certs https --trust
+
+$env:ConnectionStrings__Default = 'Server=(localdb)\MSSQLLocalDB;Database=Surakuma;Trusted_Connection=True;TrustServerCertificate=True;Connect Timeout=10'
+$env:Email__Provider = 'Capture'
+
+.\scripts\Setup.ps1 -SqlServer '(localdb)\MSSQLLocalDB'
 .\scripts\Start-Api.ps1
 ```
+
+Setup installs dependencies, applies migrations, and seeds an empty development database. On later starts, set the same environment variables in the API terminal and run `Start-Api.ps1`. If you use a running `.\SQLEXPRESS` instance instead, use `.\scripts\Setup.ps1` and the default connection.
+
+Leave the API running. Open a second PowerShell terminal in the repository folder and run:
 
 ```powershell
 .\scripts\Start-Web.ps1
 ```
 
-Open **http://localhost:5173**. The API runs at **https://localhost:7043**, OpenAPI UI at **https://localhost:7043/swagger**, liveness at `/api/v1/health`, and database readiness at `/api/v1/ready`. Vite proxies `/api` to the HTTPS backend. Use `localhost` consistently for the local session cookie.
+Open the [website](http://localhost:5173). Confirm that the [readiness endpoint](http://localhost:5173/api/v1/ready) returns HTTP 200. If it returns 503, check that SQL Server is running and that setup and the API use the same instance. The [Swagger UI](https://localhost:7043/swagger) shows the development API.
 
-If your browser rejects the API development certificate, run `dotnet dev-certs https --trust` locally, review the Windows prompt, then restart the API. Vite's development proxy accepts this local certificate; this setting must not be used for a public deployment.
-
-## Development accounts
-
-The first development startup generates a random signing key and a random shared **development-only** seed password in `backend/data/development-settings.json`. This file, evidence, and runtime data are ignored by Git. Production requires explicit secrets and never seeds accounts.
-
-Read only the demo password locally:
+For a fresh development database, use `citizen@surakuma.test` to submit and track an aid request, or `admin@surakuma.test` to explore administration. Read the generated local password from the repository folder:
 
 ```powershell
 (Get-Content .\backend\data\development-settings.json | ConvertFrom-Json).Seed.Password
 ```
 
-| Email | Workspace |
-| --- | --- |
-| citizen@surakuma.test | Citizen requests and tracking |
-| coordinator@surakuma.test | Crisis oversight and case review |
-| case@surakuma.test | Verification and AI review |
-| logistics@surakuma.test | Stock, allocation, dispatch and delivery |
-| shelter@surakuma.test | Shelter capacity and placements |
-| volunteers@surakuma.test | Volunteer coordination |
-| volunteer@surakuma.test | Accept and complete own tasks |
-| admin@surakuma.test | Users, memberships, organisations and audits |
-
-Never include the development settings file or passwords in a submission ZIP or screenshots. Public registration always creates a citizen, regardless of additional submitted fields.
-
-## Optional real integrations
-
-Without credentials, AI uses labelled deterministic rules, maps display OpenStreetMap tiles, and route/search requests return an explicit unavailable response. Citizen email uses Brevo and records a failure when sender credentials are missing. Set `Email__Provider=Capture` for local testing without email delivery. Internal users receive scoped in-app notifications.
-
-Set variables in the API terminal before starting it:
-
-| Variable | Purpose |
-| --- | --- |
-| `ConnectionStrings__Default` | Override SQL Server connection |
-| `Ai__ApiKey` | Free Gemini API key |
-| `Ai__Model` | Configurable supported free-tier model; default in appsettings |
-| `Email__Provider` | `Brevo` (default), or `Capture` for local testing |
-| `Email__ApiKey` | Brevo key |
-| `Email__Sender` | Verified Brevo sender email |
-| `Email__PortalBaseUrl` | Citizen portal origin used for request links and the email logo. Use the public HTTPS origin for delivered emails. Development defaults to `http://localhost:5173`. |
-| `Mapping__ApiKey` | openrouteservice key for geocoding/routing |
-| `Jwt__Key` | Required strong signing key outside Development |
-
-External AI receives only a synthetic request description, never account identity, evidence or exact coordinates. Leave the synthetic checkbox unchecked for real personal information; those requests cannot reach the free external AI adapter. Free provider access and sender activation must be verified with your own accounts. These calls were not live-tested without credentials.
-
-Provider references: [Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing), [Gemini data terms](https://ai.google.dev/gemini-api/terms), [Brevo free plan](https://help.brevo.com/hc/en-us/articles/208589409-About-Brevo-s-pricing-plans), [OSM tile policy](https://operations.osmfoundation.org/policies/tiles/), [openrouteservice](https://giscience.github.io/openrouteservice/frequently-asked-questions).
-
-Log in as `admin@surakuma.test` and open Administration → **Integration readiness** to inspect configured modes and notification queue counts. Refreshing is read-only and sends nothing. A `Configured` state still requires live validation; see [integration setup and evidence](docs/integrations.md).
-
-## Test
-
-```powershell
-.\scripts\Test.ps1
-```
-
-Backend integration tests create a uniquely named `Surakuma_Test_<guid>` database, apply real SQL Server migrations, and delete only that fixture database afterward. They never reset the demonstration database. Set `SURAKUMA_TEST_SERVER` if the test instance differs from `.\SQLEXPRESS`.
-
-The isolated browser runner creates a unique SQL Server LocalDB database, starts the API and Vite, and uses generated credentials and captured email. The runner retains the synthetic database and writes its OpenAPI snapshot and logs under `tmp/acceptance`.
-
-```powershell
-pwsh -NoProfile -File scripts/Test-InternationalAcceptance.ps1
-```
-
-The isolated suite uses Microsoft Edge on Windows. The runner raises the authentication and global request allowances for its temporary API process so automated role switching shares a single loopback address. Normal API startup retains its configured limits.
-
-Create a source-only submission archive with `.\scripts\Package.ps1`. It excludes generated settings, evidence/runtime data, dependencies, build outputs, logs and test traces. Add the reviewed final report and demonstration link separately before institutional submission.
-
-## Project map
-
-- `frontend/src`: public/citizen translations, accessible components, citizen and staff workspaces.
-- `backend/src/Surakuma.Domain`: records and operational invariants.
-- `backend/src/Surakuma.Application`: use cases, permissions, allocation strategy and provider ports.
-- `backend/src/Surakuma.Infrastructure`: SQL persistence/migrations, Identity, adapters, outbox worker and seed data.
-- `backend/src/Surakuma.Api`: HTTP controllers, authentication, rate limiting and error handling.
-- `docs`: architecture, editable diagrams, demonstration instructions, testing evidence and implementation checklist.
-
-## Troubleshooting
-
-- **Readiness returns 503:** start the configured SQL instance, check Windows authentication and run setup/migrations. A healthy API alone does not establish database readiness.
-- **SQL instance not found:** inspect installed instances in SSMS; configure the intended connection. Setup does not install or start a system SQL service.
-- **Login fails:** use the password generated during the original seed. Replacing that file does not reset existing account passwords. Five invalid attempts temporarily lock an account.
-- **Port already used:** stop an old owned server or change both launch/proxy settings together.
-- **Provider quota/outage:** manual case review and textual location still work; inspect notification status in Administration.
-- **409 conflict:** refresh the current case/stock/capacity before retrying. Do not blindly repeat an allocation.
-- **PowerShell script restriction:** review the script and use your institution's permitted execution policy; commands can also be run individually.
-
-## Limits and handover
-
-The local assessment materials are indexed in [docs/submission/README.md](docs/submission/README.md). `output/docx/Surakuma-technical-report.docx` and `output/pdf/Surakuma-technical-report.pdf` contain deliberately blank identity/contribution fields. `output/demo/index.html` plays the captioned local browser recording. Translation/UAT/contribution templates have blank approval fields. Rebuild the combined source/report/video archive with `./scripts/Package-Submission.ps1` after completing reviews and edits. From `frontend`, `npm run demo:record` records the synthetic walkthrough when both servers are available and the API uses explicit `-BrowserTests` mode; restart normally afterward.
-
-Citizens can register a donor profile and use **Donor workspace**. A scoped Funding Officer signs in to **Funding management**. Administrators audit funding from **Funding**. Staff record external financial receipts, and authorized logistics staff confirm material stock receipts. Coordinators open decision support from the crisis page, and staff report shortages through **Supply support**.
-
-See the [completion audit](docs/testing/final-completion-audit.md), [executed workflows](docs/testing/full-workflow-results.md), [API contracts](docs/api/contracts.md) and [remaining blockers](docs/testing/remaining-blockers.md). Human language review, participant UAT, provider checks and individual contribution records are separate assessment tasks.
-
-International administration now connects country reports, staff lifecycle, partner verification, sensitive-change approvals, notification recovery and administrator alerts. See [administration workflows and operator setup](docs/administration-workflows.md) for permissions, metric definitions and migration instructions.
+The local walkthrough uses synthetic data, rule-based AI, and captured email. It runs without external API keys.

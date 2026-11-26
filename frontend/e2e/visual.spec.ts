@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
-test('responsive public layouts and core accessibility', async ({ page }) => {
+test('responsive public layouts and core accessibility', async ({ page }, testInfo) => {
   for (const width of [375, 768, 1440]) {
     await page.setViewportSize({ width, height: 1000 });
     await page.goto('/');
@@ -9,7 +9,7 @@ test('responsive public layouts and core accessibility', async ({ page }) => {
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true);
-    await page.screenshot({ path: `../docs/screenshots/home-${width}.png`, fullPage: true });
+    await page.screenshot({ path: testInfo.outputPath(`home-${width}.png`), fullPage: true });
   }
   const results = await new AxeBuilder({ page })
     .withTags(['wcag2a', 'wcag2aa', 'wcag21aa'])
@@ -23,5 +23,5 @@ test('responsive public layouts and core accessibility', async ({ page }) => {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
-  await page.screenshot({ path: '../docs/screenshots/home-tamil-375.png', fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath('home-tamil-375.png'), fullPage: true });
 });
