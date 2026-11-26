@@ -32,7 +32,7 @@ During a crisis, requests, stock counts, shelter availability and field updates 
 
 Surakuma is a university software engineering project with country-specific services for **Sri Lanka (LK), India (IN) and Nepal (NP)**. The application includes a country selector, administrative divisions, emergency contact directories and country-scoped operational records for all three. Related national crises can be grouped under an international incident while each retains its own access rules. AI assists with reviewing and communicating decisions. Authorised staff decide what aid is approved, assigned, published and recorded as delivered. [Geography endpoints](backend/src/Surakuma.Api/Controllers/GeographyController.cs) · [Country selector](frontend/src/geography.tsx)
 
-**Contents** · [Overview](#overview) · [Features](#features) · [Roles and access](#roles-and-access) · [Assistance workflow](#assistance-workflow) · [AI decision support](#ai-decision-support) · [Architecture](#architecture) · [Gallery](#application-gallery) · [Stack](#technology-stack) · [Setup](#getting-started) · [Configuration](#environment-configuration) · [Assessment](#demonstration-and-assessment) · [Testing](#testing-and-quality-assurance) · [CI and delivery](#ci-and-delivery) · [Security](#security-and-privacy) · [Repository](#repository-structure) · [Team](#project-team)
+**Contents** · [Overview](#overview) · [Features](#features) · [Roles and access](#roles-and-access) · [Assistance workflow](#assistance-workflow) · [AI decision support](#ai-decision-support) · [Architecture](#architecture) · [Gallery](#application-gallery) · [Stack](#technology-stack) · [Setup](#getting-started) · [Assessment](#demonstration-and-assessment) · [Testing](#testing-and-quality-assurance) · [CI and delivery](#ci-and-delivery) · [Security](#security-and-privacy) · [Repository](#repository-structure) · [Team](#project-team)
 
 ## Features
 
@@ -220,112 +220,55 @@ The solution builds one ASP.NET Core API from four projects. **API** hosts HTTP 
 
 ## Getting started
 
-Use **Windows, Git, the .NET 10 SDK, Node.js 24 with npm, and SQL Server Express LocalDB**. A running SQL Server Express or Developer instance also works. Use a Windows account with permission to create the development database. PowerShell 7 and Microsoft Edge are needed for the isolated browser suite. The initial dependency restore needs internet access.
+Use **Windows, Git, the .NET 10 SDK, Node.js 24 with npm, and SQL Server Express LocalDB**. Clone the repository if you need a local copy. If your copy is in a different folder, replace the paths below with its location.
 
-### 1. Clone and set up the local database
-
-Run these commands in PowerShell.
+**First terminal**
 
 ```powershell
-git clone https://github.com/malithgimhana/surakuma.git
-Set-Location surakuma
-
+cd "C:\Users\infos\Documents\ChatGPT\surakuma"
 sqllocaldb start MSSQLLocalDB
-dotnet dev-certs https --trust
-.\scripts\Setup.ps1 -SqlServer '(localdb)\MSSQLLocalDB'
-```
-
-[Setup.ps1](scripts/Setup.ps1) restores the .NET tools and solution, runs `npm ci`, applies EF Core migrations and seeds an empty development database named `Surakuma`. Use a fresh local SQL instance for the demonstration if that name is already used by an assessment database. For a running `.\SQLEXPRESS` instance, run `.\scripts\Setup.ps1` and use the default API connection.
-
-### 2. Start the API
-
-In a PowerShell terminal at the repository root, use the same instance as setup. The commands below use LocalDB.
-
-```powershell
 $env:ConnectionStrings__Default = 'Server=(localdb)\MSSQLLocalDB;Database=Surakuma;Trusted_Connection=True;TrustServerCertificate=True;Connect Timeout=10'
-$env:Email__Provider = 'Capture'
+dotnet run --project backend/src/Surakuma.Api -- --migrate
 .\scripts\Start-Api.ps1
 ```
 
-When using the default `.\SQLEXPRESS` instance, omit the connection override. Repeat the environment settings when opening a fresh API terminal. [Start-Api.ps1](scripts/Start-Api.ps1)
+Wait for the migration to finish before starting the API. Leave this terminal running.
 
-### 3. Start the frontend
+**Second terminal**
 
-Leave the API running and execute this command in a second PowerShell terminal at the repository root.
+On a fresh clone, run `npm ci` inside `frontend` once before running `npm run dev`.
 
 ```powershell
-.\scripts\Start-Web.ps1
+cd "C:\Users\infos\Documents\ChatGPT\surakuma\frontend"
+npm run dev
 ```
 
 | Local URL | Purpose |
 | --- | --- |
-| [http://localhost:5173](http://localhost:5173) | Website and sign-in |
+| [http://127.0.0.1:5173](http://127.0.0.1:5173) | Website and sign-in |
 | [https://localhost:7043](https://localhost:7043) | HTTPS API origin. The launch profile also binds HTTP on port 5043. |
 | [https://localhost:7043/swagger](https://localhost:7043/swagger) | Swagger UI in Development |
 | [https://localhost:7043/api/v1/health](https://localhost:7043/api/v1/health) | API liveness |
 | [https://localhost:7043/api/v1/ready](https://localhost:7043/api/v1/ready) | Database readiness. Expect HTTP 200 when reachable. |
-
-Vite proxies `/api` to the HTTPS API. Use `localhost` consistently for the local browser session. [Start-Web.ps1](scripts/Start-Web.ps1) · [API launch settings](backend/src/Surakuma.Api/Properties/launchSettings.json)
 
 <details>
 <summary>Troubleshooting</summary>
 
 | Symptom | What to check |
 | --- | --- |
-| SQL connection failure or readiness returns 503 | Start the correct SQL instance and check Windows authentication, database creation rights and that setup and API startup point to the same instance. |
-| Port already in use | Check the process using 5173, 7043 or 5043 and stop it if it is yours. For custom API ports, update the launch profile and Vite proxy together or set `SURAKUMA_API_PROXY`. |
+| SQL connection failure or readiness returns 503 | Check that `MSSQLLocalDB` started and that your Windows account can access the `Surakuma` database. |
+| Port already in use | Check the process using 5173, 7043 or 5043 and stop it if it is yours. If Vite selects another port, open the URL it prints. |
 | HTTPS certificate warning | Run `dotnet dev-certs https --trust`, accept the Windows trust prompt and restart the API and browser. |
-| Missing commands or dependencies | Check `git --version`, `dotnet --list-sdks` and `node --version`. Reopen PowerShell after installing tools, then rerun setup. |
-| Seed account sign-in fails | Use the password that originally seeded that database. Recreating the settings file creates a new password for future seeds. |
+| Missing commands or dependencies | Check `git --version`, `dotnet --list-sdks` and `node --version`. Reopen PowerShell after installing tools. Run `npm ci` inside `frontend` if Vite is missing. |
+| Assessment sign-in fails | Confirm the API is connected to the prepared Saviya database and use the privately shared sign-in for your role. |
 
 </details>
 
-## Environment configuration
-
-Set ASP.NET Core variables in the API terminal before startup. Development generates its own signing key and seed password in the Git-ignored `backend/data/development-settings.json`. The same configuration can be overridden by environment variables. The API startup script imports only `Mapping__ApiKey` from the root `.env` when that variable is absent from the terminal.
-
-| Variable | Purpose | Local requirement |
-| --- | --- | --- |
-| `ConnectionStrings__Default` | SQL Server connection. Default is `.\SQLEXPRESS`, database `Surakuma`, with Windows authentication. | Set for LocalDB or any other instance. |
-| `Jwt__Key`, `Jwt__Issuer`, `Jwt__Audience` | Signing key of at least 32 characters and token validation settings. | Development supplies the key and issuer/audience defaults. Supply a strong key outside Development. |
-| `Seed__Password` | Override the generated seed password for an empty development database. | Optional. |
-| `Email__Provider` | `Brevo` is configured in appsettings. Use `Capture` to record notification outcomes locally. | Set to `Capture` for the demonstration. |
-| `Email__ApiKey`, `Email__Sender`, `Email__PortalBaseUrl` | Brevo credential, verified sender and link origin. Set the portal origin explicitly for live recovery and invitation flows. | Optional in Capture. |
-| `Ai__OpenAiApiKey` or `OPENAI_API_KEY` | Server-side OpenAI credential. | Optional. Local triage and manual review are available. |
-| `Ai__OpenAiModel`, `Ai__Tasks__<task>__Provider`, `Ai__Tasks__<task>__Model` | Configure text models and per-task modes such as `OpenAI` or `Rules`. | Optional. The embedding model has its own fixed default. |
-| `Ai__EnableRestrictedTriage`, `Ai__ApprovedSyntheticAccountIds__0` | Opt in to restricted structured case triage or allowlist a verified synthetic account for demo-text triage. | Optional. Leave unset for a local rules demonstration. |
-| `Ai__OperationalBriefingsEnabled`, `Ai__PublicTranslationEnabled`, `Ai__AlertImagesEnabled`, `Ai__AlertImageModel` | Control aggregate briefing and public translation generation, and alert illustration availability/model. | Optional. Briefings and translations default to off. |
-| `Mapping__ApiKey` | Enables forward and reverse geocoding and driving routes via HeiGIT openrouteservice. | Optional. Text locations and public tiles work independently of this key. Tiles need internet access. |
-| `BrowserPush__PublicKey`, `BrowserPush__PrivateKey`, `BrowserPush__Subject` | VAPID settings for opt-in browser push. | Optional. |
-| `Storage__EvidencePath`, `Cors__Origins__0` | Override upload storage or the allowed frontend origin when needed. | Optional with the default local layout. |
-| `VITE_API_URL`, `SURAKUMA_API_PROXY` | Frontend API base path and Vite development proxy target. | Optional. Defaults use the ports above. |
-
-Keep real secrets in environment variables or ignored local settings and use placeholders in shared configuration. [API defaults](backend/src/Surakuma.Api/appsettings.json) · [Integration configuration](backend/src/Surakuma.Infrastructure/IntegrationConfiguration.cs)
-
 ## Demonstration and assessment
 
-### A. Local development demonstration
+The Saviya Organisation walkthrough uses accounts already provisioned in the prepared Sri Lanka assessment database. Use the private assessment access file at `backend/data/ASSESSMENT-ACCESS-PRIVATE.md` or request a copy from the project team. Migrating an empty LocalDB database creates sample data. The assessment sign-ins require the prepared database.
 
-On a newly seeded database, the eight fictional accounts share a password generated on that computer. Read only the password from the repository root.
-
-```powershell
-(Get-Content .\backend\data\development-settings.json | ConvertFrom-Json).Seed.Password
-```
-
-| Seed account | Workspace | Seed account | Workspace |
-| --- | --- | --- | --- |
-| `citizen@surakuma.test` | Citizen | `case@surakuma.test` | Case Manager |
-| `coordinator@surakuma.test` | Crisis Coordinator | `logistics@surakuma.test` | Logistics Officer |
-| `shelter@surakuma.test` | Shelter Administrator | `volunteers@surakuma.test` | Volunteer Coordinator |
-| `volunteer@surakuma.test` | Volunteer | `admin@surakuma.test` | System Administrator |
-
-Use Capture email, local triage and manual location entry to rehearse without paid external APIs. The seed provides fictional Sri Lanka crises, requests, inventory, shelters and a volunteer task. Start with a food request in the citizen workspace, then follow the [assistance workflow](#assistance-workflow) through case review and delivery. The other application roles can be exercised with appropriate local account setup. [Seed source](backend/src/Surakuma.Infrastructure/SeedData.cs)
-
-### B. Prepared Sri Lanka assessment environment
-
-The Saviya Organisation walkthrough uses the existing assessment database and privately shared sign-ins. A fresh clone creates its own sample data and uses the local accounts above. The checklist includes country-wide and public-facing roles that take part in the Saviya response.
-
-| Role to prepare | Checkpoint |
+| Role | Checkpoint |
 | --- | --- |
 | Country Administrator | Review Sri Lanka organisations, staff access and activity. |
 | Case Manager | Review request evidence and save a decision. |
@@ -333,12 +276,11 @@ The Saviya Organisation walkthrough uses the existing assessment database and pr
 | Logistics Officer | Reserve and pack stock, then record dispatch and receipt. |
 | Shelter Administrator | Reserve a placement and check in the household. |
 | Volunteer Coordinator | Assign a volunteer and verify the field report. |
-| Volunteer | Accept the assignment and report the outcome. |
+| Volunteer 1 | Accept an assignment and report the outcome. |
+| Volunteer 2 | Use a separate volunteer account for assignment and availability checks. |
 | Citizen | Submit a request, track progress and provide feedback. |
 | Funding Officer | Review campaign receipts, allocations and expenses. |
 | Donor | Pledge to a campaign and track the contribution. |
-
-Share confirmed account details privately with the assessor. If supplied locally, store `ASSESSMENT-ACCESS-PRIVATE.md` under the ignored `backend/data/` directory.
 
 ## Testing and quality assurance
 
