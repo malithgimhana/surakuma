@@ -1,0 +1,86 @@
+name: Surakuma CI and delivery
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build and test
+    runs-on: windows-2025
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Test frontend
+        working-directory: frontend
+        run: npm test
+
+      - name: Start SQL Server LocalDB
+        shell: pwsh
+        run: |
+          $localDb = (Get-Command SqlLocalDB.exe -ErrorAction SilentlyContinue).Source
+          if (-not $localDb) {
+            $localDb = Get-ChildItem -Path "$env:ProgramFiles\Microsoft SQL Server\*\Tools\Binn\SqlLocalDB.exe" -File |
+              Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $localDb) {
+            throw 'SQL Server LocalDB is missing from the runner image.'
+          }
+          & $localDb start MSSQLLocalDB
+
+      - name: Build and test backend
+        env:
+          SURAKUMA_TEST_SERVER: '(localdb)\MSSQLLocalDB'
+        run: dotnet test backend/Surakuma.sln --configuration Release --verbosity minimal
+
+      - name: Publish API
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: >-
+          dotnet publish backend/src/Surakuma.Api/Surakuma.Api.csproj
+          --configuration Release --no-build --output delivery/api
+
+      - name: Upload application builds
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: surakuma-${{ github.sha }}
+          path: |
+            delivery/api/
+            frontend/dist/
+          if-no-files-found: error
+          retention-days: 14
