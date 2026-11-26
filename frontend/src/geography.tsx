@@ -19,6 +19,13 @@ const countryOptions = [
   { code: 'IN', name: 'India' },
 ];
 
+export function AssignedCountry({ code }: { code?: string }) {
+  const { data } = useCountries();
+  const name = (Array.isArray(data) ? data : countryOptions).find(country => country.code === code)?.name
+    ?? countryOptions.find(country => country.code === code)?.name ?? code;
+  return <span className="workspace-country"><span className="sr-only">Assigned country: </span>{name ?? 'Country assignment unavailable'}</span>;
+}
+
 export function selectedCountry() {
   try {
     return localStorage.getItem('surakuma.country') || 'LK';
@@ -29,8 +36,15 @@ export function selectedCountry() {
 export function useCountry() {
   const fixedCountry = useContext(CountryScope);
   const savedCountry = useSyncExternalStore((fn) => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.storageArea === localStorage && (event.key === 'surakuma.country' || event.key === null)) fn();
+    };
+    window.addEventListener('storage', onStorage);
     window.addEventListener('surakuma-country', fn);
-    return () => window.removeEventListener('surakuma-country', fn);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('surakuma-country', fn);
+    };
   }, selectedCountry);
   return fixedCountry ?? savedCountry;
 }
@@ -40,7 +54,6 @@ export function useCountries() {
 export function selectCountry(code: string, client: QueryClient) {
   if (code === selectedCountry()) return;
   localStorage.setItem('surakuma.country', code);
-  void client.cancelQueries();
   client.removeQueries({ predicate: (query) => !['countries', 'my-profile'].includes(String(query.queryKey[0])) });
   window.dispatchEvent(new Event('surakuma-country'));
 }
@@ -51,13 +64,14 @@ export function CountryFlag({ code }: { code: string }) {
     alt="" width={20} height={15} />;
 }
 
-export function CountrySelector({ withFlag = false }: { withFlag?: boolean }) {
+export function CountrySelector({ withFlag = false, allowedCodes = [] }: { withFlag?: boolean; allowedCodes?: string[] }) {
   const country = useCountry(),
     client = useQueryClient(),
     countries = useCountries();
   const fixedCountry = useContext(CountryScope);
-  const options = Array.isArray(countries.data) && countries.data.length ? countries.data : countryOptions;
-  if (fixedCountry) {
+  const catalog = Array.isArray(countries.data) && countries.data.length ? countries.data : countryOptions;
+  const options = allowedCodes.length ? allowedCodes.map(code => catalog.find(option => option.code === code) ?? { code, name: code }) : catalog;
+  if (fixedCountry && allowedCodes.length <= 1) {
     const name = options.find(option => option.code === fixedCountry)?.name ?? fixedCountry;
     return <span className="workspace-country" title={name}><span className="sr-only">Country </span>{withFlag && <CountryFlag code={fixedCountry} />}{name}</span>;
   }
@@ -90,11 +104,14 @@ export function useDivisions(country: string) {
   });
 }
 
-export function RegionField({ initialDivisionId, onChange }: {
+export function RegionField({ initialDivisionId, onChange, countryCode, hideDistrictSuffix = false }: {
   initialDivisionId?: string | null;
   onChange?: (id: string | null) => void;
+  countryCode?: string;
+  hideDistrictSuffix?: boolean;
 }) {
-  const country = useCountry();
+  const selected = useCountry();
+  const country = countryCode ?? selected;
   const regions = useDivisions(country);
   const [chosenPath, setPath] = useState<string[] | null>(null);
   const all = Array.isArray(regions.data) ? regions.data : [];
@@ -131,7 +148,7 @@ export function RegionField({ initialDivisionId, onChange }: {
               </option>
               {children.map((r) => (
                 <option key={r.id} value={r.id}>
-                  {r.name} · {r.levelName}
+                  {hideDistrictSuffix && r.levelName === 'District' ? r.name : `${r.name} · ${r.levelName}`}
                 </option>
               ))}
             </select>

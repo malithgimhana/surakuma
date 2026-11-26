@@ -8,7 +8,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import { api, get } from './api';
-import { Button, Card, ErrorState, Field, Loading } from './components';
+import { Button, Card, DateInput, ErrorState, Field, Loading } from './components';
 import { useCountry } from './geography';
 import type { Category } from './types';
 import './operational-reports.css';
@@ -324,10 +324,10 @@ export function OperationalReports() {
                   </select>
                 </Field>
                 <Field label="From (UTC)">
-                  <input type="date" value={from} max="9999-12-30" onChange={event => setFrom(event.target.value)} />
+                  <DateInput type="date" value={from} max="9999-12-30" onChange={event => setFrom(event.target.value)} />
                 </Field>
                 <Field label="Through (UTC)">
-                  <input type="date" value={through} max="9999-12-30" onChange={event => setThrough(event.target.value)} />
+                  <DateInput type="date" value={through} max="9999-12-30" onChange={event => setThrough(event.target.value)} />
                 </Field>
               </div>
               <div className="report-export-actions">

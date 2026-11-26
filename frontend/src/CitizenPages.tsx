@@ -96,7 +96,7 @@ export function AuthPage({ register = false, donor = false }: { register?: boole
       navigate(loginDestination(user, (location.state as { from?: string } | null)?.from, donor ? donorWorkspace : undefined), { replace: donor });
     } catch (failure) {
       const status = isAxiosError(failure) ? failure.response?.status : undefined;
-      setError(status === 429 ? t('authThrottle') : donor && status !== 401 ? errorMessage(failure) :
+      setError(status === 429 ? t('authThrottle') : isAxiosError(failure) && (!status || status >= 500) ? t('authUnavailable') : donor && status !== 401 ? errorMessage(failure) :
         t(donor ? 'donorAuthError' : 'authError'));
     }
   }
@@ -385,7 +385,7 @@ const requestSchema = z.object({
 });
 type RequestForm = z.infer<typeof requestSchema>;
 type RequestFormInput = z.input<typeof requestSchema>;
-type SavedRequestDraft = { key: string; values: Partial<RequestForm>; requestId?: string };
+type SavedRequestDraft = { key: string; values: Partial<RequestForm>; requestId?: string; reference?: string };
 
 function readDraftStorage<T>(key: string, fallback: T): T {
   try { return JSON.parse(sessionStorage.getItem(key) ?? 'null') ?? fallback; }
@@ -492,6 +492,9 @@ function RequestWizard({ country, user, requestedCategory, saved, draftKey, look
     [geoMessage, setGeoMessage] = useState(''),
     [geoResults, setGeoResults] = useState<LocationResult[]>([]),
     [submittedId, setSubmittedId] = useState(saved?.requestId ?? null);
+  const [savedReference, setSavedReference] = useState(saved?.reference ?? '');
+  const [retryingPhoto, setRetryingPhoto] = useState(false);
+  const photoOperation = useRef(crypto.randomUUID());
   const [submissionKey] = useState(() => saved?.key ?? crypto.randomUUID());
   const [categoryHelpDescription, setCategoryHelpDescription] = useState('');
   const stepHeading = useRef<HTMLHeadingElement>(null);
@@ -566,8 +569,8 @@ function RequestWizard({ country, user, requestedCategory, saved, draftKey, look
     if (values.crisisId && lookup.data && !lookup.data.crises.some(crisis => crisis.id === values.crisisId))
       setValue('crisisId', '');
   }, [values.administrativeDivisionId, values.crisisId, divisions.data, lookup.data, setValue]);
-  function persistDraft(values: RequestForm, requestId?: string) {
-    const draft = { key: submissionKey, values, requestId };
+  function persistDraft(values: RequestForm, requestId?: string, reference?: string) {
+    const draft = { key: submissionKey, values, requestId, reference };
     return saveDrafts(draftKey, [draft, ...listDrafts(draftKey).filter(item => item.key !== draft.key)]);
   }
   useEffect(() => {
@@ -719,37 +722,96 @@ function RequestWizard({ country, user, requestedCategory, saved, draftKey, look
       setReverseSearching(false);
     }
   }
-  async function submit(input: RequestForm) {
+  function finishRequest(id: string) {
+    saveDrafts(draftKey, listDrafts(draftKey).filter(draft => draft.key !== submissionKey));
+    void client.invalidateQueries({ queryKey: ['requests'] });
+    void client.invalidateQueries({ queryKey: ['notifications'] });
+    navigate(`/app/requests/${id}`, { state: { created: true } });
+  }
+  async function uploadPhoto(id: string, photo: File) {
+    const body = new FormData();
+    body.append('file', photo);
+    body.append('operationId', photoOperation.current);
+    await api.post(`/requests/${id}/attachments`, body);
+  }
+  async function retryPhoto() {
+    if (!submittedId || !file || retryingPhoto) return;
+    setRetryingPhoto(true);
     setError('');
     try {
-      let id = submittedId;
-      if (!id) {
-        const supplyItems = needsQuantity(input.category, input.intake) ? input.intake.supplyItems : undefined;
-        const firstSupply = supplyItems?.[0];
-        const r = (await api.post<AidRequest>('/requests', { ...input,
-          intake: { ...input.intake, supplyItems },
-          quantity: firstSupply?.quantity ?? (input.category === 'Shelter' ? 1 : input.householdSize),
-          unit: firstSupply?.unit ?? (input.category === 'Shelter' ? 'household' : 'persons'),
-          organisationId: null, submissionKey })).data;
-        id = r.id;
-        persistDraft(input, id);
-        setSubmittedId(id);
-      }
-      if (file) {
-        const body = new FormData();
-        body.append('file', file);
-        await api.post(`/requests/${id}/attachments`, body);
-      }
-      saveDrafts(draftKey, listDrafts(draftKey).filter(draft => draft.key !== submissionKey));
-      await Promise.all([
-        client.invalidateQueries({ queryKey: ['requests'] }),
-        client.invalidateQueries({ queryKey: ['notifications'] }),
-      ]);
-      navigate(`/app/requests/${id}`, { state: { created: true } });
+      await uploadPhoto(submittedId, file);
+      finishRequest(submittedId);
     } catch {
-      setError(t('submitError'));
+      setError(t('photoPending'));
+    } finally {
+      setRetryingPhoto(false);
     }
   }
+  async function submit(input: RequestForm) {
+    setError('');
+    let request: AidRequest;
+    try {
+      const supplyItems = needsQuantity(input.category, input.intake) ? input.intake.supplyItems : undefined;
+      const firstSupply = supplyItems?.[0];
+      request = (await api.post<AidRequest>('/requests', { ...input,
+        intake: { ...input.intake, supplyItems },
+        quantity: firstSupply?.quantity ?? (input.category === 'Shelter' ? 1 : input.householdSize),
+        unit: firstSupply?.unit ?? (input.category === 'Shelter' ? 'household' : 'persons'),
+        organisationId: null, submissionKey })).data;
+    } catch {
+      setError(t('submitError'));
+      return;
+    }
+    persistDraft(input, request.id, request.reference);
+    if (file) {
+      try {
+        await uploadPhoto(request.id, file);
+      } catch {
+        setSavedReference(request.reference);
+        setSubmittedId(request.id);
+        return;
+      }
+    }
+    finishRequest(request.id);
+  }
+  const photoPicker = <>
+    <Field label={t('evidence')} hint={t('evidenceHint')} error={fileError ? t('invalidEvidence') : undefined}>
+      <input
+        type="file"
+        disabled={retryingPhoto}
+        ref={evidenceInput}
+        accept="image/png,image/jpeg"
+        onChange={(e) => {
+          const selected = e.target.files?.[0];
+          photoOperation.current = crypto.randomUUID();
+          const invalid = !!selected && (selected.size < 8 || selected.size > 4 * 1024 * 1024 ||
+            !['image/png', 'image/jpeg'].includes(selected.type));
+          setFileError(invalid);
+          setFile(invalid ? null : selected ?? null);
+          if (invalid) e.target.value = '';
+        }}
+      />
+    </Field>
+    {file && <div className="inline citizen-selected-file"><span>{file.name}</span>
+      <Button type="button" variant="ghost" onClick={() => {
+        setFile(null);
+        const input = evidenceInput.current;
+        if (input) { input.value = ''; input.focus(); }
+      }}>{t('removeEvidence')}</Button></div>}
+    {fileError && <Button type="button" variant="ghost" onClick={() => setFileError(false)}>{t('continueWithoutEvidence')}</Button>}
+  </>;
+  if (submittedId) return <div className="form-page citizen-request-page">
+    <Card className="stack">
+      <h1>{t('viewRequest')}{savedReference && ` · ${savedReference}`}</h1>
+      <p role="status">{t('photoPending')}</p>
+      {photoPicker}
+      {error && <p role="alert">{error}</p>}
+      <div className="button-row">
+        <Button busy={retryingPhoto} disabled={!file || fileError} onClick={() => void retryPhoto()}>{t('uploadPhoto')}</Button>
+        <Button variant="secondary" disabled={retryingPhoto} onClick={() => finishRequest(submittedId)}>{t('viewRequest')}</Button>
+      </div>
+    </Card>
+  </div>;
   const descriptionField = <Field
     label={category && descriptionLabels[category] ? t(`intake.description.${category}`, { defaultValue: descriptionLabels[category] }) : t('description')}
     hint={t('descriptionHint')} error={errors.description ? t('checkFields') : undefined}>
@@ -1020,28 +1082,7 @@ function RequestWizard({ country, user, requestedCategory, saved, draftKey, look
                   setValue('longitude', lng);
                 }}
               />
-              <Field label={t('evidence')} hint={t('evidenceHint')} error={fileError ? t('invalidEvidence') : undefined}>
-                <input
-                  type="file"
-                  ref={evidenceInput}
-                  accept="image/png,image/jpeg"
-                  onChange={(e) => {
-                    const selected = e.target.files?.[0];
-                    const invalid = !!selected && (selected.size < 8 || selected.size > 4 * 1024 * 1024 ||
-                      !['image/png', 'image/jpeg'].includes(selected.type));
-                    setFileError(invalid);
-                    setFile(invalid ? null : selected ?? null);
-                    if (invalid) e.target.value = '';
-                  }}
-                />
-              </Field>
-              {file && <div className="inline citizen-selected-file"><span>{file.name}</span>
-                <Button type="button" variant="ghost" onClick={() => {
-                  setFile(null);
-                  const input = evidenceInput.current;
-                  if (input) { input.value = ''; input.focus(); }
-                }}>{t('removeEvidence')}</Button></div>}
-              {fileError && <Button type="button" variant="ghost" onClick={() => setFileError(false)}>{t('continueWithoutEvidence')}</Button>}
+              {photoPicker}
             </>
           )}
           {step === 3 && category && (
@@ -1087,7 +1128,7 @@ function RequestWizard({ country, user, requestedCategory, saved, draftKey, look
                 type="button"
                 variant="secondary"
                 onClick={() => goToStep(step - 1)}
-                disabled={isSubmitting || !!submittedId}
+                disabled={isSubmitting}
               >
                 <ArrowLeft size={17} />
                 {t('back')}
@@ -1115,9 +1156,7 @@ function RequestWizard({ country, user, requestedCategory, saved, draftKey, look
             )}
           </div>
           {!draftAvailable && <small className="muted center">{t('draftUnavailable')}</small>}
-          {submittedId && error && (
-            <NextLink to={`/app/requests/${submittedId}`}>{t('viewRequest')}</NextLink>
-          )}
+
         </form>
       </Card>
     </div>

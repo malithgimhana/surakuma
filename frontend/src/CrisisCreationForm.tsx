@@ -1,17 +1,33 @@
 import { useRef, useState } from 'react';
-import { MapPin } from 'lucide-react';
-import { Button, Field } from './components';
-import { RegionField } from './geography';
+import { useMutation } from '@tanstack/react-query';
+import { MapPin, Search } from 'lucide-react';
+import { get } from './api';
+import { Button, ErrorState, Field } from './components';
+import { countryPath } from './crisisOperationsApi';
+import { RegionField, useCountry } from './geography';
+import { locationSearchSchema, type LocationResult } from './locationSearch';
 
 export function CrisisCreationForm({
   busy,
   onCreate,
+  showSearch = false,
 }: {
   busy: boolean;
   onCreate: (data: Record<string, unknown>) => void;
+  showSearch?: boolean;
 }) {
+  const country = useCountry();
   const [latitude, setLatitude] = useState(''),
     [longitude, setLongitude] = useState('');
+  const [place, setPlace] = useState('');
+  const [district, setDistrict] = useState('');
+  const searchLocation = useMutation({
+    mutationFn: async (query: string) => {
+      const result = locationSearchSchema.safeParse(await get<unknown>(countryPath('/maps/geocode', country, { query })));
+      if (!result.success) throw new Error('Location search is unavailable. Enter the coordinates or use your current location.');
+      return result.data.features;
+    },
+  });
   const [locating, setLocating] = useState(false),
     [locationError, setLocationError] = useState('');
   const locationRequest = useRef(0);
@@ -46,6 +62,13 @@ export function CrisisCreationForm({
     setLocationError('');
     setValue(value);
   }
+  function selectLocation({ properties, geometry }: LocationResult) {
+    const [longitude, latitude] = geometry.coordinates;
+    editCoordinates(setLatitude, String(latitude));
+    setLongitude(String(longitude));
+    setDistrict(value => value || properties.label.slice(0, 150));
+    searchLocation.reset();
+  }
   return (
     <form
       className="form-grid"
@@ -78,10 +101,29 @@ export function CrisisCreationForm({
           ))}
         </select>
       </Field>
-      <RegionField />
+      <RegionField hideDistrictSuffix />
       <Field label="Local area">
-        <input name="district" maxLength={150} />
+        <input name="district" maxLength={150} value={district} onChange={e => setDistrict(e.target.value)} />
       </Field>
+      {showSearch && <div className="coord-location-search">
+        <Field label="Search location">
+          <input type="search" value={place} maxLength={150} onChange={e => {
+            setPlace(e.target.value);
+            if (searchLocation.isSuccess || searchLocation.isError) searchLocation.reset();
+          }} onKeyDown={e => {
+            if (e.key !== 'Enter') return;
+            e.preventDefault();
+            if (place.trim().length >= 3 && !searchLocation.isPending) searchLocation.mutate(place.trim());
+          }} />
+        </Field>
+        <Button type="button" variant="secondary" disabled={place.trim().length < 3} busy={searchLocation.isPending}
+          onClick={() => searchLocation.mutate(place.trim())}><Search size={17} /> Find location</Button>
+        {searchLocation.isError && <ErrorState error={searchLocation.error} />}
+        {searchLocation.isSuccess && (searchLocation.data.length ?
+          <ul className="coord-activity-list">{searchLocation.data.map((result, index) =>
+            <li key={index}><Button type="button" variant="ghost" onClick={() => selectLocation(result)}>{result.properties.label}</Button></li>)}</ul> :
+          <p className="muted" role="status">No locations matched your search.</p>)}
+      </div>}
       <Field label="Latitude">
         <input
           type="number"

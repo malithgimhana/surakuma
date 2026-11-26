@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useState, type ReactNode } from 'react';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
@@ -8,11 +8,16 @@ import {
   ArrowDownUp,
   ArrowRight,
   CheckCircle2,
+  ChartNoAxesColumn,
+  ClipboardCheck,
   Clock,
   Droplet,
   House,
   Layers,
   MapPin,
+  Package,
+  Pencil,
+  Plus,
   Search,
   SquarePlus,
   Tent,
@@ -21,8 +26,9 @@ import {
   UsersRound,
 } from 'lucide-react';
 import { api, get } from './api';
-import { Button, Card, Empty, ErrorState, Field, formatDate, IconTile } from './components';
-import { useDivisions } from './geography';
+import { Button, Card, Empty, ErrorState, Field, formatDate, IconTile, PageHeader } from './components';
+import { AssignedCountry, useDivisions } from './geography';
+import { shelterPath } from './countryScope';
 import { WorkspaceDialog } from './OrganisationDialog';
 import type { Placement, Shelter } from './types';
 import './shelter-dashboard.css';
@@ -34,18 +40,23 @@ type WarningKind =
   | 'criticalCapacity'
   | 'nearCapacity'
   | 'closedWithPlacements'
-  | 'stale';
+  | 'stale'
+  | 'closed'
+  | 'pendingVerification'
+  | 'partnerVerification'
+  | 'facilitiesUnknown';
 type Warning = { kind: WarningKind; severity: 'critical' | 'warning' };
 type Entry = {
   shelter: Shelter;
   eligible: boolean;
+  reportedAvailable?: number;
   crises: { id: string; name: string }[];
   warnings: Warning[];
 };
-type Snapshot = {
+export type ShelterSnapshot = {
   entries: Entry[];
   statistics: Record<'total' | 'available' | 'occupied' | 'households' | 'attention', number> &
-    Partial<Record<'pendingArrivals' | 'reserved', number>>;
+    Partial<Record<'pendingArrivals' | 'reserved' | 'capacity' | 'reportedAvailable', number>>;
 };
 type Details = {
   households: (Pick<Placement, 'id' | 'people' | 'status' | 'createdAt'> & {
@@ -57,13 +68,55 @@ type Details = {
 type Candidate = { id: string; reference: string; people: number; crisis: string };
 type Division = NonNullable<ReturnType<typeof useDivisions>['data']>[number];
 
-const metrics = [
+const standardMetrics = [
   ['total', 'Total shelters', Tent, 'blue'],
   ['available', 'Available spaces', UsersRound, 'green'],
   ['occupied', 'Occupied spaces', Users, 'blue'],
   ['households', 'Households accommodated', House, 'purple'],
   ['attention', 'Attention needed', TriangleAlert, 'coral'],
 ] as const;
+
+const overviewMetrics = [
+  ['total', 'Authorized shelters', Tent, 'blue'],
+  ['capacity', 'Total shelter capacity', ChartNoAxesColumn, 'blue'],
+  ['reportedAvailable', 'Reported available spaces', UsersRound, 'green'],
+  ['reserved', 'Reserved spaces', ClipboardCheck, 'purple'],
+  ['attention', 'Shelters requiring attention', TriangleAlert, 'coral'],
+] as const;
+const managementMetrics = [
+  standardMetrics[0],
+  overviewMetrics[2],
+  standardMetrics[2],
+  ['pendingArrivals', 'Pending arrivals (households)', House, 'purple'],
+  ['attention', 'Shelters requiring review', TriangleAlert, 'coral'],
+] as const;
+
+export function useShelterSnapshot(country: string, workspace = false, enabled = true, coordinator = false) {
+  return useQuery({
+    queryKey: ['shelter-dashboard', country, coordinator ? 'Coordinator' : workspace ? 'ShelterAdmin' : 'standard'],
+    queryFn: async () => {
+      const data = await get<ShelterSnapshot>(`/staff/shelters?countryCode=${encodeURIComponent(country)}&dashboard=true`);
+      if (!data?.statistics || !Array.isArray(data.entries))
+        throw new Error('The current API does not provide shelter dashboard data. Restart the API with the updated build.');
+      return data;
+    },
+    enabled,
+  });
+}
+
+function ShelterMetrics({ rows, statistics, pending }: {
+  rows: readonly (readonly [keyof ShelterSnapshot['statistics'], string, typeof Tent, 'blue' | 'green' | 'purple' | 'coral'])[];
+  statistics?: ShelterSnapshot['statistics'];
+  pending: boolean;
+}) {
+  return <section className="shelter-metrics" aria-label="Shelter statistics" aria-busy={pending}>
+    {rows.map(([key, label, Icon, tone]) => <Card key={key} className={`shelter-stat shelter-stat-${tone}`}>
+      <IconTile icon={Icon} tone={tone} />
+      <div><span>{label}</span><strong>{statistics?.[key]?.toLocaleString() ??
+        (pending ? <span className="shelter-skeleton" /> : '—')}</strong></div>
+    </Card>)}
+  </section>;
+}
 
 const occupancy = (s: Shelter) => (s.capacity > 0 ? (100 * s.occupancy) / s.capacity : null);
 const date = (value?: string) => (value ? formatDate(value) : '—');
@@ -78,6 +131,7 @@ const activityLabels: Record<string, string> = {
   ShelterCreated: 'Shelter created',
   ShelterUpdated: 'Shelter updated',
   ShelterCapacityChanged: 'Capacity updated',
+  ShelterOperationsVerified: 'Operational assessment verified',
   ShelterStatusChanged: 'Operational status changed',
   ShelterReserved: 'Household reserved',
   ShelterCheckIn: 'Household checked in',
@@ -113,7 +167,15 @@ function warningCopy({ kind }: Warning, s: Shelter): [string, string] {
         `${s.occupancy} checked in · ${s.reserved} spaces reserved.`,
       ];
     case 'stale':
-      return [`${s.name} needs an operational update`, `Last updated ${date(s.updatedAt)}.`];
+      return [`${s.name} needs an operational update`, `Operational report overdue · ${date(s.operationalUpdatedAt ?? s.updatedAt)}`];
+    case 'pendingVerification':
+      return [`${s.name} awaits verification`, 'Confirm capacity, facilities and operating readiness.'];
+    case 'closed':
+      return [`${s.name} is temporarily closed`, 'Review readiness before reopening.'];
+    case 'facilitiesUnknown':
+      return [`${s.name} has no facilities recorded`, 'Check drinking water, sanitation and accessibility on site.'];
+    case 'partnerVerification':
+      return [`${s.name} requires organisation verification`, 'Contact an administrator to confirm the operating organisation.'];
   }
 }
 
@@ -147,13 +209,13 @@ function Facilities({ shelter }: { shelter: Shelter }) {
   );
 }
 
-function Capacity({ shelter: s }: { shelter: Shelter }) {
+function Capacity({ shelter: s, reported }: { shelter: Shelter; reported?: number }) {
   return (
     <dl className="shelter-breakdown">
       {(
         [
           ['Total capacity', s.capacity > 0 ? s.capacity : '—'],
-          ['Available', s.available],
+          [reported === undefined ? 'Available' : 'Reported free', reported ?? s.available],
           ['Reserved', s.reserved],
           ['Checked in', s.occupancy],
         ] as const
@@ -169,12 +231,15 @@ function Capacity({ shelter: s }: { shelter: Shelter }) {
   );
 }
 
-function OperationalStatus({ shelter }: { shelter: Shelter }) {
-  return (
-    <span className="shelter-state" data-state={shelter.open ? 'open' : 'closed'}>
-      {shelter.open ? 'Open' : 'Closed'}
-    </span>
-  );
+function operationalState(entry: Entry) {
+  if (entry.shelter.pendingVerification) return 'pending';
+  if (entry.warnings.some(w => w.kind === 'stale' || w.kind === 'partnerVerification')) return 'review';
+  return entry.shelter.open ? 'open' : 'closed';
+}
+const stateLabel = { open: 'Open', closed: 'Closed', pending: 'Pending verification', review: 'Update required' };
+function OperationalStatus({ entry }: { entry: Entry }) {
+  const state = operationalState(entry);
+  return <span className="shelter-state" data-state={state}>{stateLabel[state]}</span>;
 }
 
 function ShelterCard({
@@ -183,12 +248,18 @@ function ShelterCard({
   onView,
   onEdit,
   onAllocate,
+  workspace,
+  onReview,
+  readOnly,
 }: {
   entry: Entry;
   location: string;
   onView: () => void;
   onEdit: () => void;
   onAllocate: () => void;
+  workspace: boolean;
+  onReview: () => void;
+  readOnly: boolean;
 }) {
   const s = entry.shelter;
   const percent = occupancy(s);
@@ -206,7 +277,7 @@ function ShelterCard({
             {[s.address, location].filter(Boolean).join(' · ') || 'Location not recorded'}
           </p>
         </div>
-        <OperationalStatus shelter={s} />
+        <OperationalStatus entry={entry} />
       </div>
       <div className="shelter-occupancy" data-severity={capacityWarning?.severity}>
         <span>Occupancy</span>
@@ -225,7 +296,10 @@ function ShelterCard({
           </span>
         </strong>
       </div>
-      <Capacity shelter={s} />
+      <Capacity shelter={s} reported={workspace ? entry.reportedAvailable ?? Math.max(0, s.available) : undefined} />
+      {workspace && <p className={entry.eligible ? 'shelter-confirmed' : 'shelter-unavailable'}>
+        {entry.eligible ? `${s.available} spaces confirmed for placement` : 'Unavailable for new placements'}
+      </p>}
       <div className="shelter-facilities">
         <strong>Facilities:</strong> <Facilities shelter={s} />
       </div>
@@ -237,19 +311,24 @@ function ShelterCard({
             : 'No crisis linked by active placements'}
         </span>
         <span>
-          <Clock size={14} aria-hidden="true" /> Updated {date(s.updatedAt)}
+          <Clock size={14} aria-hidden="true" /> Updated {date(s.operationalUpdatedAt ?? s.updatedAt)}
         </span>
       </div>
+      {workspace && entry.warnings.length > 0 && <ul className="shelter-card-warnings">
+        {entry.warnings.map(warning => <li key={warning.kind}>{warningCopy(warning, s)[1]}</li>)}
+      </ul>}
       <div className="shelter-actions">
-        <Button variant="secondary" className="button secondary shelter-view" onClick={onView}>
+        <Button variant="secondary" className="button secondary shelter-view" onClick={onView}
+          aria-label={readOnly ? `View details for ${s.name}` : undefined}>
           View details
         </Button>
-        <Button variant="secondary" onClick={onEdit}>
+        {!readOnly && <Button variant="secondary" onClick={onEdit}>
           Edit capacity
-        </Button>
-        <Button variant="secondary" onClick={onAllocate} disabled={!entry.eligible}>
+        </Button>}
+        {!readOnly && <Button variant="secondary" onClick={onAllocate} disabled={!entry.eligible}>
           <UsersRound size={16} aria-hidden="true" /> Allocate household
-        </Button>
+        </Button>}
+        {!readOnly && workspace && <Button variant="secondary" onClick={onReview}>Review operational status</Button>}
       </div>
     </Card>
   );
@@ -262,6 +341,8 @@ function ShelterDialog({
   mode,
   onDismiss,
   onEdit,
+  workspace,
+  readOnly,
 }: {
   entry: Entry;
   location: string;
@@ -269,21 +350,24 @@ function ShelterDialog({
   mode: 'detail' | 'allocate';
   onDismiss: () => void;
   onEdit: () => void;
+  workspace: boolean;
+  readOnly: boolean;
 }) {
   const s = entry.shelter;
   const allocating = mode === 'allocate';
   const [request, setRequest] = useState('');
   const [confirmation, setConfirmation] = useState(false);
+  const locationState = useLocation().state as { registeredShelter?: string } | null;
   const client = useQueryClient();
   const scope = `countryCode=${encodeURIComponent(country)}`;
   const path = `/staff/shelters/${s.id}?${scope}`;
   const detail = useQuery({
-    queryKey: ['shelter-detail', country, s.id],
+    queryKey: ['shelter-detail', country, s.id, workspace],
     queryFn: () => get<Details>(path),
     enabled: !allocating,
   });
   const candidates = useQuery({
-    queryKey: ['shelter-candidates', country, s.id],
+    queryKey: ['shelter-candidates', country, s.id, workspace],
     queryFn: () => get<Candidate[]>(`${path}&allocation=true`),
     enabled: allocating && !confirmation,
   });
@@ -358,18 +442,22 @@ function ShelterDialog({
         )
       ) : (
         <div className="shelter-detail-sections">
+          {workspace && locationState?.registeredShelter === s.id && <p role="status" className="success-text">
+            Shelter registered. Complete operational verification before opening it for placements.
+          </p>}
           <section>
             <div className="inline spread">
               <h3>Capacity &amp; facilities</h3>
-              <OperationalStatus shelter={s} />
+              <OperationalStatus entry={entry} />
             </div>
-            <Capacity shelter={s} />
+            <Capacity shelter={s} reported={workspace ? entry.reportedAvailable ?? Math.max(0, s.available) : undefined} />
+            {workspace && <p className="muted">{entry.eligible ? s.available : 0} spaces confirmed for placement</p>}
             <div className="shelter-facilities">
               <Facilities shelter={s} />
             </div>
-            <Button variant="secondary" onClick={onEdit} disabled={write.isPending}>
-              Edit facilities &amp; capacity
-            </Button>
+            {!readOnly && <Button variant="secondary" onClick={onEdit} disabled={write.isPending}>
+              {workspace ? 'Review status, facilities & capacity' : 'Edit facilities & capacity'}
+            </Button>}
           </section>
           <section>
             <h3>Households &amp; check-ins</h3>
@@ -392,11 +480,11 @@ function ShelterDialog({
                         {h.checkInAt && ` · Arrival ${date(h.checkInAt)}`}
                       </small>
                     </div>
-                    {h.status === 'Reserved' && (
+                    {!readOnly && h.status === 'Reserved' && (
                       <div className="shelter-actions">
                         <Button
                           variant="secondary"
-                          disabled={write.isPending}
+                          disabled={write.isPending || !s.open}
                           onClick={() =>
                             write.mutate({ path: `/shelter-allocations/${h.id}/CheckIn` })
                           }
@@ -414,7 +502,7 @@ function ShelterDialog({
                         </Button>
                       </div>
                     )}
-                    {h.status === 'CheckedIn' && (
+                    {!readOnly && h.status === 'CheckedIn' && (
                       <Button
                         variant="secondary"
                         disabled={write.isPending}
@@ -430,17 +518,18 @@ function ShelterDialog({
               </ul>
             )}
           </section>
-          <section>
+          {!readOnly && <section>
             <h3>Resources &amp; shortages</h3>
             <p className="muted">
               Use supply support to request essentials from a verified organisation. Confirmed receipts are recorded in depot inventory.
             </p>
-            <Link className="text-link" to={`${window.location.pathname.startsWith('/admin') ? '/admin' : '/staff'}/supply-support?${new URLSearchParams({
-              shelter: s.id, organisation: s.organisationId,
-            })}`}>
+            <Link className="text-link" to={workspace ? shelterPath('/supply-support', { shelter: s.id, organisation: s.organisationId }) :
+              `${window.location.pathname.startsWith('/admin') ? '/admin' : '/staff'}/supply-support?${new URLSearchParams({
+                shelter: s.id, organisation: s.organisationId,
+              })}`}>
               Report a supply shortage <ArrowRight size={15} aria-hidden="true" />
             </Link>
-          </section>
+          </section>}
           <section>
             <h3>Activity &amp; history</h3>
             {detail.data &&
@@ -473,26 +562,20 @@ export function ShelterDashboard({
   country,
   onEdit,
   specialist = false,
+  workspace = false,
+  readOnly = false,
 }: {
   country: string;
   onEdit: (shelter: Shelter) => void;
   specialist?: boolean;
+  workspace?: boolean;
+  readOnly?: boolean;
 }) {
   const [params, setParams] = useSearchParams();
   const view = params.get('view');
-  const snapshot = useQuery({
-    queryKey: ['shelter-dashboard', country],
-    queryFn: async () => {
-      const data = await get<Snapshot>(
-        `/staff/shelters?countryCode=${encodeURIComponent(country)}&dashboard=true`,
-      );
-      if (!data?.statistics || !Array.isArray(data.entries))
-        throw new Error(
-          'The current API does not provide shelter dashboard data. Restart the API with the updated build.',
-        );
-      return data;
-    },
-  });
+  const snapshot = useShelterSnapshot(country, workspace, true, readOnly);
+  const action = workspace && !readOnly ? params.get('action') : null;
+  const detailId = workspace ? params.get('shelter') : null;
   const regions = useDivisions(country);
   const [search, setSearch] = useState('');
   const [region, setRegion] = useState('');
@@ -523,12 +606,14 @@ export function ShelterDashboard({
   );
   const visible = entries
     .filter(
-      ({ shelter: s, crises, warnings }) =>
+      (entry) => {
+        const { shelter: s, crises, warnings } = entry;
+        return (action !== 'allocate' || entry.eligible) &&
         (view !== 'arrivals' || s.reserved > 0) &&
         (view !== 'occupied' || s.occupancy > 0) &&
         (view !== 'accessible' || (s.open && s.accessible)) &&
         (view !== 'attention' || warnings.length > 0) &&
-        (!status || (status === 'open') === s.open) &&
+        (!status || (workspace ? operationalState(entry) === status : (status === 'open') === s.open)) &&
         (!crisis || crises.some((c) => c.id === crisis)) &&
         (!region || location(s).some((d) => d.id === region)) &&
         [
@@ -540,7 +625,8 @@ export function ShelterDashboard({
         ]
           .join(' ')
           .toLocaleLowerCase()
-          .includes(search.trim().toLocaleLowerCase()),
+          .includes(search.trim().toLocaleLowerCase());
+      },
     )
     .sort((a, b) => {
       const x = a.shelter,
@@ -548,7 +634,9 @@ export function ShelterDashboard({
       const order =
         sort === 'recent'
           ? Date.parse(y.updatedAt) - Date.parse(x.updatedAt)
-          : sort === 'available'
+          : sort === 'capacity'
+            ? y.capacity - x.capacity
+            : sort === 'available'
             ? (b.eligible ? y.available : 0) - (a.eligible ? x.available : 0)
             : sort === 'lowest'
               ? (occupancy(x) ?? Infinity) - (occupancy(y) ?? Infinity)
@@ -564,35 +652,36 @@ export function ShelterDashboard({
         Number(b.warning.severity === 'critical') - Number(a.warning.severity === 'critical'),
     );
   const warningCount = new Set(warnings.map(({ entry }) => entry.shelter.id)).size;
-  const active = entries.find((e) => e.shelter.id === selected?.id);
-  const filtered = Boolean(search.trim() || region || crisis || status || view);
+  const current = selected ?? (detailId ? { id: detailId, mode: 'detail' as const } : undefined);
+  const active = entries.find(e => e.shelter.id === current?.id);
+  const closeDetail = () => {
+    setSelected(undefined);
+    if (detailId) setParams(previous => {
+      const next = new URLSearchParams(previous);
+      next.delete('shelter');
+      return next;
+    }, { replace: true, state: null });
+  };
+  const filtered = Boolean(search.trim() || region || crisis || status || view || action);
   const clear = () => {
     setSearch('');
     setRegion('');
     setCrisis('');
     setStatus('');
-    if (view) setParams((previous) => { previous.delete('view'); return previous; });
+    if (view || action) setParams(previous => {
+      const next = new URLSearchParams(previous);
+      next.delete('view');
+      next.delete('action');
+      return next;
+    });
   };
   return (
     <>
-      <section
-        className="shelter-metrics"
-        aria-label="Shelter statistics"
-        aria-busy={snapshot.isPending}
-      >
-        {(specialist ? [...metrics, ['reserved', 'Reserved spaces', Users, 'blue'], ['pendingArrivals', 'Pending arrivals', House, 'purple']] as const : metrics).map(([key, label, Icon, tone]) => (
-          <Card key={key} className={`shelter-stat shelter-stat-${tone}`}>
-            <IconTile icon={Icon} tone={tone} />
-            <div>
-              <span>{label}</span>
-              <strong>
-                {snapshot.data?.statistics[key]?.toLocaleString() ??
-                  (snapshot.isPending ? <span className="shelter-skeleton" /> : '—')}
-              </strong>
-            </div>
-          </Card>
-        ))}
-      </section>
+      <ShelterMetrics rows={workspace ? managementMetrics : specialist ? [
+        ...standardMetrics, ['reserved', 'Reserved spaces', Users, 'blue'], ['pendingArrivals', 'Pending arrivals', House, 'purple'],
+      ] : standardMetrics} statistics={snapshot.data?.statistics} pending={snapshot.isPending} />
+      {action === 'allocate' && <p className="shelter-hint">Select an eligible shelter to reserve spaces for an approved household request.</p>}
+      {action === 'capacity' && <p className="shelter-hint">Choose Edit capacity on the shelter you want to update.</p>}
       {snapshot.isPending ? (
         <p className="sr-only" role="status">
           Loading shelter management…
@@ -658,6 +747,8 @@ export function ShelterDashboard({
                 <option value="">All statuses</option>
                 <option value="open">Open</option>
                 <option value="closed">Closed</option>
+                {workspace && <><option value="pending">Pending verification</option>
+                  <option value="review">Update required</option></>}
               </select>
             </label>
             <label className="shelter-filter">
@@ -669,7 +760,8 @@ export function ShelterDashboard({
               >
                 <option value="highest">Occupancy (high to low)</option>
                 <option value="lowest">Occupancy (low to high)</option>
-                <option value="available">Most available capacity</option>
+                <option value="capacity">Highest total capacity</option>
+                <option value="available">Most confirmed availability</option>
                 <option value="recent">Recently updated</option>
                 <option value="name">Alphabetical</option>
               </select>
@@ -683,13 +775,15 @@ export function ShelterDashboard({
               </button>
             </p>
           )}
-          <section className="shelter-attention" aria-labelledby="shelter-attention-title">
+          {(!readOnly || entries.length > 0) && <section className="shelter-attention" aria-labelledby="shelter-attention-title">
             <h2 id="shelter-attention-title">
               <TriangleAlert size={21} aria-hidden="true" /> Shelters requiring attention{' '}
               <span>{warningCount}</span>
             </h2>
-            {warnings.length ? (
-              <div className="shelter-grid-v2">
+            {workspace && warnings.length > 0 && view !== 'attention' ? (
+              <Link className="text-link" to={shelterPath('/shelters', { view: 'attention' })}>Review warnings <ArrowRight size={15} /></Link>
+            ) : warnings.length ? (
+              <div className={workspace ? 'shelter-warning-list' : 'shelter-grid-v2'}>
                 {warnings.map(({ entry, warning }) => {
                   const [title, explanation] = warningCopy(warning, entry.shelter);
                   return (
@@ -730,7 +824,7 @@ export function ShelterDashboard({
                     : 'No shelters registered in this country.'}
               </p>
             )}
-          </section>
+          </section>}
           <section aria-label="Shelter directory">
             {visible.length ? (
               <div className="shelter-grid-v2">
@@ -742,6 +836,9 @@ export function ShelterDashboard({
                     onView={() => setSelected({ id: entry.shelter.id, mode: 'detail' })}
                     onEdit={() => onEdit(entry.shelter)}
                     onAllocate={() => setSelected({ id: entry.shelter.id, mode: 'allocate' })}
+                    workspace={workspace}
+                    onReview={() => onEdit(entry.shelter)}
+                    readOnly={readOnly}
                   />
                 ))}
               </div>
@@ -752,7 +849,7 @@ export function ShelterDashboard({
                   description={
                     filtered
                       ? 'Try a different search or clear the filters.'
-                      : 'Add a shelter to start monitoring capacity.'
+                      : readOnly ? 'Shelters in your operating scope will appear here.' : 'Add a shelter to start monitoring capacity.'
                   }
                 />
                 {filtered && (
@@ -765,20 +862,117 @@ export function ShelterDashboard({
           </section>
         </>
       )}
-      {selected && active && (
+      {detailId && !active && snapshot.isSuccess && <Card>
+        <Empty title="Shelter details unavailable" description="Check that this shelter is within your current assignment." />
+        <Button variant="secondary" onClick={closeDetail}>Return to shelters</Button>
+      </Card>}
+      {current && active && (
         <ShelterDialog
-          key={`${selected.id}-${selected.mode}`}
+          key={`${current.id}-${current.mode}`}
           entry={active}
           location={locationLabel(active.shelter)}
           country={country}
-          mode={selected.mode}
-          onDismiss={() => setSelected(undefined)}
+          mode={current.mode}
+          workspace={workspace}
+          readOnly={readOnly}
+          onDismiss={closeDetail}
           onEdit={() => {
-            setSelected(undefined);
+            closeDetail();
             onEdit(active.shelter);
           }}
         />
       )}
     </>
   );
+}
+
+export function ShelterOverview({ country, roleControl }: { country: string; roleControl?: ReactNode }) {
+  const snapshot = useShelterSnapshot(country, true);
+  const data = snapshot.data;
+  const stats = data?.statistics;
+  const attention = [...(data?.entries ?? [])].filter(entry => entry.warnings.length)
+    .sort((a, b) => Number(b.warnings.some(w => w.severity === 'critical')) -
+      Number(a.warnings.some(w => w.severity === 'critical')));
+  const details = (id: string) => shelterPath('/shelters', { shelter: id });
+  const actions = [
+    ['Manage shelters', Tent, shelterPath('/shelters')],
+    ['Allocate household', UsersRound, shelterPath('/shelters', { action: 'allocate' })],
+    ['Update capacity', Pencil, shelterPath('/shelters', { action: 'capacity' })],
+    ['Request supplies', Package, shelterPath('/supply-support')],
+    ['Register shelter', Plus, shelterPath('/shelters/new')],
+  ] as const;
+  return <div className="shelter-management shelter-page">
+    <div className="shelter-eyebrow"><AssignedCountry code={country} /> · Shelter operations</div>
+    <PageHeader title="Shelter Administrator Overview"
+      description="Monitor safe accommodation, expected arrivals and operational needs."
+      action={<div className="inline shelter-header-actions">{roleControl}
+        <Link to={actions[0][2]} className="button secondary"><Tent size={17} />Manage shelters</Link>
+        <Link to={actions[4][2]} className="button"><Plus size={17} />Add shelter</Link>
+      </div>} />
+    <ShelterMetrics rows={overviewMetrics} statistics={stats} pending={snapshot.isPending} />
+    {snapshot.isPending && <p role="status" className="sr-only">Loading your shelter overview…</p>}
+    {snapshot.error && <ErrorState error={snapshot.error} retry={() => void snapshot.refetch()} />}
+    <div className="shelter-overview-grid">
+      <Card>
+        <h2><ChartNoAxesColumn size={19} /> Capacity &amp; occupancy</h2>
+        <dl className="shelter-overview-counts">
+          {[
+            ['Occupied spaces', stats?.occupied],
+            ['Total capacity', stats?.capacity],
+            ['Confirmed available', stats?.available],
+            ['Reserved spaces', stats?.reserved],
+            ['Expected arrivals (households)', stats?.pendingArrivals],
+            ['Households checked in', stats?.households],
+          ].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value?.toLocaleString() ?? '—'}</dd></div>)}
+        </dl>
+        {data && (data.entries.length ? <div className="shelter-overview-bars">
+          {data.entries.map(entry => {
+            const s = entry.shelter;
+            const percent = occupancy(s);
+            return <div key={s.id}>
+              <div className="inline spread"><Link to={details(s.id)}>{s.name}</Link>
+                <small>{s.occupancy} occupied · {entry.eligible ? s.available : 0} confirmed free</small></div>
+              <progress max={100} value={Math.min(percent ?? 0, 100)} aria-label={`Occupancy at ${s.name}`}
+                aria-valuetext={percent === null ? 'Capacity unknown' : `${Math.round(percent)}% occupied`} />
+            </div>;
+          })}
+        </div> : <Empty title="No shelters registered in your assignment" />)}
+      </Card>
+      <Card>
+        <div className="inline spread shelter-card-heading">
+          <h2><TriangleAlert size={19} /> Operational warnings</h2>
+          <Link className="text-link" to={shelterPath('/shelters', { view: 'attention' })}>View all <ArrowRight size={15} /></Link>
+        </div>
+        {data && (attention.length ? <div className="shelter-warning-list">
+          {attention.slice(0, 5).map(entry => <article key={entry.shelter.id} className="shelter-alert"
+            data-severity={entry.warnings.some(warning => warning.severity === 'critical') ? 'critical' : 'warning'}>
+            <TriangleAlert size={20} aria-hidden="true" />
+            <div><strong>{entry.shelter.name}</strong><p>{warningCopy(entry.warnings.find(w => w.severity === 'critical') ?? entry.warnings[0], entry.shelter)[1]}</p></div>
+            <Link className="button secondary" to={details(entry.shelter.id)} aria-label={`Review ${entry.shelter.name}`}>Review <ArrowRight size={15} /></Link>
+          </article>)}
+        </div> : <p className="shelter-all-clear"><CheckCircle2 size={18} />No shelters currently require attention.</p>)}
+      </Card>
+      <Card>
+        <div className="inline spread shelter-card-heading">
+          <h2><Tent size={19} /> Assigned shelter snapshot</h2>
+          <Link className="text-link" to={actions[0][2]}>Open management <ArrowRight size={15} /></Link>
+        </div>
+        {data && (data.entries.length ? <div className="shelter-table-scroll" tabIndex={0} role="region" aria-label="Scrollable shelter snapshot">
+          <table className="shelter-table" aria-label="Assigned shelters"><thead><tr>
+            <th scope="col">Shelter &amp; location</th><th scope="col">Capacity</th><th scope="col">Occupied</th>
+            <th scope="col">Confirmed available</th><th scope="col">Operational status</th>
+          </tr></thead><tbody>{data.entries.map(entry => <tr key={entry.shelter.id}>
+            <th scope="row"><Link to={details(entry.shelter.id)}>{entry.shelter.name}</Link><small>{entry.shelter.address}</small></th>
+            <td>{entry.shelter.capacity}</td><td>{entry.shelter.occupancy}</td>
+            <td>{entry.eligible ? entry.shelter.available : 0}</td><td><OperationalStatus entry={entry} /></td>
+          </tr>)}</tbody></table>
+        </div> : <Empty title="No assigned shelters yet" />)}
+      </Card>
+      <Card>
+        <h2>Quick actions</h2>
+        <div className="shelter-quick-actions">{actions.map(([label, Icon, to]) =>
+          <Link key={label} to={to}><Icon size={19} aria-hidden="true" />{label}</Link>)}</div>
+      </Card>
+    </div>
+  </div>;
 }

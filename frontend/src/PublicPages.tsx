@@ -258,7 +258,7 @@ export function AlertsPage({ workspace = false }: { workspace?: boolean }) {
             const count = value === 'All' ? alerts.length : alerts.filter((alert) => alert.severity === value).length;
             return <button type="button" key={value} className={filter === value ? 'selected' : ''}
               aria-pressed={filter === value} onClick={() => { setFilter(value); setPage(0); }}>
-              {value === 'All' ? t('all') : t('status.' + value)} <span aria-hidden="true">({count})</span>
+              {value === 'All' ? t('all') : t('status.' + value)} <span aria-hidden="true">({query.isSuccess ? count : '—'})</span>
             </button>;
           })}
         </div>
@@ -304,7 +304,7 @@ function ShelterArt({ index = 0 }: { index?: number }) {
 export function SheltersPage({ workspace = false }: { workspace?: boolean }) {
   const { t } = useTranslation(), country = useCountry();
   const directory = workspace ? '/app/shelters' : '/shelters';
-  const query = useQuery({ queryKey: ['shelters', country], queryFn: () => get<PublicShelter[]>('/shelters') });
+  const query = useQuery({ queryKey: ['shelters', country], queryFn: () => get<PublicShelter[]>(`/shelters?countryCode=${encodeURIComponent(country)}`) });
   const [search, setSearch] = useState(''),
     [view, setView] = useState('list');
   const shelters =
@@ -400,7 +400,7 @@ export function ShelterDetails({ workspace = false }: { workspace?: boolean }) {
     { t, i18n } = useTranslation(),
     { user } = useAuth(), country = useCountry();
   const directory = workspace ? '/app/shelters' : '/shelters';
-  const query = useQuery({ queryKey: ['shelters', country], queryFn: () => get<PublicShelter[]>('/shelters') });
+  const query = useQuery({ queryKey: ['shelters', country], queryFn: () => get<PublicShelter[]>(`/shelters?countryCode=${encodeURIComponent(country)}`) });
   const [route, setRoute] = useState(''),
     [busy, setBusy] = useState(false);
   if (query.isPending) return <Loading />;

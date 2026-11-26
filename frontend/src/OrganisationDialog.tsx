@@ -1,21 +1,20 @@
-import { useEffect, useId, useRef } from 'react';
+import { useId, useLayoutEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
-import { X } from 'lucide-react';
+import { Minus, X } from 'lucide-react';
 import { Button } from './components';
 
-export const organisationIdPattern = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}';
-
-export function WorkspaceDialog({ title, context, busy, onDismiss, children, className = '' }: {
+export function WorkspaceDialog({ title, context, busy, onDismiss, minimize, children, className = '' }: {
   title: string;
-  context?: string;
+  context?: ReactNode;
   busy?: boolean;
   onDismiss: () => void;
+  minimize?: { label: string; onClick: () => void };
   children: ReactNode;
   className?: string;
 }) {
   const headingId = useId();
   const ref = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const dialog = ref.current;
     dialog?.showModal();
     return () => dialog?.close();
@@ -36,9 +35,16 @@ export function WorkspaceDialog({ title, context, busy, onDismiss, children, cla
           <h2 id={headingId}>{title}</h2>
           {context && <p className="muted">{context}</p>}
         </div>
-        <Button type="button" variant="ghost" aria-label="Close dialog" disabled={busy} onClick={onDismiss}>
-          <X size={20} aria-hidden="true" />
-        </Button>
+        <div className="inline">
+          {minimize && (
+            <Button type="button" variant="ghost" aria-label={minimize.label} title={minimize.label} disabled={busy} onClick={minimize.onClick}>
+              <Minus size={18} aria-hidden="true" />
+            </Button>
+          )}
+          <Button type="button" variant="ghost" aria-label="Close dialog" disabled={busy} onClick={onDismiss}>
+            <X size={20} aria-hidden="true" />
+          </Button>
+        </div>
       </header>
       {children}
     </dialog>

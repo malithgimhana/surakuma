@@ -35,7 +35,6 @@ interface Readiness {
   stock: { belowThreshold: number; outOfStock: number };
   shelters: { openShelters: number; capacity: number; occupancy: number; reserved: number; available: number };
   partnerVerification: PendingWork;
-  systemAccess: PendingWork | null;
 }
 
 interface Alert {
@@ -146,12 +145,6 @@ function queueActions(alerts: Alert[], readiness: Readiness | undefined, country
     id: 'partners', title: `${formatNumber(partners.count)} pending partner verification${partners.count === 1 ? '' : 's'}`,
     description: 'Open country verification records.',
     scope: country, date: partners.oldestAt, category: 'Approval', tone: 'blue', priority: 5, Icon: Building2, to: '/admin?section=organisations',
-  });
-  const approvals = readiness?.systemAccess;
-  if (approvals?.count) actions.push({
-    id: 'approvals', title: `${formatNumber(approvals.count)} pending System Administrator access request${approvals.count === 1 ? '' : 's'}`,
-    description: 'Review requests for platform-wide access.', scope: 'Global', date: approvals.oldestAt,
-    category: 'Approval', tone: 'blue', priority: 4, Icon: Users, to: '/admin?section=users#system-administrator-requests',
   });
   if (readiness && (readiness.stock.belowThreshold || readiness.stock.outOfStock)) actions.push({
     id: 'stock', title: 'Inventory needs review',

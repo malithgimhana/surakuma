@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Field } from './components';
+import { DateInput, Field } from './components';
 import { isMeasuredUnit } from './quantity';
 
 export function DeliveryFields({ quantity, unit, transfer = false }: { quantity: number; unit?: string; transfer?: boolean }) {
@@ -12,7 +12,7 @@ export function DeliveryFields({ quantity, unit, transfer = false }: { quantity:
         onChange={(event) => setConfirmed(event.target.value)} required />
     </Field>
     <Field label="Actual receipt or attempt time" hint="Leave blank to use the current time.">
-      <input name="receivedAt" type="datetime-local" step={1} />
+      <DateInput name="receivedAt" type="datetime-local" step={1} />
     </Field>
     <Field label={Number(confirmed) === 0 ? 'Staff member confirming the exception' : 'Receiving person or representative'}><input name="receivedBy" required maxLength={150} /></Field>
     <Field label="Confirmation method">

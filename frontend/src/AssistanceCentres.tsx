@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { MapPin } from 'lucide-react';
@@ -31,6 +32,7 @@ interface CentreManagement {
 }
 
 export function AssistanceCentres({ workspace = false }: { workspace?: boolean }) {
+  const { t, i18n } = useTranslation();
   const country = useCountry();
   const [service, setService] = useState('');
   const [accessible, setAccessible] = useState(false);
@@ -39,11 +41,11 @@ export function AssistanceCentres({ workspace = false }: { workspace?: boolean }
   const centres = (query.data ?? []).filter(c => (!accessible || c.accessible) &&
     c.services.toLocaleLowerCase().includes(service.trim().toLocaleLowerCase()));
   return <section className={workspace ? 'citizen-page stack' : 'container section stack'}>
-    <PageHeader title="Assistance centres" description="Find approved locations, services and accessibility information." />
+    <PageHeader title={t('assistanceCentres')} description={t('centreDirectoryIntro')} />
     <div className="form-grid">
-      <Field label="Filter by service"><input type="search" value={service} onChange={event => setService(event.target.value)} /></Field>
+      <Field label={t('centreServiceFilter')}><input type="search" value={service} onChange={event => setService(event.target.value)} /></Field>
       <label className="checkbox-label"><input type="checkbox" checked={accessible}
-        onChange={event => setAccessible(event.target.checked)} /> Accessible locations only</label>
+        onChange={event => setAccessible(event.target.checked)} /> {t('centreAccessibleOnly')}</label>
     </div>
     {query.isPending ? <Loading /> : query.error ? <ErrorState error={query.error} retry={() => void query.refetch()} /> :
       centres.length ? <>
@@ -53,15 +55,15 @@ export function AssistanceCentres({ workspace = false }: { workspace?: boolean }
             <h2>{c.name}</h2>
             <p><MapPin size={16} aria-hidden="true" /> {c.address}</p>
             <dl className="review-grid">
-              <dt>Services</dt><dd>{c.services}</dd>
-              {c.facilities && <><dt>Facilities</dt><dd>{c.facilities}</dd></>}
-              {c.openingHours && <><dt>Opening hours</dt><dd>{c.openingHours}</dd></>}
-              <dt>Accessibility</dt><dd>{c.accessible ? 'Accessible facilities available' : 'Accessibility has not been confirmed'}</dd>
-              {c.capacity != null && <><dt>Capacity</dt><dd>{c.capacity.toLocaleString()}</dd></>}
+              <dt>{t('centreServices')}</dt><dd>{c.services}</dd>
+              {c.facilities && <><dt>{t('facilities')}</dt><dd>{c.facilities}</dd></>}
+              {c.openingHours && <><dt>{t('centreHours')}</dt><dd>{c.openingHours}</dd></>}
+              <dt>{t('category.Accessibility')}</dt><dd>{t(c.accessible ? 'centreAccessYes' : 'centreAccessUnknown')}</dd>
+              {c.capacity != null && <><dt>{t('capacity')}</dt><dd>{c.capacity.toLocaleString(i18n.language)}</dd></>}
             </dl>
           </Card>)}
         </div>
-      </> : <Card><p>{query.data?.length ? 'No centres match these filters.' : 'No assistance centres are published for this country.'}</p></Card>}
+      </> : <Card><p>{t(query.data?.length ? 'centreNoMatches' : 'centreNone')}</p></Card>}
   </section>;
 }
 

@@ -1,8 +1,16 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { api, get } from './api';
 import type { Entity } from './types';
 
 export const dashboardRefreshInterval = 30_000;
+
+export function refreshCaseAfterWrite(client: QueryClient, caseId: string, primary = 'staff-case') {
+  // Queues refresh when reopened. Only the current case needs fresh data for the next action.
+  void client.invalidateQueries({ refetchType: 'none' });
+  void client.refetchQueries({ type: 'active', predicate: ({ queryKey }) =>
+    queryKey[0] === 'notifications' || (queryKey.includes(caseId) && queryKey[0] !== primary) });
+  return client.refetchQueries({ queryKey: [primary, caseId], type: 'active' });
+}
 
 export function countryPath(path: string, country: string, filters: Record<string, string> = {}) {
   return `${path}?${new URLSearchParams({ countryCode: country, ...filters })}`;

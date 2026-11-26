@@ -264,6 +264,8 @@ function CountryCrisisDashboard({
           setDraft={setDraft}
           loading={crisesQuery.isPending || countries.isPending}
           failed={!!(crisesQuery.error || countryError)}
+          onSaved={history.showDrafts}
+          historyId={history.headingId}
         />
       </div>
       <div className="crisis-bottom-grid">

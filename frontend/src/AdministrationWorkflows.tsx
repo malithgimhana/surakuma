@@ -1,7 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Ban, Bell, BookOpen, ChartNoAxesCombined, ChevronDown, CircleCheck, CirclePause, CirclePlay, Mail, Trash2, TriangleAlert, UserMinus } from 'lucide-react';
+import { Ban, Bell, BookOpen, ChartNoAxesCombined, ChevronDown, CircleCheck, CirclePause, CirclePlay, Ellipsis, Mail, Trash2, TriangleAlert, UserMinus } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
@@ -9,7 +9,7 @@ import { Link } from 'react-router-dom';
 import { api, errorMessage, get } from './api';
 import { useOptionalAuth } from './auth';
 import { useCountry } from './geography';
-import { Badge, Button, Card, ErrorState, Field, Loading, PageHeader, formatDate } from './components';
+import { Badge, Button, Card, DateInput, ErrorState, Field, Loading, PageHeader, formatDate } from './components';
 import { AdminMetrics, AdminPagination, AdminPanelHeading, AdminScopeField, AdminTimestamp, ResetAdminFilters, startOfAdminDay, useAdminTabScope } from './AdminTabUi';
 import type { Page } from './types';
 
@@ -51,10 +51,12 @@ export function StaffLifecycle({
   user,
   global,
   organisations = [],
+  compact = false,
 }: {
   user: { id: string; name?: string; email?: string; disabled?: boolean; isSystemAdministrator?: boolean; memberships: StaffRoleGrant[] };
   global: boolean;
   organisations?: { id: string; name: string }[];
+  compact?: boolean;
 }) {
   const action = useAction();
   const country = useCountry();
@@ -208,7 +210,7 @@ export function StaffLifecycle({
       <button
         ref={trigger}
         type="button"
-        className="account-actions-trigger"
+        className={`account-actions-trigger${compact ? ' account-actions-compact' : ''}`}
         aria-label={user.name ? `Actions for ${user.name}` : 'Account actions'}
         aria-expanded={open}
         aria-controls={panelId}
@@ -227,7 +229,7 @@ export function StaffLifecycle({
           setOpen(true);
         }}
       >
-        Actions <ChevronDown size={15} aria-hidden="true" />
+        {compact ? <Ellipsis size={18} aria-hidden="true" /> : <>Actions <ChevronDown size={15} aria-hidden="true" /></>}
       </button>
       {open && createPortal(
         <div
@@ -363,98 +365,6 @@ export function PartnerVerification({
       )}
       <Outcome action={action} />
     </div>
-  );
-}
-interface Proposal {
-  id: string;
-  state: string;
-  requesterUserId: string;
-  requesterName?: string;
-  reviewerName?: string;
-  targetName?: string;
-  reason: string;
-  decisionReason: string;
-  createdAt: string;
-  expiresAt: string;
-}
-function ProposalCard({ p, userId }: { p: Proposal; userId?: string }) {
-  const action = useAction(),
-    [reason, setReason] = useState('');
-  return (
-    <Card>
-      <h3>{p.targetName || 'System Administrator access request'}</h3>
-      <p>
-        {p.state} · Requested {formatDate(p.createdAt)}
-      </p>
-      <p>{p.reason}</p>
-      <small>
-        Requester: {p.requesterName || p.requesterUserId} · Expires {formatDate(p.expiresAt)}
-      </small>
-      {p.reviewerName && <p>Reviewed by {p.reviewerName}</p>}
-      {p.decisionReason && <p>{p.decisionReason}</p>}
-      {p.state === 'Pending' && (
-        <>
-          <Field label="Decision reason">
-            <input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={2000} />
-          </Field>
-          {(p.requesterUserId === userId ? ['Cancel'] : ['Approve', 'Reject']).map(
-            (label) => (
-              <Button
-                key={label}
-                type="button"
-                disabled={!reason || action.isPending}
-                onClick={() =>
-                  action.mutate({
-                    path: `/admin/approvals/${p.id}/decision`,
-                    data: { action: label, reason },
-                  })
-                }
-              >
-                {label}
-              </Button>
-            ),
-          )}
-        </>
-      )}
-      <Outcome action={action} />
-    </Card>
-  );
-}
-export function SystemAdministratorRequests() {
-  const auth = useOptionalAuth();
-  const q = useQuery({
-    queryKey: ['approvals'],
-    queryFn: () =>
-      get<{ items: Proposal[]; activeGlobalAdministrators: number }>('/admin/approvals?countryCode='),
-  });
-  return (
-    <section className="stack" aria-labelledby="system-administrator-requests">
-      <h2 id="system-administrator-requests">System Administrator access requests</h2>
-      <p className="muted">A different System Administrator must approve grants of access across all countries.</p>
-      {q.isPending ? (
-        <Loading />
-      ) : q.error ? (
-        <ErrorState error={q.error} />
-      ) : (
-        <>
-          {(q.data?.activeGlobalAdministrators ?? 2) < 2 && (
-            <Card>
-              <p>
-                A second active System Administrator is required to review these requests.
-              </p>
-            </Card>
-          )}
-          {!q.data?.items?.length && <Card>No access requests yet.</Card>}
-          {q.data?.items?.map((p) => (
-            <ProposalCard
-              key={p.id}
-              p={p}
-              userId={auth?.user?.id}
-            />
-          ))}
-        </>
-      )}
-    </section>
   );
 }
 interface Alert {
@@ -695,7 +605,6 @@ export function DeliveryRecovery({ countryCode, focusId }: { countryCode?: strin
   const operationalCountry = useCountry();
   const country = countryCode ?? operationalCountry;
   const dateGroupId = useId();
-  const lastSupportedDate = '9999-12-31';
   const startError = startDate.length > 10 ? 'Enter a year with four digits.' : undefined;
   let endError: string | undefined;
   if (endDate.length > 10) endError = 'Enter a year with four digits.';
@@ -781,19 +690,18 @@ export function DeliveryRecovery({ countryCode, focusId }: { countryCode?: strin
             </div>
             <div className="delivery-date-inputs">
               <Field label="Start date" error={startError}>
-                <input
+                <DateInput
                   type="date"
                   value={startDate}
-                  max={endDate.length === 10 ? endDate : lastSupportedDate}
+                  max={endDate.length === 10 ? endDate : undefined}
                   onChange={(e) => setFilters({ ...filters, startDate: e.target.value })}
                 />
               </Field>
               <Field label="End date" error={endError}>
-                <input
+                <DateInput
                   type="date"
                   value={endDate}
                   min={startDate.length === 10 ? startDate : undefined}
-                  max={lastSupportedDate}
                   onChange={(e) => setFilters({ ...filters, endDate: e.target.value })}
                 />
               </Field>

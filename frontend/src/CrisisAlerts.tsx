@@ -3,7 +3,7 @@ import type { FormEvent } from 'react';
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
 import { ArrowRight, FileText, Info, Megaphone } from 'lucide-react';
 import { api, errorMessage, get } from './api';
-import { Badge, Button, Card, ErrorState, Field, Loading } from './components';
+import { Badge, Button, Card, DateInput, ErrorState, Field, Loading } from './components';
 import { WorkspaceDialog } from './OrganisationDialog';
 import {
   countryPath,
@@ -13,6 +13,7 @@ import {
 } from './crisisOperationsApi';
 import type { Country } from './geography';
 import type { Alert, Crisis } from './types';
+import './crisis-operations.css';
 
 const severities = ['Information', 'Advisory', 'Warning', 'Critical'];
 const statuses = ['All', 'Draft', 'PendingReview', 'Approved', 'Returned', 'Published', 'EmergencyPublished', 'EmergencyReview', 'Expired', 'Withdrawn'] as const;
@@ -68,6 +69,8 @@ export function CrisisAlertComposer({
   failed,
   editingId,
   onSaved,
+  historyId,
+  compact = false,
 }: {
   country: string;
   policy?: Country;
@@ -78,6 +81,8 @@ export function CrisisAlertComposer({
   failed: boolean;
   editingId?: string;
   onSaved?: () => void;
+  historyId?: string;
+  compact?: boolean;
 }) {
   const selected = draft.crisisId
     ? crises.find((crisis) => crisis.id === draft.crisisId)
@@ -92,8 +97,10 @@ export function CrisisAlertComposer({
   const [preview, setPreview] = useState<AlertPreview>();
   const [reviewed, setReviewed] = useState(false);
   const [validation, setValidation] = useState('');
-  const [published, setPublished] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [allowTranslation, setAllowTranslation] = useState(false);
+  const [language, setLanguage] = useState('en');
+  const [previewLanguage, setPreviewLanguage] = useState('en');
   const translation = useMutation({
     mutationFn: async ({ code, source }: { code: string; source: Translation }) => (await api.post<
       { state: string; source?: string; title?: string; message?: string }
@@ -108,11 +115,14 @@ export function CrisisAlertComposer({
       )
     : [];
   const disabled = !policy || !crises.length || loading || failed;
+  const languages = [...new Set(['en', ...required, ...optional])];
+  const editingLanguage = languages.includes(language) ? language : languages[0];
+  const publicLanguage = languages.includes(previewLanguage) ? previewLanguage : languages[0];
 
   function setField<K extends keyof AlertDraft>(key: K, value: AlertDraft[K]) {
     setDraft({ ...draft, crisisId: selected?.id ?? draft.crisisId, [key]: value });
     setValidation('');
-    setPublished(false);
+    setSaved(false);
   }
 
   function prepare(event: FormEvent<HTMLFormElement>) {
@@ -182,7 +192,7 @@ export function CrisisAlertComposer({
         onSuccess: () => {
           setPreview(undefined);
           setDraft(emptyAlertDraft);
-          setPublished(true);
+          setSaved(true);
           onSaved?.();
         },
       },
@@ -226,15 +236,22 @@ export function CrisisAlertComposer({
   }
 
   return (
-    <Card className="crisis-composer">
+    <Card className={`crisis-composer${compact ? ' coord-composer' : ''}`}>
       <h2 className="crisis-panel-heading">
         <Megaphone aria-hidden="true" />
         {editingId ? 'Edit public alert draft' : 'Public alert composer'}
       </h2>
-      {published && (
-        <p className="success-text" role="status">
-          Draft saved. Open the alert history to submit it for review.
-        </p>
+      {saved && (
+        <div>
+          <p className="success-text" role="status">
+            Draft saved. Open it from alert history to submit it for review.
+          </p>
+          {historyId && (
+            <a className="crisis-panel-link" href={`#${historyId}`} onClick={onSaved}>
+              View saved drafts
+            </a>
+          )}
+        </div>
       )}
       {disabled && (
         <p className="muted" role="status">
@@ -245,6 +262,7 @@ export function CrisisAlertComposer({
               : 'Create or reopen a crisis to prepare an alert.'}
         </p>
       )}
+      <div className={compact ? 'coord-composer-grid' : undefined}>
       <form className="crisis-composer-form" onSubmit={prepare}>
         <div className="crisis-form-pair">
           <Field label="Crisis">
@@ -255,7 +273,7 @@ export function CrisisAlertComposer({
               onChange={(event) => {
                 setDraft({ ...draft, crisisId: event.target.value, area: '' });
                 setValidation('');
-                setPublished(false);
+                setSaved(false);
               }}
             >
               {!selected && <option value="">Select an active crisis</option>}
@@ -305,7 +323,13 @@ export function CrisisAlertComposer({
             />
           </Field>
         </div>
-        {(required.length ? required : ['en']).map((code) => translationFields(code, true))}
+        {compact ? <>
+          <div className="coord-tabs" role="group" aria-label="Alert language">
+            {languages.map(code => <button key={code} type="button" aria-pressed={code === editingLanguage}
+              onClick={() => { setLanguage(code); setPreviewLanguage(code); }}>{languageNames.of(code)}</button>)}
+          </div>
+          {translationFields(editingLanguage, required.includes(editingLanguage) || editingLanguage === 'en')}
+        </> : (required.length ? required : ['en']).map((code) => translationFields(code, true))}
         {!disabled && [...required, ...optional].some(code => code !== 'en') && <details>
           <summary>Draft a translation</summary>
           <label><input type="checkbox" checked={allowTranslation} onChange={event => setAllowTranslation(event.target.checked)} />
@@ -328,7 +352,7 @@ export function CrisisAlertComposer({
             }}>Copy draft into wording</Button>
           </div>}
         </details>}
-        {optional.length > 0 && (
+        {!compact && optional.length > 0 && (
           <details className="crisis-optional-translations">
             <summary>
               Optional translations ({optional.map((code) => languageNames.of(code)).join(', ')})
@@ -338,7 +362,7 @@ export function CrisisAlertComposer({
         )}
         <div className="crisis-form-pair crisis-expiry">
           <Field label="Expires at">
-            <input
+            <DateInput
               type="datetime-local"
               required
               disabled={disabled}
@@ -359,6 +383,22 @@ export function CrisisAlertComposer({
         )}
         <Button disabled={disabled || !selected}>Preview alert draft</Button>
       </form>
+      {compact && <aside className="coord-alert-preview" aria-label="Public alert preview">
+        <h3>Public alert preview</h3>
+        <div className="coord-tabs" role="group" aria-label="Preview language">
+          {languages.map(code => <button key={code} type="button" aria-pressed={code === publicLanguage}
+            onClick={() => setPreviewLanguage(code)}>{languageNames.of(code)}</button>)}
+        </div>
+        <Badge value={draft.severity} />
+        <h4 lang={publicLanguage}>{draft.translations[publicLanguage]?.title || 'Alert title'}</h4>
+        <p lang={publicLanguage}>{draft.translations[publicLanguage]?.message || 'Safety instructions appear here as you enter them.'}</p>
+        <dl className="coord-facts">
+          <div><dt>Affected area</dt><dd>{draft.area || '—'}</dd></div>
+          <div><dt>Issuing authority</dt><dd>{draft.authority || '—'}</dd></div>
+          <div><dt>Expiry</dt><dd>{draft.expiresAt ? alertDate(draft.expiresAt) : '—'}</dd></div>
+        </dl>
+      </aside>}
+      </div>
       {preview && (
         <WorkspaceDialog
           title="Preview public alert"
@@ -405,6 +445,7 @@ interface AlertHistoryRow {
   isAuthor?: boolean;
   canReview?: boolean;
   needsEmergencyReview?: boolean;
+  hasImageCandidate?: boolean;
 }
 interface AlertHistoryPage {
   publishedCount: number;
@@ -417,7 +458,8 @@ const initialFilters = { search: '', severity: '', status: 'All', crisisId: '' }
 const recentFilters = { ...initialFilters, status: 'Published' };
 
 export function useCrisisAlertHistory(country: string, staff = false) {
-  const [expanded, setExpanded] = useState(false);
+  const headingId = useId();
+  const [expanded, setExpanded] = useState(!staff);
   const [filters, setFilters] = useState(initialFilters);
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
@@ -441,6 +483,7 @@ export function useCrisisAlertHistory(country: string, staff = false) {
     refetchInterval: dashboardRefreshInterval,
   });
   return {
+    headingId,
     query,
     filters,
     expanded,
@@ -449,6 +492,12 @@ export function useCrisisAlertHistory(country: string, staff = false) {
     searching: expanded && search !== filters.search.trim(),
     updateFilter: (name: keyof typeof filters, value: string) => {
       setFilters({ ...filters, [name]: value });
+      setPage(1);
+    },
+    showDrafts: () => {
+      setExpanded(true);
+      setFilters({ ...initialFilters, status: 'Draft' });
+      setSearch('');
       setPage(1);
     },
     showReview: () => {
@@ -524,22 +573,54 @@ function AlertContent({
   );
 }
 
+function AlertImageReview({ country, alert, onApproved }: { country: string; alert: Alert; onApproved: () => void }) {
+  const path = `/alerts/${alert.id}/image-review`;
+  const draft = useQuery({
+    queryKey: ['alert-image-review', country, alert.id],
+    queryFn: async () => (await api.get<Blob>(countryPath(path, country), { responseType: 'blob' })).data,
+  });
+  const [preview, setPreview] = useState<string>();
+  const [reviewed, setReviewed] = useState(false);
+  const write = useCrisisOperationsWrite(country);
+  useEffect(() => {
+    if (!draft.data) return;
+    const url = URL.createObjectURL(draft.data);
+    setPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [draft.data]);
+  return <section className="stack">
+    <h3>Review alert illustration</h3>
+    {draft.isPending ? <Loading /> : draft.error ? <ErrorState error={draft.error} retry={() => void draft.refetch()} /> :
+      preview && <>
+        <img className="crisis-reviewed-image" src={preview} alt="Generated illustration awaiting review" />
+        <label className="checkbox-label"><input type="checkbox" checked={reviewed}
+          onChange={event => setReviewed(event.target.checked)} /> I verified this illustration is appropriate for public release.</label>
+        <Button variant="secondary" disabled={!reviewed} busy={write.isPending} onClick={() =>
+          write.mutate({ path, method: 'put', data: { imageReviewed: true } }, { onSuccess: onApproved })}>Publish reviewed illustration</Button>
+        {write.error && <ErrorState error={write.error} />}
+      </>}
+  </section>;
+}
+
 export function CrisisPublishedAlerts({
   country,
   crises,
   history,
   policy,
+  compact = false,
 }: {
   country: string;
   crises: Crisis[];
   history: ReturnType<typeof useCrisisAlertHistory>;
   policy?: Country;
+  compact?: boolean;
 }) {
-  const { query, expanded, filters, pageSize, updateFilter, setPage, toggleExpanded, searching, showReview } =
+  const { headingId, query, expanded, filters, pageSize, updateFilter, setPage, toggleExpanded, searching, showReview } =
     history;
   const [detail, setDetail] = useState<AlertHistoryRow>();
   const [action, setAction] = useState('');
   const [reason, setReason] = useState('');
+  const [emergencyReviewed, setEmergencyReviewed] = useState(false);
   const [editingId, setEditingId] = useState<string>();
   const [draft, setDraft] = useState(emptyAlertDraft);
   const write = useCrisisOperationsWrite(country);
@@ -567,13 +648,13 @@ export function CrisisPublishedAlerts({
   if (editingId) return <div className="stack">
     <Button variant="secondary" onClick={() => setEditingId(undefined)}>Back to alert history</Button>
     <CrisisAlertComposer country={country} policy={policy} crises={crises} draft={draft} setDraft={setDraft}
-      editingId={editingId} onSaved={() => setEditingId(undefined)} loading={false} failed={false} />
+      editingId={editingId} onSaved={() => setEditingId(undefined)} loading={false} failed={false} compact={compact} />
   </div>;
 
   return (
     <Card className="crisis-alert-history">
       <div className="crisis-panel-bar">
-        <h2 className="crisis-panel-heading">
+        <h2 className="crisis-panel-heading" id={headingId} tabIndex={-1}>
           <FileText aria-hidden="true" />
           {expanded ? 'Public alert history' : 'Published alerts'}
         </h2>
@@ -584,7 +665,7 @@ export function CrisisPublishedAlerts({
           onClick={toggleExpanded}
           aria-expanded={expanded}
         >
-          {expanded ? 'Show recent alerts' : 'View all alerts'}{' '}
+          {expanded ? 'Show published alerts' : 'View all alerts'}{' '}
           <ArrowRight size={15} aria-hidden="true" />
         </button>
       </div>
@@ -658,6 +739,7 @@ export function CrisisPublishedAlerts({
                 <th scope="col">Languages</th>
                 <th scope="col">Status</th>
                 <th scope="col">Published at</th>
+                {compact && <th scope="col">Expires at</th>}
                 <th scope="col">Actions</th>
               </tr>
             </thead>
@@ -685,6 +767,7 @@ export function CrisisPublishedAlerts({
                     <td>
                       {alert.publishedAt ? <time dateTime={alert.publishedAt}>{alertDate(alert.publishedAt)}</time> : '—'}
                     </td>
+                    {compact && <td><time dateTime={alert.expiresAt}>{alertDate(alert.expiresAt)}</time></td>}
                     <td>
                       <button
                         className="crisis-panel-link"
@@ -694,6 +777,7 @@ export function CrisisPublishedAlerts({
                           setDetail(row);
                           setAction('');
                           setReason('');
+                          setEmergencyReviewed(false);
                           write.reset();
                         }}
                       >
@@ -744,6 +828,9 @@ export function CrisisPublishedAlerts({
         >
           <p className="muted">{statusLabel(detail.status)}</p>
           <AlertContent alert={detail.alert} translations={savedTranslations(detail.alert)} />
+          {detail.hasImageCandidate && (detail.isAuthor || results?.reviewer) && !detail.alert.visualImageUrl &&
+            <AlertImageReview country={country} alert={detail.alert} onApproved={() => setDetail(undefined)} />}
+          {detail.alert.visualImageUrl && <img className="crisis-reviewed-image" src={detail.alert.visualImageUrl} alt="Reviewed public alert illustration" />}
           <details>
             <summary>Review and publication history</summary>
             {activity.isPending && <Loading />}
@@ -754,9 +841,14 @@ export function CrisisPublishedAlerts({
               </li>
             ))}</ol>}
           </details>
-          {action && <Field label="Reason">
+          {action && action !== 'publish' && <Field label="Reason">
             <textarea value={reason} onChange={(event) => setReason(event.target.value)} maxLength={1000} />
           </Field>}
+          {['emergency-publish', 'publish'].includes(action) && <label className="checkbox-label">
+            <input type="checkbox" checked={emergencyReviewed} onChange={event => setEmergencyReviewed(event.target.checked)} />
+            {action === 'publish' ? 'I verified the public wording and every translation shown.' :
+              'I verified the emergency wording and every translation shown.'}
+          </label>}
           {write.error && <p className="field-error" role="alert">{errorMessage(write.error)}</p>}
           <div className="organisation-dialog-actions">
             {detail.isAuthor && policy && ['Draft', 'Returned'].includes(detail.status) && !action &&
@@ -772,19 +864,21 @@ export function CrisisPublishedAlerts({
               }}>Edit draft</Button>}
             {actions.filter((entry) => !action || action === entry.value).map((entry) =>
               <Button key={entry.value} busy={write.isPending}
-                disabled={action === entry.value && reason.trim().length < 5}
+                disabled={action === entry.value && (entry.reason && reason.trim().length < 5 ||
+                  ['emergency-publish', 'publish'].includes(entry.value) && !emergencyReviewed)}
                 variant={entry.value === 'unpublish' || entry.value === 'emergency-publish' ? 'danger' : 'secondary'}
                 onClick={() => {
-                  if (entry.reason && action !== entry.value) {
+                  if ((entry.reason || compact && entry.value === 'publish' && detail.alert.severity === 'Critical') && action !== entry.value) {
                     setAction(entry.value);
                     return;
                   }
-                  write.mutate({ path: `/alerts/${detail.alert.id}/${entry.value}`, data: { reason } },
+                  write.mutate({ path: `/alerts/${detail.alert.id}/${entry.value}`, data: { reason,
+                    ...(['emergency-publish', 'publish'].includes(entry.value) ? { translationsReviewed: emergencyReviewed } : {}) } },
                     { onSuccess: () => setDetail(undefined) });
-                }}>{entry.label}</Button>,
+                }}>{entry.value === 'publish' && action === 'publish' ? 'Confirm publication' : entry.label}</Button>,
             )}
             <Button variant="secondary" disabled={write.isPending} onClick={() => {
-              if (action) { setAction(''); setReason(''); }
+              if (action) { setAction(''); setReason(''); setEmergencyReviewed(false); }
               else setDetail(undefined);
             }}>{action ? 'Cancel action' : 'Close'}</Button>
           </div>
