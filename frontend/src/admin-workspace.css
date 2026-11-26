@@ -29,12 +29,12 @@
 .admin-workspace .workspace-top { background: var(--admin-surface); border-color: var(--admin-border); }
 .admin-workspace .sidebar { padding-top: 16px; }
 .admin-workspace .sidebar-caption { color: var(--admin-muted); margin-block: 23px 12px; }
-.admin-workspace .sidebar nav { gap: 3px; }
-.admin-workspace .sidebar nav a { color: var(--admin-ink); min-height: 39px; padding-block: 8px; }
+.admin-workspace .sidebar nav { gap: 3px; min-height: 0; overflow-y: auto; }
+.admin-workspace .sidebar nav a { color: var(--admin-ink); min-height: 39px; padding-block: 8px; flex-shrink: 0; }
 .admin-workspace .sidebar nav a svg { width: 17px; height: 17px; }
 .admin-workspace .sidebar nav a:hover,
 .admin-workspace .sidebar nav a.active { background: var(--admin-selected); color: var(--admin-link); }
-.admin-workspace .sidebar-bottom { padding-top: 20px; }
+.admin-workspace .sidebar-bottom { padding-top: 20px; flex-shrink: 0; }
 .admin-workspace .care-note { background: var(--admin-green-bg); color: var(--admin-green); padding: 14px 10px; }
 .admin-workspace .logout { color: var(--admin-red); }
 .admin-workspace .workspace-top { min-height: 57px; padding-block: 6px; }

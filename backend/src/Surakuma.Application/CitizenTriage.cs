@@ -1,4 +1,4 @@
-4using Surakuma.Domain;
+using Surakuma.Domain;
 
 namespace Surakuma.Application;
 

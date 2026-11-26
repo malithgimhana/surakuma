@@ -297,7 +297,7 @@
   flex-wrap: wrap;
   gap: 4px;
 }
-.admin-tab-switch button {
+.admin-tab .admin-tab-switch :is(button, a) {
   color: var(--admin-ink);
   border: 1px solid var(--admin-border);
   background: var(--admin-raised);
@@ -311,10 +311,18 @@
   font-size: 0.85rem;
   font-weight: 700;
 }
-.admin-tab-switch button[aria-pressed='true'] {
+.admin-tab .admin-tab-switch :is([aria-pressed='true'], [aria-current='page']) {
   color: var(--admin-link);
   background: var(--admin-selected);
 }
+.admin-tab-switch a svg { flex: none; }
+.funding-officer-tabs { flex-wrap: wrap; }
+.admin-tab .funding-admin-navigation { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 16px; padding-block: 12px; }
+.funding-country { display: inline-flex; align-items: center; gap: 6px; margin-inline-start: auto; }
+.funding-admin .funding-activity > .button { margin-top: 14px; }
+.funding-admin .card > h2 + :is(form, p, .field, dl) { margin-top: 10px; }
+.funding-admin .card > .field + p { margin-top: 8px; }
+.funding-admin .card > p + form { margin-top: 12px; }
 .admin-tab-activity-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 0.68fr) minmax(0, 1.05fr);

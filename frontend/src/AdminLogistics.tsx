@@ -12,10 +12,13 @@ import { get } from './api';
 import { Button, Card, categories, ErrorState, Field, formatDate, Loading } from './components';
 import { useCountry } from './geography';
 import {
-  actionLabels, inventoryStatus, isLow, resourceCode, shipmentCode, shipmentStatus,
+  actionLabels, caseStockForCrisis, groupDispatches, hasStockAlert, inventoryStatus, isDeliveryException, isLow, isOut, legacyLogisticsReference, legacyShipmentCode,
+  resourceCode, shipmentCode, shipmentGroupStatus, shipmentStatus, stockGap, visibleInventory,
 } from './logistics';
 import type { InventoryItem, LogisticsData, LogisticsDialogState, Shipment, ShipmentAction } from './logistics';
-import { LogisticsDialogs } from './LogisticsDialogs';
+import { LogisticsDialogs, ReleaseReservationButton } from './LogisticsDialogs';
+import DepotAssignments from './DepotAssignments';
+import { casesHref, sameOperationsDay, useLogisticsData } from './LogisticsUi';
 import './admin-logistics.css';
 
 const tabs = [
@@ -57,19 +60,25 @@ function recentTime(iso: string, locale: string | undefined) {
 export default function AdminLogistics({ specialist = false }: { specialist?: boolean }) {
   const country = useCountry();
   const [params] = useSearchParams();
-  const query = useQuery({ queryKey: ['admin-logistics', specialist && country],
-    queryFn: () => get<LogisticsData>(specialist ? `/logistics?countryCode=${encodeURIComponent(country)}&specialist=true` : '/logistics?countryCode=') });
-  if (query.isPending || query.isError) return <>
+  const scoped = useLogisticsData(specialist);
+  const admin = useQuery({ queryKey: ['admin-logistics'], enabled: !specialist, queryFn: () => get<LogisticsData>('/logistics?countryCode=') });
+  const query = specialist ? scoped : admin;
+  if (!query.data && (query.isPending || query.isError)) return <>
     <h1>Resources &amp; Logistics</h1>
     {query.isError ? <ErrorState error={query.error} retry={() => query.refetch()} /> : <Loading />}
   </>;
   if (!Array.isArray(query.data?.inventory)) return <ErrorState error={new Error('The logistics dashboard requires the updated API.')} retry={() => query.refetch()} />;
   const startTab = tabs.find(t => t.key === params.get('tab'))?.key ?? 'inventory';
   const startStatus = params.get('status') ?? '';
-  return <LogisticsWorkspace key={`${startTab}-${startStatus}`} data={query.data} specialist={specialist} startTab={startTab} startStatus={startStatus} />;
+  const record = params.get('record') ?? '';
+  const today = params.get('date') === 'today';
+  return <LogisticsWorkspace key={`${country}-${startTab}-${startStatus}-${record}-${today}`} data={query.data}
+    specialist={specialist} startTab={startTab} startStatus={startStatus} record={record} today={today} />;
 }
 
-function LogisticsWorkspace({ data, specialist, startTab, startStatus }: { data: LogisticsData; specialist: boolean; startTab: Tab; startStatus: string }) {
+function LogisticsWorkspace({ data, specialist, startTab, startStatus, record, today }: {
+  data: LogisticsData; specialist: boolean; startTab: Tab; startStatus: string; record: string; today: boolean;
+}) {
   const workspace = useCountry();
   const { t, i18n } = useTranslation();
   const number = new Intl.NumberFormat(i18n.resolvedLanguage, { maximumFractionDigits: 2 });
@@ -79,28 +88,33 @@ function LogisticsWorkspace({ data, specialist, startTab, startStatus }: { data:
   const [category, setCategory] = useState('');
   const [status, setStatus] = useState(startStatus);
   const [search, setSearch] = useState('');
+  const [recordFilter, setRecordFilter] = useState(record);
+  const [todayOnly, setTodayOnly] = useState(today);
   const [tab, setTab] = useState<Tab>(startTab);
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState<{ key: SortKey; descending: boolean }>({ key: 'name', descending: false });
   const [dialog, setDialog] = useState<LogisticsDialogState | null>(null);
   const [notice, setNotice] = useState('');
   const countries = new Map(data.countries.map(row => [row.code, row.name]));
-  const depots = new Map(data.depots.map(row => [row.id, row]));
-  const items = new Map(data.inventory.map(row => [row.id, row]));
+  const visibleDepots = data.resourceRegistration?.depots ?? data.depots;
+  const depots = new Map(visibleDepots.map(row => [row.id, row]));
+  const visibleStock = visibleInventory(data);
+  const items = new Map(visibleStock.map(row => [row.id, row]));
   const receipts = new Map(data.receipts?.map((receipt) => [receipt.allocationId ?? receipt.logisticsOrderId, receipt]));
   const countryLabel = (code: string) => countries.get(code) ?? code;
   const depotLabel = (item: InventoryItem) => depots.get(item.depotId ?? '')?.name || item.locationText || 'Unspecified location';
-  const selected = country.workspace === workspace ? country.code : workspace;
+  const selected = specialist ? workspace : country.workspace === workspace ? country.code : workspace;
   const activeCountry = !selected || countries.has(selected) ? selected : data.countries[0]?.code ?? '';
   const defaultCountry = activeCountry || (countries.has(workspace) ? workspace : data.countries[0]?.code ?? '');
-  const availableDepots = data.depots.filter(row => !activeCountry || row.countryCode === activeCountry);
+  const availableDepots = visibleDepots.filter(row => !activeCountry || row.countryCode === activeCountry);
   const visibleCrises = data.crises.filter(row => !activeCountry || row.countryCode === activeCountry);
   const selectedDepot = availableDepots.some(row => row.id === depot) || depot === 'legacy' ? depot : '';
   const selectedCrisis = visibleCrises.some(row => row.id === crisis) ? crisis : '';
-  const legacyLocations = data.inventory.some(row => !row.depotId && (!activeCountry || row.countryCode === activeCountry));
+  const legacyLocations = visibleStock.some(row => !row.depotId && (!activeCountry || row.countryCode === activeCountry));
   const term = search.trim().toLowerCase();
   const categoryLabel = (value: InventoryItem['category']) => t(`category.${value}`, { defaultValue: value });
-  const resourceTextMatches = (row: InventoryItem) => [row.name, resourceCode(row), row.unit, categoryLabel(row.category), countryLabel(row.countryCode), depotLabel(row)]
+  const resourceTextMatches = (row: InventoryItem) => [row.name, resourceCode(row), legacyLogisticsReference('RES', row.id),
+    row.unit, categoryLabel(row.category), countryLabel(row.countryCode), depotLabel(row)]
     .some(value => value.toLowerCase().includes(term));
   const resourceScope = (row: InventoryItem) => (!activeCountry || row.countryCode === activeCountry)
     && (!selectedDepot || (selectedDepot === 'legacy' ? !row.depotId : row.depotId === selectedDepot))
@@ -110,43 +124,62 @@ function LogisticsWorkspace({ data, specialist, startTab, startStatus }: { data:
     const participants = [items.get(order.resourceId), items.get(order.destinationResourceId ?? '')];
     return participants.some(item => item && resourceScope(item))
       && (!term || participants.some(item => item && resourceTextMatches(item))
-        || [shipmentCode(order), order.origin, order.destination].some(value => value.toLowerCase().includes(term)));
+        || [shipmentCode(order), legacyShipmentCode(order), order.origin, order.destination].some(value => value.toLowerCase().includes(term)));
   });
   const linkedItems = new Set(ordersInScope.flatMap(order => [order.resourceId, order.destinationResourceId]));
-  const inventory = data.inventory.filter(item => resourceScope(item) && resourceTextMatches(item)
-    && (!selectedCrisis || linkedItems.has(item.id)) && (tab !== 'inventory' || !status || inventoryStatus(item) === status));
-  const inventoryIds = new Set(inventory.map(item => item.id));
-  const filteredOrders = ordersInScope.filter(order => tab === 'inventory'
-    ? !status || inventoryIds.has(order.resourceId) || inventoryIds.has(order.destinationResourceId ?? '')
-    : !status || order.status === status ||
-      status === 'Exception' && !!receipts.get(order.id)?.exceptionDetail ||
+  const crisisStock = new Set(caseStockForCrisis(data, selectedCrisis).map(item => item.id));
+  const scopedInventory = visibleStock.filter(item => resourceScope(item) && resourceTextMatches(item)
+    && (!selectedCrisis || linkedItems.has(item.id) || crisisStock.has(item.id)));
+  const inventory = scopedInventory.filter(item => tab !== 'inventory' ||
+    (!recordFilter || item.id === recordFilter) && (!status ||
+      (status === 'Stock alerts' ? hasStockAlert(item) : inventoryStatus(item) === status)));
+  const activeDispatchIds = new Set(data.orders.filter(order => order.kind === 'Dispatch' &&
+    (order.status === 'Reserved' || order.status === 'Dispatched')).map(order => order.caseDispatchId ?? order.id));
+  const isActiveDispatch = (order: Shipment) => activeDispatchIds.has(order.caseDispatchId ?? order.id);
+  const currentDispatchView = specialist && tab === 'dispatches' && !recordFilter && !todayOnly;
+  const filteredOrders = ordersInScope.filter(order => tab === 'inventory' ||
+    (!recordFilter || order.id === recordFilter || order.caseDispatchId === recordFilter) && (!todayOnly || sameOperationsDay(order.dispatchedAt, activeCountry)) &&
+    (status === 'All' || (!status && (recordFilter || order.status !== 'Cancelled' && (!currentDispatchView || isActiveDispatch(order)))) ||
+      order.status === status && (status !== 'Dispatched' || !order.centreReceivedAt) ||
+      status === 'Exception' && isDeliveryException(order, receipts.get(order.id)) ||
+      status === 'Ready' && order.status === 'Reserved' && !!order.packedAt ||
       status === 'PendingDispatch' && !order.requestId && order.kind === 'Dispatch' && order.status === 'Reserved' ||
-      status === 'InTransit' && !order.requestId && order.status === 'Dispatched');
+      status === 'InTransit' && !order.requestId && order.status === 'Dispatched' ||
+      status === 'Centre' && order.status === 'Dispatched' && !!order.centreReceivedAt));
   const dispatches = filteredOrders.filter(row => row.kind === 'Dispatch');
   const transfers = filteredOrders.filter(row => row.kind === 'Transfer');
-  const active = dispatches.filter(row => row.status === 'Reserved' || row.status === 'Dispatched');
-  const low = inventory.filter(isLow).sort((a, b) => a.available - (a.lowStockThreshold ?? 0) - (b.available - (b.lowStockThreshold ?? 0)));
+  const reservations = filteredOrders.filter(row => row.status === 'Reserved');
+  const scopedDispatches = ordersInScope.filter(row => row.kind === 'Dispatch' && row.status !== 'Cancelled');
+  const activeDispatches = scopedDispatches.filter(isActiveDispatch);
+  const defaultDispatches = specialist ? activeDispatches : scopedDispatches;
+  const recentDispatches = groupDispatches(tab === 'dispatches' ? dispatches : defaultDispatches);
+  const canMoveStock = data.inventory.some(item => item.available > 0 && item.canShip !== false);
+  const caseOnlyStock = specialist && !!data.caseInventory?.some(item => item.countryCode === defaultCountry);
+  const active = groupDispatches(activeDispatches);
+  const exceptions = scopedDispatches.filter(row => isDeliveryException(row, receipts.get(row.id)));
+  const low = scopedInventory.filter(isLow);
+  const out = scopedInventory.filter(isOut);
+  const stockAlerts = [...out, ...low];
   const sorted = [...inventory].sort((a, b) => {
     const comparison = sort.key === 'name' ? a.name.localeCompare(b.name) : a[sort.key] - b[sort.key];
     return (sort.descending ? -comparison : comparison) || a.id.localeCompare(b.id);
   });
-  const orders = tab === 'transfers' ? transfers : tab === 'reservations' && specialist
-    ? dispatches.filter(o => o.requestId) : status === 'Exception' || status === 'InTransit' ? filteredOrders : dispatches;
+  const orders = groupDispatches(tab === 'transfers' ? transfers : tab === 'reservations' ? reservations : dispatches);
   const count = tab === 'inventory' ? inventory.length : orders.length;
   const lastPage = Math.max(1, Math.ceil(count / pageSize));
   const shown = Math.min(page, lastPage);
   const start = (shown - 1) * pageSize;
-  const chooseTab = (key: Tab) => { setTab(key); setStatus(''); setPage(1); };
+  const chooseTab = (key: Tab) => { setTab(key); setStatus(''); setRecordFilter(''); setTodayOnly(false); setPage(1); };
   const filter = (apply: (value: string) => void) => (value: string) => { apply(value); setPage(1); };
   const open = (state: LogisticsDialogState) => { setNotice(''); setDialog(state); };
   const summaryStock = (key: 'available' | 'reserved') => {
     const units = new Map<string, number>();
-    const stocked = inventory.filter(item => item[key] > 0);
-    for (const item of inventory) {
+    const stocked = scopedInventory.filter(item => item[key] > 0);
+    for (const item of scopedInventory) {
       const unit = item.unit.trim().toLowerCase();
       units.set(unit, (units.get(unit) ?? 0) + item[key]);
     }
-    if (units.size === 1) {
+    if (!specialist && units.size === 1) {
       const [unit, quantity] = [...units][0];
       return { value: quantity, caption: unit, detail: undefined };
     }
@@ -154,17 +187,23 @@ function LogisticsWorkspace({ data, specialist, startTab, startStatus }: { data:
       detail: [...units].map(([unit, quantity]) => `${number.format(quantity)} ${unit}`).join(' · ') };
   };
   const totals = {
-    inventory: inventory.length, dispatches: dispatches.length, transfers: transfers.length, reservations: dispatches.length,
+    inventory: tab === 'inventory' ? inventory.length : scopedInventory.length,
+    dispatches: tab === 'dispatches' ? orders.length : groupDispatches(defaultDispatches).length,
+    transfers: tab === 'transfers' ? transfers.length : ordersInScope.filter(row => row.kind === 'Transfer' && row.status !== 'Cancelled').length,
+    reservations: tab === 'reservations' ? reservations.length : ordersInScope.filter(row => row.status === 'Reserved').length,
   };
-  const statusOptions = tab === 'inventory' ? inventoryStatuses.map(value => [value, value])
-    : [...Object.keys(shipmentStatus).map(value => [value, labelFor(tab, value as Shipment['status'])]),
-      ...(tab === 'dispatches' ? [['Exception', 'Delivery exceptions'], ['PendingDispatch', 'Dispatch queue'], ['InTransit', 'Non-case shipments in transit']] : [])];
+  const statusOptions = tab === 'inventory' ? [...inventoryStatuses, 'Stock alerts'].map(value => [value, value])
+    : tab === 'reservations' ? [['Reserved', 'Reserved']]
+    : [['All', 'All statuses'], ...Object.keys(shipmentStatus).map(value => [value, labelFor(tab, value as Shipment['status'])]),
+      ...(tab === 'dispatches' ? [['Centre', 'At centre'], ['Exception', 'Delivery exceptions'], ['Ready', 'Ready to dispatch'], ['PendingDispatch', 'Dispatch queue'], ['InTransit', 'Non-case shipments in transit']] : [])];
   const summaries: Array<{ label: string; value: number; caption: string; detail?: string; Icon: LucideIcon; tone: string }> = [
-    { label: 'Total resources', value: inventory.length, caption: `${new Set(inventory.map(item => item.countryCode)).size} countries with inventory`, Icon: Box, tone: 'blue' },
+    { label: 'Total resources', value: scopedInventory.length, caption: 'Inventory records at selected depots', Icon: Box, tone: 'blue' },
     { label: 'Available stock', ...summaryStock('available'), Icon: Layers, tone: 'green' },
     { label: 'Reserved stock', ...summaryStock('reserved'), Icon: Bookmark, tone: 'blue' },
-    { label: 'Low stock items', value: low.length, caption: 'Below configured thresholds', Icon: TriangleAlert, tone: 'amber' },
-    { label: 'Active dispatches', value: active.length, caption: `${active.filter(order => order.status === 'Dispatched').length} in transit · ${active.filter(order => order.status === 'Reserved').length} pending`, Icon: Truck, tone: 'violet' },
+    { label: 'Low stock items', value: low.length, caption: `${out.length} out of stock separately`, Icon: TriangleAlert, tone: 'amber' },
+    { label: 'Active dispatches', value: active.length,
+      caption: `${active.filter(lines => lines.some(order => order.status === 'Dispatched' && !order.centreReceivedAt)).length} in transit · ${active.filter(lines => lines[0].status === 'Reserved').length} pending`,
+      Icon: Truck, tone: 'violet' },
   ];
   const direction = (key: SortKey) => {
     setSort({ key, descending: sort.key === key ? !sort.descending : key !== 'name' });
@@ -194,15 +233,26 @@ function LogisticsWorkspace({ data, specialist, startTab, startStatus }: { data:
   }
 
   return <div className="logistics-dashboard">
+    {!specialist && <DepotAssignments />}
     <header className="logistics-header">
-      <div><h1>Resources &amp; Logistics</h1><p>Manage stock, reservations, transfers, and dispatches across countries and depots.</p></div>
+      <div><h1>Resources &amp; Logistics</h1><p>{specialist
+        ? `${countryLabel(workspace)} · Manage stock, reservations, transfers, and dispatches across assigned depots.`
+        : 'Manage stock, reservations, transfers, and dispatches across countries and depots.'}</p></div>
       <div className="logistics-header-actions">
-        <Button variant="secondary" onClick={() => open({ kind: 'resource' })} disabled={!defaultCountry}><Plus size={17} aria-hidden="true" /> Add resource</Button>
-        <Button className="button secondary logistics-receive" onClick={() => open({ kind: 'stock' })} disabled={!data.inventory.length}><Layers size={17} aria-hidden="true" /> Record stock</Button>
-        <Button className="button primary logistics-blue" onClick={() => open({ kind: 'dispatch' })} disabled={!data.inventory.some(item => item.available > 0)}><Truck size={18} aria-hidden="true" /> Create dispatch</Button>
+        {(!specialist || (data.resourceRegistration?.partners ?? data.partners).length > 0) && <Button variant="secondary" onClick={() => open({ kind: 'resource' })} disabled={!defaultCountry}><Plus size={17} aria-hidden="true" /> Add resource</Button>}
+        {(!specialist || data.inventory.length > 0) && <Button className="button secondary logistics-receive" onClick={() => open({ kind: 'stock' })} disabled={!data.inventory.length}><Layers size={17} aria-hidden="true" /> Record stock</Button>}
+        {(!specialist || data.partners.length > 0) && <Button className={specialist ? 'button primary' : 'button primary logistics-blue'} onClick={() => open({ kind: 'dispatch' })}
+          disabled={!canMoveStock}><Truck size={18} aria-hidden="true" /> Create dispatch</Button>}
       </div>
     </header>
     {notice && <p className="organisation-notice" role="status">{notice}</p>}
+    {specialist && (stockAlerts.length > 0 || exceptions.length > 0) && <div className="logistics-attention">
+      <TriangleAlert size={20} aria-hidden="true" /><strong>Attention needed</strong>
+      {stockAlerts.length > 0 && <button type="button" onClick={() => { chooseTab('inventory'); setStatus('Stock alerts'); }}>
+        {low.length} below threshold · {out.length} out of stock</button>}
+      {exceptions.length > 0 && <button type="button" onClick={() => { chooseTab('dispatches'); setStatus('Exception'); }}>
+        {exceptions.length} dispatch {exceptions.length === 1 ? 'exception' : 'exceptions'}</button>}
+    </div>}
     <ul className="logistics-kpis" aria-label="Logistics summary">
       {summaries.map(({ label, value, caption, detail, Icon, tone }) => (
         <li key={label} className="logistics-kpi" title={detail}>
@@ -212,14 +262,14 @@ function LogisticsWorkspace({ data, specialist, startTab, startStatus }: { data:
       ))}
     </ul>
     <Card className="logistics-filters">
-      <Field label="Inventory country" endAdornment={<Globe2 className="logistics-filter-icon" size={16} aria-hidden="true" />}>
+      {!specialist && data.countries.length > 1 && <Field label="Inventory country" endAdornment={<Globe2 className="logistics-filter-icon" size={16} aria-hidden="true" />}>
         <select value={activeCountry} onChange={event => {
           setCountry({ workspace, code: event.target.value }); setCrisis(''); setDepot(''); setPage(1);
         }}>
-          {data.countries.length > 1 && <option value="">All countries</option>}
+          <option value="">All countries</option>
           {data.countries.map(row => <option key={row.code} value={row.code}>{row.name}</option>)}
         </select>
-      </Field>
+      </Field>}
       <Field label="Crisis" endAdornment={<TriangleAlert className="logistics-filter-icon" size={16} aria-hidden="true" />}>
         <select value={selectedCrisis} onChange={event => filter(setCrisis)(event.target.value)}>
           <option value="">All crises</option>
@@ -241,7 +291,7 @@ function LogisticsWorkspace({ data, specialist, startTab, startStatus }: { data:
       </Field>
       <Field label="Status">
         <select value={status} onChange={event => filter(setStatus)(event.target.value)}>
-          <option value="">All statuses</option>
+          <option value="">{currentDispatchView ? 'Current dispatches' : tab === 'dispatches' || tab === 'transfers' ? 'Exclude cancelled' : 'All statuses'}</option>
           {statusOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select>
       </Field>
@@ -265,9 +315,20 @@ function LogisticsWorkspace({ data, specialist, startTab, startStatus }: { data:
           {tab === 'inventory'
             ? <Button type="button" variant="secondary" onClick={exportRows} disabled={!inventory.length}><Download size={16} aria-hidden="true" /> Export</Button>
             : tab === 'transfers' || tab === 'reservations' ? <Button type="button" variant="secondary"
+              disabled={!canMoveStock} aria-describedby={canMoveStock ? undefined : 'logistics-movement-access'}
               onClick={() => open({ kind: tab === 'transfers' ? 'transfer' : 'reservation' })}>
               <Plus size={16} aria-hidden="true" />{tab === 'transfers' ? 'Create transfer' : 'Reserve stock'}</Button> : null}
         </div>
+        {!canMoveStock && (tab === 'transfers' || tab === 'reservations') && (
+          <p id="logistics-movement-access" className="muted">
+            {tab === 'transfers' ? 'Transfers require available stock at a depot you can manage.' :
+              'Standalone reservations require available stock at a depot you can manage.'}
+            {caseOnlyStock && <> Reserve stock assigned to your crisis through <Link to={casesHref()}>Case Fulfillment</Link>.</>}
+          </p>
+        )}
+        {(recordFilter || todayOnly) && <button className="logistics-link" type="button" onClick={() => { setRecordFilter(''); setTodayOnly(false); setPage(1); }}>
+          {todayOnly ? "Clear today's dispatch filter" : 'Show all records'}
+        </button>}
         {count === 0 ? <p className="logistics-empty">No {tab === 'inventory' ? 'resources' : tab} match these filters.</p>
           : <div className="logistics-table-wrap" tabIndex={0}>
             {tab === 'inventory' ? <table className="logistics-table" aria-label="Inventory">
@@ -287,20 +348,32 @@ function LogisticsWorkspace({ data, specialist, startTab, startStatus }: { data:
               </tr>)}</tbody>
             </table> : <table className="logistics-table logistics-shipments" aria-label={tabs.find(row => row.key === tab)?.label}>
               <thead><tr>{['Reference', 'Resource', 'Origin → destination', 'Crisis', 'Quantity', 'Status', 'Actions'].map(label => <th scope="col" key={label}>{label}</th>)}</tr></thead>
-              <tbody>{orders.slice(start, start + pageSize).map(order => {
+              <tbody>{orders.slice(start, start + pageSize).map(lines => {
+                const [order] = lines;
                 const resource = items.get(order.resourceId);
                 const receipt = receipts.get(order.id);
-                const next: ShipmentAction | undefined = order.status === 'Reserved' ? 'dispatch' : order.status === 'Dispatched' ? 'deliver' : undefined;
-                return <tr key={order.id}>
-                  <th scope="row"><span className="logistics-ref">{shipmentCode(order)}</span><small>{formatDate(order.createdAt)}</small></th>
-                  <td>{resource?.name}<small>{data.actors[order.actorId] || order.actorId}</small></td>
-                  <td>{order.origin}<small>→ {order.destination}</small>{order.requestId && <Link className="logistics-case-link" to={`/staff/cases/${order.requestId}`}>Open request</Link>}</td>
+                const next: ShipmentAction | undefined = order.caseDispatchId || specialist && order.requestId ? undefined
+                  : order.status === 'Reserved' ? order.packedAt ? 'dispatch' : 'prepare' : order.status === 'Dispatched' ? 'deliver' : undefined;
+                return <tr key={order.caseDispatchId ?? order.id}>
+                  <th scope="row"><span className="logistics-ref">{shipmentCode(order)}</span>
+                    {specialist && order.requestId && <small><Link to={casesHref(order.requestId)}>View case</Link></small>}
+                    <small>{formatDate(order.createdAt)}</small></th>
+                  <td>{order.caseDispatchId ? lines.map(line => <small key={line.id}>
+                    {items.get(line.resourceId)?.name} · {number.format(line.quantity)} {items.get(line.resourceId)?.unit}
+                  </small>) : <>{resource?.name}<small>{data.actors[order.actorId] || order.actorId}</small></>}</td>
+                  <td>{[...new Set(lines.map(line => line.origin))].join(' · ')}<small>→ {order.destination}</small>{order.requestId && <Link className="logistics-case-link" to={`/staff/cases/${order.requestId}`}>Open request</Link>}</td>
                   <td>{data.crises.find(row => row.id === order.crisisId)?.name || '—'}</td>
-                  <td className="logistics-quantity">{number.format(order.quantity)}<small>{resource?.unit}</small></td>
-                  <td><Status label={labelFor(tab, order.status)} /></td>
+                  <td className="logistics-quantity">{order.caseDispatchId
+                    ? <>{lines.length}<small>{lines.length === 1 ? 'stock line' : 'stock lines'}</small></>
+                    : <>{number.format(order.quantity)}<small>{resource?.unit}</small></>}</td>
+                  <td><Status label={order.caseDispatchId ? shipmentGroupStatus(lines) : labelFor(tab, order.status)} /></td>
                   <td><div className="logistics-shipment-actions">
+                    {specialist && order.caseDispatchId && order.requestId && <Link className="logistics-link"
+                      to={casesHref(order.requestId, { dispatch: order.caseDispatchId })}>
+                      {order.centreReceivedAt ? 'View dispatch' : 'Open centre receipt'}
+                    </Link>}
                     {next && <Button type="button" variant="secondary" onClick={() => open({ kind: 'transition', order, action: next })}>{actionLabels[next]}</Button>}
-                    {order.status === 'Reserved' && <Button type="button" variant="ghost" onClick={() => open({ kind: 'transition', order, action: 'cancel' })}>Release</Button>}
+                    {order.status === 'Reserved' && <ReleaseReservationButton id={order.id} caseAllocation={!!order.requestId} onNotice={setNotice} />}
                     {receipt && <Button type="button" variant="ghost" onClick={() => open({ kind: 'receipt', receipt, order })}>
                       {receipt.exceptionDetail ? 'View delivery exception' : 'View receipt'}
                     </Button>}
@@ -322,26 +395,39 @@ function LogisticsWorkspace({ data, specialist, startTab, startStatus }: { data:
       <aside className="logistics-sidebar" aria-label="Logistics activity">
         <Card className="logistics-widget">
           <header><h2><Truck size={21} aria-hidden="true" /> Recent dispatches</h2>
-            <button type="button" onClick={() => chooseTab('dispatches')}>View all <ArrowRight size={14} aria-hidden="true" /></button></header>
-          {dispatches.length === 0 ? <p className="logistics-empty">No dispatches match these filters.</p> :
-            <ul>{dispatches.slice(0, 3).map(order => <li key={order.id}>
-              <span className="logistics-ref">{shipmentCode(order)}</span>
-              <div><strong title={items.get(order.resourceId)?.name}>{items.get(order.resourceId)?.name} ({number.format(order.quantity)} {items.get(order.resourceId)?.unit})</strong>
+            <button type="button" onClick={() => {
+              if (tab === 'dispatches') { setRecordFilter(''); setPage(1); }
+              else chooseTab('dispatches');
+            }}>View all <ArrowRight size={14} aria-hidden="true" /></button></header>
+          {recentDispatches.length === 0 ? <p className="logistics-empty">No dispatches match these filters.</p> :
+            <ul>{recentDispatches.slice(0, 4).map(lines => {
+              const [order] = lines;
+              return <li key={order.caseDispatchId ?? order.id}>
+              <button className="logistics-ref logistics-link" type="button" onClick={() => {
+                if (tab !== 'dispatches') chooseTab('dispatches');
+                setRecordFilter(order.caseDispatchId ?? order.id);
+                setPage(1);
+              }}>{shipmentCode(order)}</button>
+              <div><strong title={items.get(order.resourceId)?.name}>{order.caseDispatchId
+                ? `${lines.length} stock ${lines.length === 1 ? 'line' : 'lines'}`
+                : `${items.get(order.resourceId)?.name} (${number.format(order.quantity)} ${items.get(order.resourceId)?.unit})`}</strong>
                 <small title={`${order.origin} → ${order.destination}`}>{order.origin} → {order.destination}</small></div>
-              <div className="logistics-widget-right"><Status label={shipmentStatus[order.status]} />
+              <div className="logistics-widget-right"><Status label={shipmentGroupStatus(lines)} />
                 <small><time dateTime={order.updatedAt} title={formatDate(order.updatedAt)}>
                   {recentTime(order.updatedAt, i18n.resolvedLanguage)}
                 </time></small></div>
-            </li>)}</ul>}
+              </li>;
+            })}</ul>}
         </Card>
         <Card className="logistics-widget">
-          <header><h2><TriangleAlert size={21} aria-hidden="true" /> Low stock alerts</h2>
-            <button type="button" onClick={() => { chooseTab('inventory'); setStatus('Low stock'); }}>View all <ArrowRight size={14} aria-hidden="true" /></button></header>
-          {low.length === 0 ? <p className="logistics-empty">No items are below their configured thresholds.</p> :
-            <ul>{low.slice(0, 3).map(item => <li key={item.id}>
+          <header><h2><TriangleAlert size={21} aria-hidden="true" /> Stock alerts</h2>
+            <button type="button" onClick={() => { chooseTab('inventory'); setStatus('Stock alerts'); }}>View all <ArrowRight size={14} aria-hidden="true" /></button></header>
+          {stockAlerts.length === 0 ? <p className="logistics-empty">No out-of-stock items or threshold breaches in scope.</p> :
+            <ul>{stockAlerts.slice(0, 4).map(item => <li key={item.id}>
               <ItemIcon item={item} />
-              <div><strong title={item.name}>{item.name}</strong><small title={`${countryLabel(item.countryCode)} · ${depotLabel(item)}`}>{countryLabel(item.countryCode)} · {depotLabel(item)}</small></div>
-              <div className="logistics-widget-right"><strong>{number.format(item.available)} {item.unit} left</strong><Status label="Low stock" /></div>
+              <div><button className="logistics-link" type="button" onClick={() => open({ kind: 'details', resourceId: item.id })}>{item.name}</button>
+                <small>{depotLabel(item)}{stockGap(item) > 0 && ` · ${number.format(stockGap(item))} ${item.unit} below threshold`}</small></div>
+              <div className="logistics-widget-right"><strong>{number.format(item.available)} {item.unit} left</strong><Status label={inventoryStatus(item)} /></div>
             </li>)}</ul>}
         </Card>
       </aside>

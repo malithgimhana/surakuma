@@ -17,13 +17,16 @@ interface Forecast {
   record: { id: string; category: string; createdAt: string; forecastFrom: string; forecastTo: string; model: string; estimate?: number };
   evidence: { weeks: DemandWeek[]; observedLow?: number; observedHigh?: number;
     transportReadyItems: number; risk: string; limitations: string; unknownUnitRequests?: number;
-    groups?: { regionId?: string; region?: string; unit: string; weeks: DemandWeek[]; weeklyEstimate?: number }[] };
+    projection?: Projection; interpretation?: { text: string; source: string };
+    groups?: { regionId?: string; region?: string; unit: string; weeks: DemandWeek[]; weeklyEstimate?: number; projection?: Projection }[] };
 }
+interface Projection { lower: number; upper: number; method: string; validationMae: number; baselineMae: number; validationPeriods: number }
 interface DemandWeek { from: string; requests: number; requested?: number; fulfilled?: number }
 interface Briefing {
   record: { id: string; periodFrom: string; periodTo: string; draft: string; source: string; createdByUserId: string; reviewedAt?: string; reviewNote?: string };
   facts: { newCases: number; activeCases: number; criticalCases: number; outstandingCases: number; escalatedCases: number; lowStockItems: number;
     openShelters: number; capacity: number; occupied: number; reserved: number; activeVolunteerTasks: number; tasksAwaitingReview: number;
+    fulfilledCases?: number; partiallyFulfilledCases?: number; completedVolunteerTasks?: number;
     needs: { category: string; cases: number; outstandingQuantity?: number; unit?: string }[] };
 }
 interface DecisionData {
@@ -79,11 +82,13 @@ export default function DecisionSupport() {
     {data.briefings.map(({ record, facts }) => <Card key={record.id}>
       <h3>{formatDate(record.periodFrom)} to {formatDate(record.periodTo)}</h3>
       <h4>Recorded facts</h4>
+      <p className="muted">Sources · case records, verified inventory, shelter occupancy and volunteer task records in this response scope.</p>
       <ul>
         <li>{facts.newCases} new cases in the period. Current snapshot has {facts.activeCases} active, {facts.criticalCases} critical and {facts.escalatedCases} escalated.</li>
         <li>{facts.outstandingCases} cases with outstanding quantities, and {facts.lowStockItems} low-stock or out-of-stock inventory items in scope.</li>
         <li>{facts.occupied} people checked in and {facts.reserved} places reserved across {facts.openShelters} open shelters with {facts.capacity} total places in scope.</li>
         <li>{facts.activeVolunteerTasks} active tasks and {facts.tasksAwaitingReview} volunteer reports awaiting verification.</li>
+        {facts.fulfilledCases != null && <li>{facts.fulfilledCases} fulfilled cases, {facts.partiallyFulfilledCases} partially fulfilled cases and {facts.completedVolunteerTasks} completed volunteer tasks.</li>}
       </ul>
       {!!facts.needs.length && <ul>{facts.needs.map(need => <li key={need.category + (need.unit ?? '')}>
         {need.category} · {need.cases} cases · {need.unit ? `${need.outstandingQuantity} ${unitSymbol(need.unit)} outstanding` : 'unit clarification required'}
@@ -110,7 +115,11 @@ function ForecastResult({ forecast }: { forecast: Forecast }) {
   const chart = evidence.weeks.map(w => ({ ...w, week: new Date(w.from).toLocaleDateString('en', { month: 'short', day: 'numeric', timeZone: 'UTC' }) }));
   return <Card><h3>{record.category} · {formatDate(record.createdAt)}</h3>
     <p>{record.estimate == null ? 'Insufficient history for a forecast.' : `Estimated ${record.estimate} requests · observed range ${evidence.observedLow}–${evidence.observedHigh}`}</p>
-    <p>Period {record.forecastFrom.slice(0, 10)} to {record.forecastTo.slice(0, 10)} UTC, end exclusive · {record.model}</p>
+    <p>Period {record.forecastFrom.slice(0, 10)} to {record.forecastTo.slice(0, 10)} UTC, end exclusive · Statistical · {record.model}</p>
+    {evidence.projection && <ProjectionEvidence projection={evidence.projection} />}
+    {evidence.interpretation && <div className="recommendation">
+      <strong>Interpretation · {evidence.interpretation.source}</strong><p>{evidence.interpretation.text}</p>
+    </div>}
     <p>{evidence.risk} · {evidence.transportReadyItems} transport-ready inventory items</p>
     <div aria-hidden="true" style={{ height: 230, minWidth: 0 }}>
       <ResponsiveContainer width="100%" height="100%"><BarChart data={chart}>
@@ -127,6 +136,7 @@ function ForecastResult({ forecast }: { forecast: Forecast }) {
       <summary>{group.region ?? 'Region unrecorded'} · {unitSymbol(group.unit)}
         {group.weeklyEstimate == null ? ' · Insufficient history for a quantity forecast' : ` · ${group.weeklyEstimate} ${unitSymbol(group.unit)} estimated next week`}
       </summary>
+      {group.projection && <ProjectionEvidence projection={group.projection} />}
       <div className="table-scroll"><table>
         <thead><tr><th>Week of</th><th>Requested ({unitSymbol(group.unit)})</th><th>Received ({unitSymbol(group.unit)})</th></tr></thead>
         <tbody>{group.weeks.map(w => <tr key={w.from}><td>{w.from.slice(0, 10)}</td><td>{w.requested}</td><td>{w.fulfilled}</td></tr>)}</tbody>
@@ -136,6 +146,12 @@ function ForecastResult({ forecast }: { forecast: Forecast }) {
   </Card>;
 }
 
+function ProjectionEvidence({ projection }: { projection: Projection }) {
+  return <p>Empirical range {projection.lower}–{projection.upper} · {projection.method} ·
+    Mean absolute error {projection.validationMae} across {projection.validationPeriods} validation weeks
+    {' '}({projection.baselineMae} for the full-history mean).</p>;
+}
+
 export function InvestigationList({ flags, busy, reference, review }: {
   flags: Investigation[]; busy: boolean; reference: (f: Investigation) => React.ReactNode;
   review: (id: string, values: Record<string, FormDataEntryValue>) => void;
@@ -143,6 +159,7 @@ export function InvestigationList({ flags, busy, reference, review }: {
   if (!flags.length) return <Empty title="No flags recorded" />;
   return <>{flags.map(flag => <Card key={flag.id}>
     <h3>{flag.category} <Badge value={flag.severity} /></h3>
+    <small>Rules-based investigation indicator · {flag.reviewedAt ? 'Reviewed' : 'Review pending'}</small>
     <p>{flag.evidence}</p>{reference(flag)}
     {flag.outcome ? <p>{flag.outcome} · {flag.resolution} · {flag.reviewedAt && formatDate(flag.reviewedAt)}</p>
       : <form className="form-grid" onSubmit={e => review(flag.id, reviewForm(e))}>

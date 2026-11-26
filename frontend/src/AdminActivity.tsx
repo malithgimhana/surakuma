@@ -22,7 +22,7 @@ import {
   useAdminTabScope,
 } from './AdminTabUi';
 import { DeliveryRecovery } from './AdministrationWorkflows';
-import { Button, Card, ErrorState, Field, Loading, PageHeader } from './components';
+import { Button, Card, DateInput, ErrorState, Field, Loading, PageHeader } from './components';
 import type { Page } from './types';
 
 type AuditEvent = {
@@ -270,19 +270,17 @@ export function AdminActivity({
             </Field>
           )}
           <Field label="Start date">
-            <input
+            <DateInput
               type="date"
               value={filters.from}
               onChange={(e) => changeFilter('from', e.target.value)}
-              max="9999-12-31"
             />
           </Field>
           <Field label="End date" error={dateError}>
-            <input
+            <DateInput
               type="date"
               value={filters.to}
               onChange={(e) => changeFilter('to', e.target.value)}
-              max="9999-12-31"
             />
           </Field>
           <Field label="Search activity">

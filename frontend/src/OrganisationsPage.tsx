@@ -8,7 +8,7 @@ import { useOptionalAuth } from './auth';
 import { Button, Card, ErrorState, Field, Loading, PageHeader } from './components';
 import { CountryAdministration } from './CountryAdministration';
 import { useCountries, useCountry } from './geography';
-import { OrganisationDialog, organisationIdPattern } from './OrganisationDialog';
+import { OrganisationDialog } from './OrganisationDialog';
 
 interface PartnerOrganisation {
   id: string;
@@ -47,6 +47,7 @@ interface OrganisationScope {
 function OrganisationsWorkspace({ globalAdmin, countryCode, country, canManageCountry }: OrganisationScope & { canManageCountry: boolean }) {
   const [params] = useSearchParams();
   const view = params.get('view');
+  const requestedOrganisation = params.get('organisation');
   const tabs = [
     { label: 'Partner organisations', key: null, to: '/admin?section=organisations' },
     { label: 'Country settings', key: 'country', to: '/admin?section=organisations&view=country' },
@@ -59,7 +60,7 @@ function OrganisationsWorkspace({ globalAdmin, countryCode, country, canManageCo
       <PageHeader
         title="Organisations"
         description="Set up partners to receive cases and assign staff in the selected country."
-        action={globalAdmin && current.key === null && (
+        action={canManageCountry && current.key === null && (
           <Button type="button" aria-haspopup="dialog" onClick={() => setAdding(true)}>
             <Plus size={18} aria-hidden="true" /> Add organisation
           </Button>
@@ -75,28 +76,31 @@ function OrganisationsWorkspace({ globalAdmin, countryCode, country, canManageCo
       {!canManageCountry ? (
         <Card><p>You don’t administer {country}. Select a country you manage using the country menu above.</p></Card>
       ) : current.key === 'country' ? <CountryAdministration /> : (
-        <PartnerDirectory {...{ globalAdmin, countryCode, country, adding }} onDismiss={() => setAdding(false)} />
+        <PartnerDirectory key={requestedOrganisation} {...{ globalAdmin, countryCode, country, adding, requestedOrganisation }}
+          onDismiss={() => setAdding(false)} />
       )}
     </section>
   );
 }
 
-function PartnerDirectory({ globalAdmin, countryCode, country, adding, onDismiss }: OrganisationScope & {
+function PartnerDirectory({ globalAdmin, countryCode, country, adding, requestedOrganisation, onDismiss }: OrganisationScope & {
   adding: boolean;
+  requestedOrganisation: string | null;
   onDismiss: () => void;
 }) {
   const partners = usePartnerDirectory(countryCode, true);
   const [search, setSearch] = useState('');
-  const [selectedId, setSelectedId] = useState<string>();
+  const [selectedId, setSelectedId] = useState(requestedOrganisation ?? undefined);
   const [notice, setNotice] = useState('');
   const searchInput = useRef<HTMLInputElement>(null);
   const results = partners.data?.filter((partner) => partner.name.toLowerCase().includes(search.trim().toLowerCase())) ?? [];
-  const selected = results.find((partner) => partner.id === selectedId) ?? results[0];
+  const openingRequestedPartner = !!requestedOrganisation && selectedId === requestedOrganisation && !search.trim();
+  const selected = results.find((partner) => partner.id === selectedId) ?? (openingRequestedPartner ? undefined : results[0]);
   const count = partners.data?.length;
 
   return (
     <>
-      {adding && globalAdmin && <AddOrganisation country={country} countryCode={countryCode} onDismiss={onDismiss} onAdded={(name, message, id) => {
+      {adding && <AddOrganisation {...{ country, countryCode, onDismiss }} onAdded={(name, message, id) => {
         setSearch(name);
         setSelectedId(id);
         setNotice(message);
@@ -127,14 +131,16 @@ function PartnerDirectory({ globalAdmin, countryCode, country, adding, onDismiss
             </ul>
           ) : <p className="muted partner-empty">{search.trim() ? 'No organisations match your search.' : `No partner organisations available in ${country}.`}</p>}
         </section>
-        {selected ? <PartnerDetails key={selected.id} partner={selected} {...{ country, countryCode, globalAdmin }} onDeleted={(archived, countryOnly) => {
+        {selected ? <PartnerDetails key={selected.id} partner={selected} openVerification={openingRequestedPartner}
+          {...{ country, countryCode, globalAdmin }} onDeleted={(archived, countryOnly) => {
           setSearch('');
           setSelectedId(undefined);
           setNotice(`“${selected.name}” was ${countryOnly ? `removed from ${country}.` : archived ? 'archived in all countries.' : 'deleted.'}`);
           requestAnimationFrame(() => searchInput.current?.focus());
         }} /> : (
           <div className="partner-details partner-empty-detail">
-            <p className="muted">{search.trim() ? 'Try another search to find a partner.' : 'Partner details will appear here.'}</p>
+            <p className="muted">{partners.isSuccess && openingRequestedPartner ? 'This registration is unavailable in the current partner directory.' :
+              search.trim() ? 'Try another search to find a partner.' : 'Partner details will appear here.'}</p>
           </div>
         )}
       </Card>
@@ -149,11 +155,12 @@ function PartnerStatus({ state }: { state?: string }) {
   return <span className="partner-status"><Clock size={19} aria-hidden="true" />Pending verification</span>;
 }
 
-function PartnerDetails({ partner, country, countryCode, globalAdmin, onDeleted }: OrganisationScope & {
+function PartnerDetails({ partner, country, countryCode, globalAdmin, openVerification, onDeleted }: OrganisationScope & {
   partner: PartnerOrganisation;
+  openVerification: boolean;
   onDeleted: (archived: boolean, countryOnly: boolean) => void;
 }) {
-  const [reviewing, setReviewing] = useState(false);
+  const [reviewing, setReviewing] = useState(openVerification);
   const [removalScope, setRemovalScope] = useState<'country' | 'all'>();
   const heading = useRef<HTMLHeadingElement>(null);
   const reviewButton = useRef<HTMLButtonElement>(null);
@@ -303,19 +310,14 @@ function AddOrganisation({ country, countryCode, onDismiss, onAdded }: {
   onDismiss: () => void;
   onAdded: (search: string, notice: string, id: string) => void;
 }) {
-  const [existing, setExisting] = useState(false);
   const client = useQueryClient();
   const save = useMutation({
-    mutationFn: async (value: string) => {
-      if (existing) {
-        await api.put(`/admin/organisations/${encodeURIComponent(value)}/countries/${countryCode}`);
-        return { id: value, search: '', notice: `The organisation is now enabled in ${country}.` };
-      }
-      const { data } = await api.post<{ id: string; name: string }>('/admin/organisations', { name: value, countryCode });
-      return { id: data.id, search: data.name, notice: `${data.name} was added and enabled in ${country}.` };
+    mutationFn: async (name: string) => {
+      const { data } = await api.post<{ id: string; name: string }>('/admin/organisations', { name, countryCode });
+      return data;
     },
-    onSuccess: ({ search, notice, id }) => {
-      onAdded(search, notice, id);
+    onSuccess: ({ id, name }) => {
+      onAdded(name, `${name} was added in ${country} and is pending verification.`, id);
       return client.invalidateQueries();
     },
   });
@@ -324,29 +326,18 @@ function AddOrganisation({ country, countryCode, onDismiss, onAdded }: {
     <OrganisationDialog title="Add organisation" context={country} busy={save.isPending} onDismiss={onDismiss}>
       <form className="stack" onSubmit={(event) => {
         event.preventDefault();
-        const value = String(new FormData(event.currentTarget).get('organisation') ?? '').trim();
-        if (value) save.mutate(value);
+        const name = String(new FormData(event.currentTarget).get('organisation') ?? '').trim();
+        if (name) save.mutate(name);
       }}>
         <fieldset className="organisation-dialog-fields" disabled={save.isPending}>
-          <Field label="Organisation setup">
-            <select autoFocus value={existing ? 'existing' : 'new'} onChange={(event) => {
-              setExisting(event.target.value === 'existing');
-              save.reset();
-            }}>
-              <option value="new">Create an organisation</option>
-              <option value="existing">Use an existing organisation ID</option>
-            </select>
+          <Field label="Organisation name" hint={`New partners need verification in ${country} before receiving work.`}>
+            <input autoFocus name="organisation" required maxLength={150} pattern=".*\S.*" />
           </Field>
-          {existing ? <Field label="Organisation ID" hint="Use the ID from the organisation’s existing country directory.">
-            <input key="id" name="organisation" placeholder="Paste organisation ID" required pattern={organisationIdPattern} />
-          </Field> : <Field label="Organisation name" hint={`New partners need verification in ${country} before receiving work.`}>
-            <input key="name" name="organisation" required maxLength={150} pattern=".*\S.*" />
-          </Field>}
         </fieldset>
         {save.error && <ErrorState error={save.error} />}
         <div className="organisation-dialog-actions">
           <Button type="button" variant="secondary" disabled={save.isPending} onClick={onDismiss}>Cancel</Button>
-          <Button busy={save.isPending}>{existing ? `Enable in ${country}` : 'Create organisation'}</Button>
+          <Button busy={save.isPending}>Create organisation</Button>
         </div>
       </form>
     </OrganisationDialog>

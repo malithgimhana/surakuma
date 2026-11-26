@@ -12,6 +12,8 @@ import {
   useAdminTabScope,
 } from './AdminTabUi';
 import { Badge, Button, Card, ErrorState, Field, Loading, PageHeader } from './components';
+import { AssessmentBadge } from './CitizenTriageCard';
+import { intakeLabel } from './CitizenIntakeFields';
 import type { AidRequest, Lookups } from './types';
 
 type QueueCase = AidRequest & { country: string };
@@ -20,6 +22,7 @@ const hour = 3_600_000;
 // The platform's operational reports define overdue as open for more than 24 hours.
 const overdueHours = 24;
 const filtersDefault = { priority: '', type: '', waiting: '', search: '' };
+const severity = { Critical: 5, Urgent: 4, High: 3, Medium: 2, Normal: 2, Low: 1 };
 function waitingTime(ms: number) {
   if (!Number.isFinite(ms)) return 'Unavailable';
   const minutes = Math.floor(ms / 60_000);
@@ -41,13 +44,14 @@ export function AdminCaseQueue({
     search: params.get('reference') ?? '',
   });
   const [page, setPage] = useState(1);
-  const [sort, setSort] = useState('oldest');
+  const [sort, setSort] = useState('priority');
   const scopes = selection.scope
     ? [selection.scope]
     : selection.options.map((option) => option.code);
   const queues = useQueries({
     queries: scopes.map((country) => ({
       queryKey: ['triage', country, selection.scope ? crisisId : null],
+      refetchInterval: 60000,
       queryFn: async () => {
         const path = selection.scope
           ? crisisId
@@ -79,10 +83,14 @@ export function AdminCaseQueue({
         (!filters.type ||
           (filters.type === 'centre' ? !request.organisationId : !!request.organisationId)) &&
         (!filters.waiting || age(request) >= Number(filters.waiting) * hour) &&
-        request.reference.toLowerCase().includes(filters.search.trim().toLowerCase()),
+        [request.reference, request.legacyReference].some(
+          (reference) => reference?.toLowerCase().includes(filters.search.trim().toLowerCase()),
+        ),
     )
     .sort(
       (a, b) =>
+        (sort === 'priority' ? Number(!!b.immediateDanger) - Number(!!a.immediateDanger) || severity[b.priority] - severity[a.priority] ||
+          (b.priorityScore ?? 0) - (a.priorityScore ?? 0) : 0) ||
         (sort === 'newest' ? age(a) - age(b) : age(b) - age(a)) ||
         a.reference.localeCompare(b.reference),
     );
@@ -139,7 +147,7 @@ export function AdminCaseQueue({
                 onChange={(e) => changeFilter('priority', e.target.value)}
               >
                 <option value="">All priorities</option>
-                {['Critical', 'High', 'Normal', 'Low'].map((priority) => (
+                {['Critical', 'Urgent', 'High', 'Medium', 'Normal', 'Low'].map((priority) => (
                   <option key={priority}>{priority}</option>
                 ))}
               </select>
@@ -198,6 +206,7 @@ export function AdminCaseQueue({
                     setPage(1);
                   }}
                 >
+                  <option value="priority">Priority and score</option>
                   <option value="oldest">Waiting time (longest first)</option>
                   <option value="newest">Waiting time (shortest first)</option>
                 </select>
@@ -348,7 +357,10 @@ function CaseRow({
           <strong>{request.reference}</strong>
           {request.priority && <Badge value={request.priority} />}
         </div>
-        <small>{request.category === 'FoodWater' ? 'Food & water' : request.category}</small>
+        <small>{intakeLabel(request.category, request.intake) ?? (request.category === 'FoodWater' ? 'Food & water' : request.category)}</small>
+        {request.priorityScore != null && <small>{request.priorityScore} points</small>}
+        {request.immediateDanger && <small className="field-error">Immediate danger</small>}
+        {request.assessmentState && <AssessmentBadge state={request.assessmentState} />}
       </div>
       <div>
         <span className="admin-tab-inline">

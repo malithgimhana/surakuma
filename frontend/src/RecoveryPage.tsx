@@ -61,7 +61,7 @@ const copy: Record<string, string[]> = {
     'बड़े और छोटे अक्षर, अंक और चिह्न सहित कम से कम 10 वर्ण इस्तेमाल करें।',
   ],
 };
-export function RecoveryPage({ reset = false }: { reset?: boolean }) {
+export function RecoveryPage({ reset = false, donor = false }: { reset?: boolean; donor?: boolean }) {
   const { i18n } = useTranslation();
   const c = copy[i18n.language.split('-')[0]] || copy.en;
   const [values] = useState(() => {
@@ -112,7 +112,7 @@ export function RecoveryPage({ reset = false }: { reset?: boolean }) {
           <Button busy={action.isPending}>{reset ? c[0] : c[3]}</Button>
           {action.isError && <p role="alert">{c[6]}</p>}
           {action.isSuccess && <p role="status">{reset ? c[5] : c[4]}</p>}
-          <Link to="/login">{c[7]}</Link>
+          <Link to={donor ? '/donation/login' : '/login'}>{c[7]}</Link>
         </form>
       </Card>
     </div>

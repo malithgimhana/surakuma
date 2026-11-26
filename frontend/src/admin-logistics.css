@@ -197,6 +197,42 @@
 .logistics-dialog-body .form-grid .field { min-width: 0; }
 .logistics-dialog-body .stack { gap: 12px; }
 .logistics-dialog-body :is(p, h3) { margin: 8px 0; }
+.logistics-resource-selection { grid-column: 1 / -1; }
+.logistics-resource-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-width: 0;
+}
+.logistics-resource-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--organisation-surface) 91%, var(--blue));
+}
+.logistics-resource-chip[data-active='true'] {
+  border-color: var(--blue);
+  background: color-mix(in srgb, var(--organisation-surface) 85%, var(--blue));
+  color: var(--blue);
+}
+.logistics-resource-chip button {
+  min-width: 0;
+  min-height: 34px;
+  padding: 4px 4px 4px 12px;
+  border-radius: inherit;
+  background: transparent;
+  color: inherit;
+  text-align: start;
+  font-size: .88rem;
+}
+.logistics-resource-chip button + button { display: grid; place-items: center; min-width: 34px; padding: 4px; }
+.logistics-resource-chip button:hover:not(:disabled) { text-decoration: underline; color: var(--blue); }
+.logistics-resource-chip button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .logistics-dialog-body .logistics-config { margin: 12px 0; padding: 8px; border: 1px solid var(--border); border-radius: 10px; }
 .logistics-dialog-body .logistics-config form { padding-top: 10px; }
 .logistics-ledger { margin: 6px 0 0; padding: 0; list-style: none; overflow-wrap: anywhere; }
