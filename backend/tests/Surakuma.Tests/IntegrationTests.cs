@@ -94,6 +94,24 @@ public sealed class ApiFixture : IAsyncLifetime
 public sealed partial class IntegrationTests(ApiFixture fixture) : IClassFixture<ApiFixture>
 {
     [Fact]
+    public async Task AuthenticationRequestsReturn429WhenTheConfiguredLimitIsReached()
+    {
+        using var host = fixture.Factory.WithWebHostBuilder(builder => builder.ConfigureAppConfiguration((_, configuration) =>
+            configuration.AddInMemoryCollection(new Dictionary<string, string?> { ["RateLimits:AuthPermitLimit"] = "2" })));
+        using var client = host.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost") });
+        const string login = "/api/v1/auth/login";
+        using var first = await client.PostAsJsonAsync(login, new { });
+        using var second = await client.PostAsJsonAsync(login, new { });
+        using var third = await client.PostAsJsonAsync(login, new { });
+        using var health = await client.GetAsync("/api/v1/health");
+
+        Assert.Equal(HttpStatusCode.BadRequest, first.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, second.StatusCode);
+        Assert.Equal(HttpStatusCode.TooManyRequests, third.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, health.StatusCode);
+    }
+
+    [Fact]
     public async Task DonorRegistrationCreatesOnlyDonorRoleAndKeepsCitizenSignInSeparate()
     {
         const string register = "/api/v1/auth/donor/register";

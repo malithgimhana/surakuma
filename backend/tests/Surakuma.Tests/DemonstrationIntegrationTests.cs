@@ -105,6 +105,17 @@ public sealed partial class IntegrationTests
         string description = "Synthetic flood household acceptance " + Guid.NewGuid() + " needs ten individual bottles of clean drinking water.";
         Guid candidateId = await Submit(AidCategory.FoodWater, 10, description);
         Guid foodId = await Submit(AidCategory.FoodWater, 10, description);
+        using var rejectedFile = new MultipartFormDataContent();
+        var textFile = new StringContent("Synthetic non-image evidence");
+        textFile.Headers.ContentType = new("image/png");
+        rejectedFile.Add(textFile, "file", "invalid-evidence.png");
+        using var rejectedUpload = await citizen.PostAsync($"/api/v1/requests/{foodId}/attachments", rejectedFile);
+        Assert.Equal(HttpStatusCode.BadRequest, rejectedUpload.StatusCode);
+        using var oversizedFile = new MultipartFormDataContent();
+        oversizedFile.Add(new ByteArrayContent(new byte[4 * 1024 * 1024 + 1]), "file", "oversized-evidence.png");
+        using var oversizedUpload = await citizen.PostAsync($"/api/v1/requests/{foodId}/attachments", oversizedFile);
+        Assert.Equal(HttpStatusCode.BadRequest, oversizedUpload.StatusCode);
+        Assert.Contains("4 MB", await oversizedUpload.Content.ReadAsStringAsync());
         const string pixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jv1sAAAAASUVORK5CYII=";
         using var image = new MultipartFormDataContent();
         image.Add(new ByteArrayContent(Convert.FromBase64String(pixel)), "file", "synthetic-evidence.png");

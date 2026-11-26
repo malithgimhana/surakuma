@@ -1,4 +1,4 @@
-import { fulfillStock } from './fulfill-stock';
+import { caseItemQuantity, fulfillStock } from './fulfill-stock';
 import { expect, test } from '@playwright/test';
 
 const password = process.env.SURAKUMA_ACCEPTANCE_PASSWORD;
@@ -27,6 +27,7 @@ test('shows category-specific resource units in the logistics inventory', async 
     ['Accessibility', ['Select a unit', 'Pieces', 'Packs', 'Sets', 'Pairs', 'Kits']],
     ['Other', ['Select a unit', 'Pieces', 'Packs', 'Kilograms (kg)', 'Litres (L)', 'Bags', 'Bottles', 'Cartons', 'Boxes', 'Sets', 'Pairs', 'Kits']],
   ] as const) {
+    await dialog.getByLabel('Resource name', { exact: true }).selectOption('custom');
     await unit.selectOption('pieces');
     await category.selectOption(categoryCode);
     await expect(unit).toHaveValue('');
@@ -61,7 +62,7 @@ for (const { stockUnit, stock } of [{ stockUnit: 'l', stock: 15 }, { stockUnit: 
     await citizen.getByLabel('Administrative region', { exact: true }).selectOption({ index: 1 });
     await citizen.getByLabel('Location', { exact: true }).fill('Synthetic drinking water collection point');
     await citizen.getByRole('button', { name: 'Continue', exact: true }).click();
-    await expect(citizen.getByText('20 L', { exact: true })).toBeVisible();
+    await expect(citizen.getByRole('listitem').filter({ hasText: 'Drinking water · 20 L' })).toBeVisible();
     const submission = citizen.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/requests'));
     await citizen.getByRole('button', { name: 'Submit request', exact: true }).click();
     const result = await submission;
@@ -82,11 +83,21 @@ for (const { stockUnit, stock } of [{ stockUnit: 'l', stock: 15 }, { stockUnit: 
       });
       expect(statusResponse.ok()).toBeTruthy();
     }
+    const items = await request.put(`${api}/fulfillment/cases/${aid.id}/items`, {
+      headers: manager,
+      data: { items: [{ name: 'Drinking water', category: 'FoodWater', unit: 'l', requiredQuantity: 20, approvedQuantity: 20 }] },
+    });
+    await expect(items).toBeOK();
 
     const coordinator = await request.post(api + '/auth/login', { data: { email: 'coordinator@surakuma.test', password } });
     expect(coordinator.ok()).toBeTruthy();
+    const headers = { Authorization: 'Bearer ' + (await coordinator.json()).accessToken };
+    const dispatchPath = `${api}/fulfillment/cases/${aid.id}`;
+    const plan = await (await request.get(`${dispatchPath}/dispatches`, { headers })).json();
+    const receivingCentre = await request.put(`${dispatchPath}/handover-centre`, { headers, data: { centreId: plan.centres[0].id } });
+    expect(receivingCentre.ok()).toBeTruthy();
     const handoff = await request.post(`${api}/fulfillment/cases/${aid.id}/authorize`, {
-      headers: { Authorization: 'Bearer ' + (await coordinator.json()).accessToken },
+      headers,
       data: { reason: 'Confirmed quantity and unit for delivery.' },
     });
     expect(handoff.ok()).toBeTruthy();
@@ -100,12 +111,11 @@ for (const { stockUnit, stock } of [{ stockUnit: 'l', stock: 15 }, { stockUnit: 
     await page.getByLabel('Depot name').fill(inventoryName + ' depot');
     await page.getByLabel('Depot location').fill('Synthetic Colombo depot');
     await page.getByRole('button', { name: 'Save depot' }).click();
-    await page.getByRole('button', { name: 'Add resource', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Add resource' });
     await dialog.getByLabel('Depot', { exact: true }).selectOption({ label: inventoryName + ' depot' });
+    await dialog.getByLabel('Category', { exact: true }).selectOption('FoodWater');
     await dialog.getByLabel('Resource name', { exact: true }).selectOption('custom');
     await dialog.getByLabel('Custom resource name', { exact: true }).fill(inventoryName);
-    await dialog.getByLabel('Category', { exact: true }).selectOption('FoodWater');
     await dialog.getByLabel('Unit', { exact: true }).selectOption(stockUnit);
     await dialog.getByLabel('Opening stock').fill(String(stock));
     await dialog.getByLabel('Latitude', { exact: true }).fill('6.92');
@@ -113,11 +123,11 @@ for (const { stockUnit, stock } of [{ stockUnit: 'l', stock: 15 }, { stockUnit: 
     await dialog.getByRole('button', { name: 'Save resource' }).click();
     await expect(page.getByRole('rowheader', { name: new RegExp(inventoryName) })).toBeVisible();
     await page.goto(`/staff/cases/${aid.id}`);
-    await expect(page.getByText('Awaiting allocation · 20 L')).toBeVisible();
-    await fulfillStock(page, inventoryName, stockUnit === 'l' ? 'L' : 'mL', stock, `MEASUREMENT-${aid.reference}`);
-    await expect(page.getByText(/15 L delivered/)).toBeVisible();
+    await expect(caseItemQuantity(page, 'Awaiting allocation')).toHaveText('20 L');
+    await fulfillStock(page, request, aid.id, 'Drinking water', inventoryName, stockUnit === 'l' ? 'L' : 'mL', stock);
+    await expect(caseItemQuantity(page, 'Delivered')).toHaveText('15 L');
     await page.reload();
-    await expect(page.getByText(/15 L delivered/)).toBeVisible();
-    await expect(page.getByText('Awaiting allocation · 5 L')).toBeVisible();
+    await expect(caseItemQuantity(page, 'Delivered')).toHaveText('15 L');
+    await expect(caseItemQuantity(page, 'Awaiting allocation')).toHaveText('5 L');
   });
 }

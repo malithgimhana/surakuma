@@ -102,7 +102,7 @@ public sealed class FulfillmentController(CrisisDbContext db, IStore store, Acce
     }, ct);
 
     [HttpPost("cases/{id:guid}/authorize")]
-    public Task<object> Authorize(Guid id, ReviewNote input, CancellationToken ct) => store.TransactionAsync<object>(async () =>
+    public Task<object> Authorize(Guid id, ReviewNote input, CancellationToken ct) => store.RoutingTransactionAsync<object>(async () =>
     {
         var request = await access.Request(id, [Roles.Coordinator], ct);
         if (access.IsLogisticsWorkspace || !await access.Coordinates(request.CrisisId, ct)) throw new AccessDeniedException();

@@ -1,4 +1,4 @@
-import { fulfillStock } from './fulfill-stock';
+import { caseItemQuantity, fulfillStock } from './fulfill-stock';
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 const seedPassword = process.env.SURAKUMA_ACCEPTANCE_PASSWORD ?? (JSON.parse(
@@ -20,7 +20,7 @@ test('public homepage and Sinhala mobile navigation', async ({ page }) => {
   ).toBeVisible();
 });
 test('citizen submits, staff review AI, logistics deliver partial aid and close the case', async ({
-  page,
+  page, request,
 }, run) => {
   test.setTimeout(120000);
   await page.goto('/login');
@@ -36,7 +36,6 @@ test('citizen submits, staff review AI, logistics deliver partial aid and close 
   await page
     .getByLabel('Crisis event', { exact: true })
     .selectOption({ label: 'Kelani River flood response' });
-  await expect(page.getByText(/Your request will be sent to the response centre/)).toBeVisible();
   await page.getByLabel('Which item do you need?').selectOption('DryRations');
   await page.getByLabel('When will it run out?').selectOption('WithinSixHours');
   await page
@@ -64,7 +63,13 @@ test('citizen submits, staff review AI, logistics deliver partial aid and close 
   await page.goto(`/staff/cases/${id}`);
   await page.getByRole('button', { name: 'Begin review', exact: true }).click();
   const items = page.getByRole('dialog', { name: 'Review requested items' });
-  await items.getByRole('button', { name: 'Close dialog' }).click();
+  await items.getByRole('button', { name: 'Add case item' }).click();
+  await items.getByLabel('Item name', { exact: true }).fill('Dry rations');
+  await items.getByLabel('Unit', { exact: true }).selectOption('packs');
+  await items.getByLabel('Required quantity', { exact: true }).fill('10');
+  await items.getByLabel('Approved quantity', { exact: true }).fill('10');
+  await items.getByRole('button', { name: 'Save reviewed items' }).click();
+  await expect(items).toBeHidden();
   await page.getByRole('button', { name: 'Verify request', exact: true }).click();
   await expect(page.locator('.cm-page-header').getByText('Verified', { exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Triage recommendation' })).toBeVisible();
@@ -88,6 +93,9 @@ test('citizen submits, staff review AI, logistics deliver partial aid and close 
   }
   await switchAccount('coordinator', '/staff');
   await page.goto(`/staff/cases/${id}`);
+  await page.getByLabel('Receiving centre for the next dispatch').selectOption({ index: 1 });
+  await page.getByRole('button', { name: 'Save receiving centre' }).click();
+  await expect(page.getByText('Receiving centre set to Colombo depot (demo).', { exact: true })).toBeVisible();
   await page.getByLabel('Coordinator handoff reason').fill('Verified the household need and delivery plan.');
   await page.getByRole('button', { name: 'Authorize fulfillment' }).click();
   await expect(page.getByRole('button', { name: 'Authorize fulfillment' })).toHaveCount(0);
@@ -101,23 +109,22 @@ test('citizen submits, staff review AI, logistics deliver partial aid and close 
   await page.getByLabel('Depot name', { exact: true }).fill(depotName);
   await page.getByLabel('Depot location', { exact: true }).fill('Synthetic Colombo depot');
   await page.getByRole('button', { name: 'Save depot', exact: true }).click();
-  await page.getByRole('button', { name: 'Add resource', exact: true }).click();
   await page.getByRole('dialog', { name: 'Add resource' }).getByLabel('Depot', { exact: true }).selectOption({ label: depotName });
   await expect(page.getByLabel('Latitude', { exact: true })).toHaveValue('');
   await expect(page.getByLabel('Longitude', { exact: true })).toHaveValue('');
+  await page.getByLabel('Category', { exact: true }).selectOption('FoodWater');
   await page.getByLabel('Latitude', { exact: true }).fill('6.92');
   await page.getByLabel('Longitude', { exact: true }).fill('79.9');
   await page.getByLabel('Resource name', { exact: true }).selectOption('custom');
   await page.getByLabel('Custom resource name', { exact: true }).fill(resourceName);
-  await page.getByLabel('Category', { exact: true }).selectOption('FoodWater');
   await page.getByRole('dialog', { name: 'Add resource' }).getByLabel('Unit', { exact: true }).selectOption('packs');
   await page.getByLabel('Opening stock', { exact: true }).fill('6');
   await page.getByRole('button', { name: 'Save resource', exact: true }).click();
   await expect(page.getByRole('rowheader', { name: new RegExp(resourceName) })).toBeVisible();
   await page.goto(`/staff/cases/${id}`);
-  await fulfillStock(page, resourceName, 'packs', 6, 'ACCEPTANCE-PARTIAL');
-  await expect(page.getByText('Awaiting allocation · 4 packs')).toBeVisible();
-  await expect(page.getByText(/6 packs delivered/)).toBeVisible();
+  await fulfillStock(page, request, id, 'Dry rations', resourceName, 'packs', 6);
+  await expect(caseItemQuantity(page, 'Awaiting allocation')).toHaveText('4 packs');
+  await expect(caseItemQuantity(page, 'Delivered')).toHaveText('6 packs');
   await page.screenshot({ path: run.outputPath('partial-delivery.png'), fullPage: true });
 
   await page.getByRole('navigation', { name: 'Workspace navigation' }).locator('a[href^="/staff/resources"]').click();
@@ -128,13 +135,16 @@ test('citizen submits, staff review AI, logistics deliver partial aid and close 
   await page.getByRole('button', { name: 'Save stock movement', exact: true }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Stock movement recorded.' })).toBeVisible();
   await page.goto(`/staff/cases/${id}`);
-  await fulfillStock(page, resourceName, 'packs', 4, 'ACCEPTANCE-REMAINDER');
-  await expect(page.getByText(/10 packs delivered/)).toBeVisible();
+  await fulfillStock(page, request, id, 'Dry rations', resourceName, 'packs', 4);
+  await expect(caseItemQuantity(page, 'Delivered')).toHaveText('10 packs');
   await switchAccount('case', '/staff');
   await page.goto(`/staff/cases/${id}`);
   await page.getByRole('button', { name: 'Close completed case', exact: true }).click();
   await expect(page.locator('.cm-page-header').getByText('Completed', { exact: true })).toBeVisible();
   await switchAccount('citizen', '/app');
   await page.goto(`/app/requests/${id}`);
-  await expect(page.getByText('10 / 10 packs', { exact: true })).toBeVisible();
+  const delivered = page.getByRole('definition').filter({ hasText: '10 of 10 packs delivered' });
+  await expect(delivered).toBeVisible();
+  await expect(delivered).toContainText('Still needed 0 packs');
+  await page.screenshot({ path: run.outputPath('citizen-completed-delivery.png'), fullPage: true });
 });

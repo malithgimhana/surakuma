@@ -684,7 +684,8 @@ dl {
 }
 .public-nav {
   display: flex;
-  gap: 26px;
+  flex-wrap: wrap;
+  column-gap: 26px;
   align-items: center;
   font-size: 0.84rem;
 }
@@ -2398,7 +2399,7 @@ dl {
 }
 @media (max-width: 1100px) {
   .public-nav {
-    gap: 17px;
+    column-gap: 17px;
     font-size: 0.78rem;
   }
   .header-actions {
@@ -2475,6 +2476,7 @@ dl {
     background: #fff;
     box-shadow: 0 20px 25px #12213a13;
     flex-direction: column;
+    flex-wrap: nowrap;
     gap: 5px;
     align-items: stretch;
   }

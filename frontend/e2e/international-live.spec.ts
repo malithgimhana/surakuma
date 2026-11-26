@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
-import { fulfillStock } from './fulfill-stock';
+import type { APIResponse } from '@playwright/test';
 test('real three-country submission, scoped triage, allocation and delivery', async ({
   browser,
   request,
@@ -18,6 +18,14 @@ test('real three-country submission, scoped triage, allocation and delivery', as
   });
   expect(login.ok()).toBeTruthy();
   const headers = { Authorization: `Bearer ${(await login.json()).accessToken}` };
+  async function checked(response: APIResponse) {
+    expect(response.ok(), `${new URL(response.url()).pathname} returned ${response.status()}: ${response.ok() ? '' : await response.text()}`).toBeTruthy();
+    return response;
+  }
+  async function actor(email: string) {
+    const session = await checked(await request.post(api + '/auth/login', { data: { email, password } }));
+    return { Authorization: `Bearer ${(await session.json()).accessToken}` };
+  }
   const cases: { id: string; country: string }[] = [];
   for (const [countryCode, latitude, longitude] of [
     ['LK', 6.93, 79.88],
@@ -53,6 +61,13 @@ test('real three-country submission, scoped triage, allocation and delivery', as
       ).ok(),
     ).toBeTruthy();
     const email = `scope-${countryCode.toLowerCase()}@acceptance.test`;
+    const managerEmail = `case-${countryCode}@acceptance.test`;
+    const volunteerCoordinatorEmail = `volunteer-coordinator-${countryCode}@acceptance.test`;
+    for (const [role, address] of [['CaseManager', managerEmail], ['VolunteerCoordinator', volunteerCoordinatorEmail]]) {
+      await checked(await request.post(api + '/admin/users', { headers, data: {
+        email: address, password, name: `${countryCode} ${role}`, organisationId, countryCode, role, crisisId: crisis.id,
+      } }));
+    }
     const logisticsEmail = `logistics-${countryCode.toLowerCase()}@acceptance.test`;
     expect(
       (
@@ -74,26 +89,13 @@ test('real three-country submission, scoped triage, allocation and delivery', as
       headers,
       data: { email: logisticsEmail, password, name: `${countryCode} logistics staff`, organisationId, role: 'Logistics', countryCode },
     })).ok()).toBeTruthy();
-    expect(
-      (
-        await request.post(api + '/resources', {
-          headers,
-          data: {
-            organisationId,
-            countryCode,
-            name: `${countryCode} food`,
-            category: 'FoodWater',
-            unit: 'packs',
-            stock: 20,
-            locationText: 'Acceptance depot',
-            latitude,
-            longitude,
-            suitability: 'Food packs',
-            transportAvailable: true,
-          },
-        })
-      ).ok(),
-    ).toBeTruthy();
+    const depot = await (await checked(await request.post(api + '/logistics/depots', { headers, data: {
+      operationId: crypto.randomUUID(), countryCode, organisationId, name: `Acceptance centre ${countryCode}`, location: 'Synthetic receiving site',
+    } }))).json();
+    const stock = await (await checked(await request.post(api + '/resources', { headers, data: {
+      organisationId, countryCode, name: `${countryCode} food`, category: 'FoodWater', unit: 'packs', stock: 20,
+      locationText: 'Acceptance depot', latitude, longitude, suitability: 'Food packs', transportAvailable: true,
+    } }))).json();
     const citizenContext = await browser.newContext({
       ignoreHTTPSErrors: true,
       viewport: { width: 390, height: 844 },
@@ -139,7 +141,6 @@ test('real three-country submission, scoped triage, allocation and delivery', as
     expect(
       accessibility.violations.filter((v) => v.impact === 'critical' || v.impact === 'serious'),
     ).toEqual([]);
-    await citizenContext.close();
     const staffContext = await browser.newContext({ ignoreHTTPSErrors: true });
     staffContext.setDefaultTimeout(15000);
     await staffContext.addInitScript(
@@ -152,47 +153,61 @@ test('real three-country submission, scoped triage, allocation and delivery', as
     await staff.locator('input[name=password]').fill(password);
     await staff.getByRole('button', { name: 'Log in', exact: true }).click();
     await staff.waitForURL('**/staff');
-    await expect(staff.getByRole('heading', { name: 'Crisis Coordinator overview' })).toBeVisible();
-    const shelterSnapshot = staff.waitForResponse(response =>
-      response.url().includes('/api/v1/staff/shelters?') && response.request().method() === 'GET');
-    await staff.getByRole('link', { name: 'Shelter capacity', exact: true }).click();
-    expect((await shelterSnapshot).status()).toBe(200);
+    await expect(staff.getByRole('heading', { name: 'Crisis command centre' })).toBeVisible();
+    await staff.getByRole('navigation', { name: 'Workspace navigation' }).getByRole('link', { name: 'Shelter capacity', exact: true }).click();
     await expect(staff.getByRole('heading', { name: 'Shelter capacity', exact: true })).toBeVisible();
-    await staff.goto(`${origin}/staff/cases/${aid.id}`);
-    for (const action of ['Begin review', 'Verify request', 'Approve case']) {
-      const button = staff.getByRole('button', { name: action, exact: true });
-      await expect(button).toBeEnabled({ timeout: 30000 });
-      await staff.getByLabel('Reason / case note').fill('Acceptance verification');
-      const changed = staff.waitForResponse(
-        (r) => r.url().includes(`/requests/${aid.id}/status`) && r.request().method() === 'PATCH',
-      );
-      await button.click();
-      expect((await changed).ok()).toBeTruthy();
+    const staffHeaders = await actor(email);
+    const manager = await actor(managerEmail);
+    const logistics = await actor(logisticsEmail);
+    const volunteers = await actor(volunteerCoordinatorEmail);
+    const casePath = `${api}/fulfillment/cases/${aid.id}`;
+    const countryScope = `?countryCode=${countryCode}`;
+    for (const status of ['UnderReview', 'Verified', 'Approved']) {
+      await checked(await request.patch(`${api}/requests/${aid.id}/status${countryScope}&staffRole=CaseManager`, {
+        headers: manager, data: { status, reason: 'Acceptance verification' },
+      }));
     }
-    await staff.reload();
-    await staff.getByLabel('Coordinator handoff reason').fill('Synthetic stock and delivery plan verified.');
-    await staff.getByRole('button', { name: 'Authorize fulfillment' }).click();
-    await expect(staff.getByRole('button', { name: 'Authorize fulfillment' })).toHaveCount(0);
-    await expect(staff.getByRole('heading', { name: 'Delivery progress' })).toBeVisible();
-    await expect(staff.getByRole('button', { name: 'Approve reservation', exact: true })).toHaveCount(0);
-
-    const logisticsContext = await browser.newContext({ ignoreHTTPSErrors: true });
-    await logisticsContext.addInitScript(c => localStorage.setItem('surakuma.country', c), countryCode);
-    const logistics = await logisticsContext.newPage();
-    await logistics.goto(origin + '/login');
-    await logistics.getByLabel('Email address', { exact: true }).fill(logisticsEmail);
-    await logistics.locator('input[name=password]').fill(password);
-    await logistics.getByRole('button', { name: 'Log in', exact: true }).click();
-    await logistics.waitForURL('**/staff');
-    await logistics.goto(`${origin}/staff/cases/${aid.id}?role=Logistics`);
-    await fulfillStock(logistics, `${countryCode} food`, 'packs', 1, `ACCEPTANCE-${countryCode}`);
-    await logisticsContext.close();
-    await staff.reload();
-    await expect(staff.getByText('Assistance delivered', { exact: true }).first()).toBeVisible();
-    const staffLogin = await (
-      await request.post(api + '/auth/login', { data: { email, password } })
-    ).json();
-    const staffHeaders = { Authorization: `Bearer ${staffLogin.accessToken}` };
+    await checked(await request.put(casePath + '/handover-centre' + countryScope, { headers: staffHeaders, data: { centreId: depot.id } }));
+    await checked(await request.post(casePath + '/authorize' + countryScope, { headers: staffHeaders, data: { reason: 'Stock and centre confirmed.' } }));
+    const allocationId = crypto.randomUUID(), dispatchId = crypto.randomUUID();
+    const logisticsScope = countryScope + '&staffRole=Logistics';
+    await checked(await request.post(api + '/allocations' + logisticsScope, { headers: logistics, data: {
+      operationId: allocationId, requestId: aid.id, resourceId: stock.id, quantity: 1,
+    } }));
+    await checked(await request.post(`${api}/fulfillment/allocations/${allocationId}/prepare${logisticsScope}`, {
+      headers: logistics, data: { packedQuantity: 1, note: 'Counted and packed.' },
+    }));
+    await checked(await request.post(casePath + '/dispatches' + logisticsScope, {
+      headers: logistics, data: { operationId: dispatchId, allocationIds: [allocationId] },
+    }));
+    const items = [{ allocationId, quantity: 1 }];
+    await checked(await request.post(`${api}/fulfillment/dispatches/${dispatchId}/receive${logisticsScope}`, {
+      headers: logistics, data: { items },
+    }));
+    const volunteerScope = countryScope + '&staffRole=VolunteerCoordinator';
+    const volunteerEmail = `field-${countryCode}@acceptance.test`;
+    const volunteer = await (await checked(await request.post(api + '/volunteers/task-registration' + volunteerScope, {
+      headers: volunteers, data: { requestId: aid.id, caseDispatchId: dispatchId, name: 'Acceptance volunteer',
+        email: volunteerEmail, password, profile: { skills: 'distribution', available: true } },
+    }))).json();
+    await checked(await request.post(`${api}/volunteers/${volunteer.id}/verify${volunteerScope}`, { headers: volunteers }));
+    const task = await (await checked(await request.post(api + '/volunteer-tasks' + volunteerScope, { headers: volunteers, data: {
+      requestId: aid.id, caseDispatchId: dispatchId, volunteerId: volunteer.id, title: 'Deliver relief supplies',
+      requiredSkill: 'distribution', dueAt: new Date(Date.now() + 7200000).toISOString(),
+    } }))).json();
+    const fieldHeaders = await actor(volunteerEmail);
+    const taskPath = `${api}/volunteer-tasks/${task.id}`;
+    for (const action of ['Accept', 'Start']) await checked(await request.post(taskPath, { headers: fieldHeaders, data: { action } }));
+    await checked(await request.post(taskPath, { headers: fieldHeaders, data: {
+      action: 'Complete', workDescription: 'Collected the package at the centre.', outcome: 'Handed the package to the household.',
+      issues: '', handoverQuantities: items,
+    } }));
+    await checked(await request.post(taskPath + volunteerScope, { headers: volunteers, data: { action: 'Verify', note: 'Verified household receipt.' } }));
+    const delivered = await (await checked(await request.get(`${api}/requests/${aid.id}`, { headers: manager }))).json();
+    expect(delivered.request.status).toBe('Fulfilled');
+    await page.goto(`${origin}/app/requests/${aid.id}`);
+    await expect(page.getByText('Citizen handover verified', { exact: true }).first()).toBeVisible();
+    await citizenContext.close();
     for (const foreign of cases.filter((c) => c.country !== countryCode))
       expect(
         (await request.get(`${api}/requests/${foreign.id}`, { headers: staffHeaders })).status(),
@@ -285,8 +300,9 @@ test('volunteer reports, partner assignments and independent alert review work i
   const admin = await request.post(api + '/auth/login', { data: { email: 'admin@surakuma.test', password } });
   expect(admin.ok()).toBeTruthy();
   const headers = { Authorization: `Bearer ${(await admin.json()).accessToken}` };
-  const pageOfCases = await (await request.get(api + '/requests?countryCode=LK&status=Approved', { headers })).json();
-  const food = pageOfCases.items.find((row: { category: string }) => row.category === 'FoodWater');
+  const pageOfCases = await (await request.get(api + '/requests?countryCode=LK&status=Approved&pageSize=100', { headers })).json();
+  const food = pageOfCases.items.find((row: { description: string }) =>
+    row.description === 'Synthetic scenario: our household needs ten food packs after flooding.');
   expect(food).toBeTruthy();
   const suffix = crypto.randomUUID().slice(0, 8);
   const volunteerEmail = `phase-volunteer-${suffix}@acceptance.test`;
@@ -418,6 +434,7 @@ test('country administrator sees only authorised reporting and cannot verify par
   await expect(overview.getByRole('rowheader')).toContainText('Sri Lanka');
   await page.goto(origin + '/admin?section=users');
   await expect(page.getByRole('row', { name: /national@acceptance\.test/ })).toBeVisible();
+  await page.getByRole('searchbox', { name: 'Search users' }).fill('citizen@surakuma.test');
   await expect(page.getByRole('row', { name: /citizen@surakuma\.test/ })).toContainText('View only');
   await page.goto(origin + '/admin?section=organisations');
   await page.getByRole('button', { name: 'Add organisation' }).click();

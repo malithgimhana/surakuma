@@ -98,7 +98,20 @@ public sealed class FulfillmentOperationsTests(ApiFixture fixture) : IClassFixtu
         var allocation = new { requestId = request.Id, resourceId = food.Id, needId = first, operationId = allocationId, quantity = 2 };
         Assert.Equal(HttpStatusCode.BadRequest, (await logistics.PostAsJsonAsync("/api/v1/allocations" + Scope, allocation)).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await logistics.PostAsJsonAsync(path + "/authorize" + Scope, new { reason = "Unauthorized" })).StatusCode);
-        (await coordinator.PostAsJsonAsync(path + "/authorize?countryCode=LK", new { reason = "Approved stock handoff." })).EnsureSuccessStatusCode();
+        var authorizationPath = path + "/authorize?countryCode=LK";
+        var authorization = new { reason = "Approved stock handoff." };
+        var results = await Task.WhenAll(coordinator.PostAsJsonAsync(authorizationPath, authorization),
+            coordinator.PostAsJsonAsync(authorizationPath, authorization));
+        using var initialAuthorization = results[0];
+        using var concurrentAuthorization = results[1];
+        initialAuthorization.EnsureSuccessStatusCode();
+        concurrentAuthorization.EnsureSuccessStatusCode();
+        var firstAuthorization = await initialAuthorization.Content.ReadFromJsonAsync<JsonElement>();
+        var secondAuthorization = await concurrentAuthorization.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(firstAuthorization.GetProperty("authorizedAt").GetDateTimeOffset(),
+            secondAuthorization.GetProperty("authorizedAt").GetDateTimeOffset());
+        Assert.Equal(1, await db.Set<AuditEvent>().CountAsync(row =>
+            row.EntityId == request.Id && row.Action == "CoordinatorAuthorized"));
         Assert.Equal(HttpStatusCode.Forbidden, (await coordinator.PostAsJsonAsync("/api/v1/allocations?countryCode=LK", allocation)).StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, (await coordinator.PostAsJsonAsync("/api/v1/allocations" + Scope, allocation)).StatusCode);
         (await logistics.PostAsJsonAsync("/api/v1/allocations" + Scope, allocation)).EnsureSuccessStatusCode();

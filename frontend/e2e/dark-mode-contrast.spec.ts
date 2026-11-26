@@ -7,7 +7,7 @@ const user = {
   email: 'demo@surakuma.test',
   language: 'en',
   roles: ['Coordinator', 'Citizen'],
-  memberships: [{ id: 'm', organisationId: 'o', role: 'Coordinator' }],
+  memberships: [{ id: 'm', organisationId: 'o', role: 'Coordinator', countryCode: 'LK' }],
   householdSize: 2,
   accessibilityNeeds: '',
 };
@@ -82,16 +82,13 @@ const fixtures: Record<string, unknown> = {
     outstanding: 6, candidates: [], shortage: false, queuePosition: 0, competingRequests: 0,
     shortageExplanation: 'The request is awaiting review.',
   },
-  '/resources': [
+  '/staff/coordinator/inventory': [
     {
-      id: 'i',
-      name: 'Family food packs',
-      locationText: 'Demo depot',
-      available: 6,
-      reserved: 0,
-      stock: 6,
-      unit: 'packs',
-      suitability: 'Family supplies',
+      resource: {
+        id: 'i', organisationId: 'o', category: 'FoodWater', name: 'Family food packs',
+        locationText: 'Demo depot', available: 6, reserved: 0, stock: 6, unit: 'packs',
+      },
+      organisation: 'Demo organisation', matchesApprovedNeed: true,
     },
   ],
   '/shelters': [],
@@ -113,9 +110,9 @@ test('dark mode keeps request and staff screens readable', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('surakuma.theme', 'dark'));
   for (const [path, visible] of [
     ['/app/requests/new', 'What do you need help with?'],
-    ['/staff', 'Crisis Coordinator overview'],
+    ['/staff', 'Crisis command centre'],
     ['/staff/cases/r', 'AI decision support'],
-    ['/staff/resources', 'Family food packs'],
+    ['/staff/resources', 'Resource availability'],
     ['/shelters', 'Find a shelter'],
     ['/login', 'Welcome back'],
   ]) {

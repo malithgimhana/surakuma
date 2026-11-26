@@ -7,7 +7,7 @@ const password = process.env.SURAKUMA_ACCEPTANCE_PASSWORD;
 const api = '/api/v1';
 const scope = 'countryCode=LK&staffRole=Coordinator';
 const output = process.env.COORDINATOR_QA_SCREENSHOTS;
-const isolated = /^Server=\(localdb\)\\\w+;Database=Surakuma_Acceptance_[a-f0-9]{32};/i
+const isolated = /^Server=\(localdb\)\\\w+;Database=Surakuma_(?:Assessment_)?Acceptance_[a-f0-9]{32};/i
   .test(process.env.ConnectionStrings__Default ?? '') && process.env.Email__Provider === 'Capture';
 
 test.skip(!password || !isolated, 'Use the isolated LocalDB acceptance harness with capture-only delivery.');
@@ -29,7 +29,9 @@ test('Crisis Coordinator workspace connects all seven pages to the controlled ba
   const volunteer = await headers(request, 'volunteer');
   const roster = await request.get(`${api}/volunteers?${scope}`, { headers: coordinator });
   await expect(roster).toBeOK();
-  const assignment = (await roster.json()).tasks[0];
+  const assignment = (await roster.json()).tasks.find((task: { title: string }) =>
+    task.title === 'Prepare household food pack delivery');
+  expect(assignment).toBeTruthy();
   const report = 'Prepared the assigned meal packs for the test delivery.';
   for (const action of ['Accept', 'Start', 'Complete']) {
     await expect(await request.post(`${api}/volunteer-tasks/${assignment.id}?countryCode=LK`, {
@@ -50,6 +52,19 @@ test('Crisis Coordinator workspace connects all seven pages to the controlled ba
     })).toBeOK();
   }
   await expect(await request.post(medicalPath + '/recommendations/generate?countryCode=LK', { headers: manager })).toBeOK();
+  const citizen = await headers(request, 'citizen');
+  const shortageSubmission = await request.post(`${api}/requests`, { headers: citizen, data: {
+    crisisId: medical.crisisId, category: 'FoodWater', priority: 'Normal', description: 'Synthetic food shortage for the coordinator exercise.',
+    locationText: 'Synthetic Colombo collection point', quantity: 1000, unit: 'packs', householdSize: 4, accessibilityNeeds: '',
+    submissionKey: crypto.randomUUID(), synthetic: true,
+  } });
+  expect(shortageSubmission.status()).toBe(201);
+  const shortage = await shortageSubmission.json();
+  for (const status of ['UnderReview', 'Verified', 'Approved']) {
+    await expect(await request.patch(`${api}/requests/${shortage.id}/status?countryCode=LK`, {
+      headers: manager, data: { status, reason: 'Verified synthetic demand exceeds the stock on hand.' },
+    })).toBeOK();
+  }
   expect((await request.patch(medicalPath + `/status?${scope}`, {
     headers: coordinator, data: { status: 'Rejected', reason: 'Test of scoped permissions.' },
   })).status()).toBe(403);
@@ -87,7 +102,7 @@ test('Crisis Coordinator workspace connects all seven pages to the controlled ba
   await nav.getByRole('link', { name: 'Overview' }).click();
   await page.getByRole('link', { name: /Cases with stock shortages/ }).click();
   const shortages = page.getByRole('region', { name: 'Case results' });
-  await shortages.getByRole('link').first().click();
+  await shortages.getByRole('link', { name: shortage.reference, exact: true }).click();
   await expect(page.getByText(/Suitable stock is insufficient/)).toBeVisible();
   await page.getByRole('link', { name: /Check stock/ }).click();
   await expect(page.getByRole('heading', { name: 'Resource availability' })).toBeVisible();
@@ -194,7 +209,9 @@ test('Crisis Coordinator workspace connects all seven pages to the controlled ba
   expect((await publicAlerts.json()).some((item: { id: string }) => item.id === alert.id)).toBe(true);
   const notifications = await request.get(`${api}/notifications?${scope}`, { headers: coordinator });
   await expect(notifications).toBeOK();
-  expect((await notifications.json()).some((item: { message: string }) => item.message.includes('public alert was published'))).toBe(true);
+  const inbox = (await notifications.json()).map((item: { message: string }) => item.message);
+  expect(inbox).toContain(`Public alerts · ${crisis}: Your alert was approved for publication.`);
+  expect(inbox.some((message: string) => message.includes('public alert was published'))).toBe(false);
   await page.getByLabel('Filter by status').selectOption('Published');
   await expect(page.getByRole('button', { name: `View alert: ${title}` })).toBeVisible();
   await screenshot(page, '10-published-alerts');

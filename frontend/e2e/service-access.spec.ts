@@ -88,14 +88,17 @@ test('service access publishes a centre and sends a citizen to the correct form'
 test('service access saves a volunteer availability window through the profile', async ({ page }) => {
   await signIn(page, 'volunteer');
   await page.goto('/volunteer/profile');
-  const start = new Date(Date.now() + 86400000).toISOString().slice(0, 16);
-  const end = new Date(Date.now() + 90000000).toISOString().slice(0, 16);
+  const startingWindows = page.getByRole('button', { name: /Remove availability starting/ });
+  await expect(startingWindows.first()).toBeVisible();
+  const initialCount = await startingWindows.count();
+  const start = new Date(Date.now() + 10 * 86400000).toISOString().slice(0, 16);
+  const end = new Date(Date.now() + 10 * 86400000 + 3600000).toISOString().slice(0, 16);
   await page.getByLabel('Available from').fill(start);
   await page.getByLabel('Available until').fill(end);
   await page.getByRole('button', { name: 'Add availability' }).click();
   await expect(page.getByText('Availability updated.')).toBeVisible();
   await page.reload();
-  await expect(page.getByRole('button', { name: /Remove availability starting/ })).toBeVisible();
-  await page.getByRole('button', { name: /Remove availability starting/ }).click();
-  await expect(page.getByText(/Availability unknown/)).toBeVisible();
+  await expect(startingWindows).toHaveCount(initialCount + 1);
+  await startingWindows.last().click();
+  await expect(startingWindows).toHaveCount(initialCount);
 });

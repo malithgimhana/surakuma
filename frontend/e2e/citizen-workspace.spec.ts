@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
+import { verifyVolunteerHandover } from './fulfill-stock';
 
 const password = process.env.SURAKUMA_ACCEPTANCE_PASSWORD ?? (JSON.parse(
   readFileSync(new URL('../../backend/data/development-settings.json', import.meta.url), 'utf8'),
@@ -120,7 +121,7 @@ test('Request filters, shelter zero-results, alerts and profile use the workspac
   await expect(page).toHaveURL(/\/app\/shelters$/);
   await expect(page.getByRole('heading', { name: 'Riverside Community Centre' })).toBeVisible();
   await page.screenshot({ path: run.outputPath('shelter-directory.png'), fullPage: true });
-  await page.getByRole('textbox', { name: 'Search by name or area' }).fill('unmatched-shelter');
+  await page.getByRole('searchbox', { name: 'Search by name or area' }).fill('unmatched-shelter');
   await expect(page.getByRole('heading', { name: 'No shelters match your search' })).toBeVisible();
   await page.getByRole('button', { name: 'Map', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'No shelters match your search' })).toBeVisible();
@@ -188,7 +189,7 @@ test('A valid replacement photo survives real fulfilment, tracking and feedback 
     expect(session.ok()).toBe(true);
     return { Authorization: `Bearer ${(await session.json()).accessToken}` };
   }
-  async function operation(path: string, headers: Record<string, string>, data?: object, method: 'post' | 'patch' = 'post') {
+  async function operation(path: string, headers: Record<string, string>, data?: object, method: 'post' | 'patch' | 'put' = 'post') {
     const response = await request[method](prefix + path, { headers, data });
     expect(response.ok(), `${method} ${path} ${response.status()} ${await response.text()}`).toBe(true);
     return response;
@@ -204,7 +205,10 @@ test('A valid replacement photo survives real fulfilment, tracking and feedback 
   }
   const approved = await (await request.get(prefix + caseUrl, { headers: manager })).json();
   expect(approved.request).toMatchObject({ status: 'Approved', category: 'FoodWater', quantity: 2, unit: 'packs' });
-  await operation(`/fulfillment/cases/${id}/authorize`, coordinator, { reason: 'Coordinator checked the synthetic handoff.' });
+  const dispatchPath = `/fulfillment/cases/${id}`;
+  const plan = await (await request.get(prefix + dispatchPath + '/dispatches', { headers: coordinator })).json();
+  await operation(`${dispatchPath}/handover-centre`, coordinator, { centreId: plan.centres[0].id }, 'put');
+  await operation(`${dispatchPath}/authorize`, coordinator, { reason: 'Coordinator checked the synthetic handoff.' });
   const stock = await (await operation('/resources', logistics, {
     organisationId: approved.request.organisationId, name: `Synthetic QA stock ${reference}`, category: 'FoodWater',
     unit: 'packs', stock: 2, locationText: 'Synthetic Colombo depot', latitude: 6.92, longitude: 79.88,
@@ -213,10 +217,11 @@ test('A valid replacement photo survives real fulfilment, tracking and feedback 
   async function deliverOnePack() {
     const allocation = await (await operation('/allocations', logistics, { requestId: id, resourceId: stock.id, quantity: 1 })).json();
     await operation(`/fulfillment/allocations/${allocation.id}/prepare`, logistics, { packedQuantity: 1, note: 'Counted synthetic package.' });
-    await operation(`/allocations/${allocation.id}/Dispatch`, logistics);
-    await operation(`/allocations/${allocation.id}/Deliver`, logistics, {
-      reference: `QA-${allocation.id}`, confirmedQuantity: 1, receivedBy: 'Synthetic recipient', method: 'RecipientAcknowledgment',
-    });
+    const dispatch = await (await operation(`${dispatchPath}/dispatches`, logistics, {
+      operationId: crypto.randomUUID(), allocationIds: [allocation.id],
+    })).json();
+    await operation(`/fulfillment/dispatches/${dispatch.id}/receive`, logistics, { items: [{ allocationId: allocation.id, quantity: 1 }] });
+    await verifyVolunteerHandover(request, id, dispatch.id, allocation.id, 1);
   }
   await deliverOnePack();
   await page.reload();
