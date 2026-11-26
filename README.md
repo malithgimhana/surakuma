@@ -8,12 +8,18 @@
 
 <p align="center">
   <a href="#what-you-can-do">What you can do</a> ·
+  <a href="#how-gpt-6-luna-helps">How AI helps</a> ·
+  <a href="#see-the-interface">See the interface</a> ·
   <a href="#run-on-windows">Run on Windows</a> ·
   <a href="#try-the-sample-data">Try the sample data</a> ·
   <a href="#project-team">Project team</a>
 </p>
 
 Surakuma connects the people who need help with the teams that organise it. A household can request food and water, medical support, temporary shelter, transport, or accessibility assistance. Response teams review the request, arrange support, and update its status so the household can see what happens next.
+
+![Surakuma homepage with links to request help, find shelter, and view crisis alerts](assets/readme/homepage.jpg)
+
+*Public homepage. Residents can request assistance, find a shelter, or read crisis alerts.*
 
 ## What you can do
 
@@ -32,6 +38,39 @@ Surakuma connects the people who need help with the teams that organise it. A ho
 2. A case manager reviews the details and records the assessment. A coordinator can follow the case within the assigned response.
 3. Logistics staff reserve supplies, dispatch them, and record what was delivered.
 4. The resident returns to **My requests** to see the updated status.
+
+## How GPT-6 Luna helps
+
+**Finding the right form.** A resident writes “We need drinking water for our family” and selects **Help me choose with AI**. Surakuma can suggest **Food & water**. The resident chooses the category and submits the request.
+
+| Where it helps | What Surakuma offers |
+| --- | --- |
+| **Citizen guidance** | Suggests a request category in English, Sinhala, Tamil, Hindi, or Nepali. It can also rephrase approved guidance on where to go in the portal. |
+| **Case review** | Summarises structured intake, suggests a practical next check, and flags potentially related requests for review. Staff assess the evidence and record their decisions. |
+| **Updates and public alerts** | Helps draft short citizen messages and public alert translations for review. It can also summarise already published alerts and generate illustrative artwork. |
+| **Response planning** | Drafts briefing notes from aggregate figures, explains forecasts calculated by Surakuma, and suggests a skill label from the volunteer roster. |
+
+### How it is implemented
+
+The ASP.NET Core backend calls the **OpenAI Responses API** with GPT-6 Luna `gpt-6-luna` as the configured text model. It requests strict JSON schema output and validates the response before showing it in the interface. Related-request matching uses the separate `text-embedding-3-small` model when configured, and alert illustrations use the separate `gpt-image-2` image model by default.
+
+The category helper strips email addresses, links, and phone-like patterns from the short description before sending it to the provider. Staff assessments use selected intake fields and the priority calculated by Surakuma. Configure provider credentials on the backend through `Ai__OpenAiApiKey` or `OPENAI_API_KEY`. Some tasks, including operational briefings and alert translation, have their own settings.
+
+Without the provider, the category helper can use local multilingual rules and the portal can display its approved guidance. Staff see the recorded intake and calculated priority when an assessment is unavailable. Related-request matching can use local text overlap when embeddings are unavailable.
+
+## See the interface
+
+| **Citizen request form** | **My requests** |
+| --- | --- |
+| <img src="assets/readme/citizen-request.jpg" width="420" alt="Citizen request form with an open category helper and Food and water suggested through local guidance"> | <img src="assets/readme/my-requests.jpg" width="420" alt="Citizen request detail showing the dispatch status and receiving centre"> |
+| The optional helper suggests a category. This capture shows local guidance. | Residents can follow their supplies as they move through the receiving centre. |
+
+| **Case Manager workspace** | **Dispatch and delivery** |
+| --- | --- |
+| <img src="assets/readme/case-manager.jpg" width="420" alt="Case Manager view showing locally generated request analysis and staff review controls"> | <img src="assets/readme/logistics.jpg" width="420" alt="Logistics workspace showing dispatch and delivery progress for a sample case"> |
+| Case managers can inspect the analysis and record a review decision. This capture shows a rule-based fallback. | Logistics staff can track dispatches and deliveries for the case. |
+
+The screenshots use fictional records in a separate development database.
 
 ## Run on Windows
 
@@ -93,6 +132,23 @@ A fresh development database includes sample crises, requests, shelters, and acc
 | `admin@surakuma.test` | See users, organisations, and audit history. |
 
 The local walkthrough uses sample data, captured email, and rule-based triage. It runs without external API keys.
+
+### Sri Lanka assessment role checklist
+
+For the prepared Sri Lanka demonstration, the project team can arrange private sign-in access to the existing accounts. Those accounts belong to the prepared SQL database. A fresh clone seeds its own sample data using the setup above.
+
+| Role | What to demonstrate |
+| --- | --- |
+| **Country Administrator** | Review country-scoped organisations, staff access, and activity. |
+| **Case Manager** | Review requests and record case decisions. |
+| **Crisis Coordinator** | Oversee an assigned crisis and coordinate case fulfilment. |
+| **Logistics** | Reserve stock, dispatch supplies, and record delivery. |
+| **Shelter Administrator** | Manage shelter availability, placements, and check-in. |
+| **Volunteer Coordinator** | Review the roster and assign volunteers. |
+| **Volunteer** | Open assigned tasks and record progress. |
+| **Citizen** | Submit a request and follow its progress. |
+| **Funding Officer** | Review campaigns, receipts, and allocations. |
+| **Donor** | Record a pledge and track contribution updates. |
 
 ## How the repository is organised
 
