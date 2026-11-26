@@ -12,6 +12,8 @@ obj/
 coverage/
 playwright-report/
 test-results/
+TestResults/
 backend/data/
 tmp/
+/output/
 !**/.env.example
