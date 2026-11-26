@@ -7,14 +7,30 @@ namespace Surakuma.Infrastructure;
 
 public static class SeedData
 {
-    public static async Task Initialise(CrisisDbContext db, UserManager<AppUser> users, RoleManager<IdentityRole> roles, IConfiguration config)
+    public const string AssessmentAccessFile = "ASSESSMENT-ACCESS-PRIVATE.md";
+
+    public static async Task EnsureRoles(RoleManager<IdentityRole> roles)
     {
         foreach (var role in Roles.All)
-        if (!await roles.RoleExistsAsync(role))
-            await roles.CreateAsync(new IdentityRole(role));
+        {
+            if (await roles.RoleExistsAsync(role)) continue;
+            var result = await roles.CreateAsync(new IdentityRole(role));
+            if (!result.Succeeded)
+                throw new InvalidOperationException($"Could not create the {role} role.");
+        }
+    }
+
+    public static async Task Initialise(CrisisDbContext db, UserManager<AppUser> users, RoleManager<IdentityRole> roles,
+        IConfiguration config, string? assessmentDataPath = null)
+    {
+        await EnsureRoles(roles);
         // An administrator-only workspace is already initialized, even before its first organisation.
         if (await db.Set<Organisation>().AnyAsync() || await users.Users.AnyAsync(u => u.IsSystemAdministrator))
+        {
+            if (assessmentDataPath is not null)
+                throw new InvalidOperationException("Assessment seeding requires an empty workspace.");
             return;
+        }
         await using var transaction = await db.Database.BeginTransactionAsync();
         string password = config["Seed:Password"] ?? throw new InvalidOperationException("Set Seed:Password in development configuration.");
         var org = new Organisation { Name = "Surakuma Community Response (demo)" };
@@ -25,7 +41,17 @@ public static class SeedData
         var crisis = new Crisis { Name = "Kelani River flood response", Type = "Flood", District = "Colombo", Latitude = 6.93, Longitude = 79.89, PrimaryOrganisationId = org.Id };
         var landslide = new Crisis { Name = "Hill country landslide response", Type = "Landslide", District = "Ratnapura", Latitude = 6.68, Longitude = 80.40, PrimaryOrganisationId = org.Id };
         db.AddRange(crisis, landslide);
-        var accounts = new (string Email, string Name, string Role)[] { ("citizen", "Amara Silva", Roles.Citizen), ("coordinator", "Nimali Perera", Roles.Coordinator), ("case", "Dilan Fernando", Roles.CaseManager), ("logistics", "Kasun Jayasuriya", Roles.Logistics), ("shelter", "Malini De Silva", Roles.ShelterAdmin), ("volunteers", "Ravi Kumar", Roles.VolunteerCoordinator), ("volunteer", "Asha Raman", Roles.Volunteer), ("admin", "System Administrator", Roles.Administrator) };
+        var accounts = new List<(string Email, string Name, string Role)> { ("citizen", "Amara Silva", Roles.Citizen), ("coordinator", "Nimali Perera", Roles.Coordinator), ("case", "Dilan Fernando", Roles.CaseManager), ("logistics", "Kasun Jayasuriya", Roles.Logistics), ("shelter", "Malini De Silva", Roles.ShelterAdmin), ("volunteers", "Ravi Kumar", Roles.VolunteerCoordinator), ("volunteer", "Asha Raman", Roles.Volunteer), ("admin", "System Administrator", Roles.Administrator) };
+        if (assessmentDataPath is not null)
+        {
+            accounts.AddRange([
+                ("country-admin", "Sri Lanka Assessment Administrator", Roles.CountryAdministrator),
+                ("volunteer2", "Ishara Perera", Roles.Volunteer),
+                ("funding", "Nadeesha Fernando", Roles.FundingOfficer),
+                ("donor", "Tharushi Jayasinghe", Roles.Donor),
+                ("partner", "Ruwan Silva", Roles.Partner)
+            ]);
+        }
         var registered = new Dictionary<string, AppUser>();
         foreach (var account in accounts)
         {
@@ -33,12 +59,21 @@ public static class SeedData
             var result = await users.CreateAsync(user, password);
             if (!result.Succeeded)
                 throw new InvalidOperationException(string.Join("; ", result.Errors.Select(x => x.Description)));
-            await users.AddToRoleAsync(user, account.Role);
+            if (!(await users.AddToRoleAsync(user, account.Role)).Succeeded)
+                throw new InvalidOperationException($"Could not assign the {account.Role} assessment role.");
             registered[account.Email] = user;
             if (account.Role == Roles.Citizen)
                 db.Add(new Household { UserId = user.Id, Size = 4 });
+            else if (account.Role == Roles.Donor)
+                db.Add(new DonorProfile { UserId = user.Id, DisplayName = user.DisplayName });
             else if (account.Role != Roles.Administrator)
-                db.Add(new Membership { UserId = user.Id, OrganisationId = org.Id, Role = account.Role, AvailableForAssignment = account.Role == Roles.CaseManager });
+                db.Add(new Membership
+                {
+                    UserId = user.Id,
+                    OrganisationId = account.Role switch { Roles.CountryAdministrator => null, Roles.Partner => partner.Id, _ => org.Id },
+                    Role = account.Role,
+                    AvailableForAssignment = account.Role == Roles.CaseManager
+                });
         }
         db.Add(new CrisisAssignment { CrisisId = crisis.Id, UserId = registered["coordinator"].Id });
         db.Add(new CrisisAssignment { CrisisId = landslide.Id, UserId = registered["coordinator"].Id });
@@ -55,7 +90,45 @@ public static class SeedData
         db.AddRange(new Shelter { OrganisationId = org.Id, Name = "Riverside Community Centre", Address = "Kelaniya · demonstration location", Latitude = 6.957, Longitude = 79.923, Capacity = 150, Accessible = true, Facilities = "Step-free access, water, toilets, family spaces" }, new Shelter { OrganisationId = org.Id, Name = "Central School Hall", Address = "Colombo · demonstration location", Latitude = 6.929, Longitude = 79.882, Capacity = 80, Accessible = true, Facilities = "Water, toilets, first aid" }, new Shelter { OrganisationId = org.Id, Name = "Lakeside Hall", Address = "Colombo · demonstration location", Latitude = 6.91, Longitude = 79.87, Capacity = 20, Accessible = false, Facilities = "Water, toilets" });
         db.Add(new PublicAlert { CrisisId = crisis.Id, Title = "Heavy rain expected", Message = "Demo alert: stay indoors where safe and follow authorised local instructions.", SinhalaTitle = "තද වැසි අපේක්ෂා කෙරේ", SinhalaMessage = "ආදර්ශ නිවේදනය: ආරක්ෂිත ස්ථානයක රැඳී සිටින්න. බලධාරීන්ගේ උපදෙස් අනුගමනය කරන්න.", TamilTitle = "கனமழை எதிர்பார்க்கப்படுகிறது", TamilMessage = "மாதிரி அறிவிப்பு: பாதுகாப்பான இடத்தில் இருங்கள். உள்ளூர் அதிகாரிகளின் அறிவுறுத்தல்களைப் பின்பற்றுங்கள்.", Severity = "Warning", Area = "Kelani basin · demo", Authority = "Surakuma demo coordination team", ExpiresAt = DateTimeOffset.UtcNow.AddDays(30), Published = true });
         db.Add(new VolunteerTask { RequestId = food.Id, VolunteerId = volunteer.Id, Title = "Prepare household food pack delivery", RequiredSkill = "distribution", DueAt = DateTimeOffset.UtcNow.AddDays(1) });
+        if (assessmentDataPath is not null)
+        {
+            var depot = new Depot { CountryCode = "LK", OrganisationId = org.Id, Name = "Colombo depot (demo)", Location = "Colombo" };
+            db.Add(depot);
+            foreach (var resource in db.ChangeTracker.Entries<Resource>())
+                resource.Entity.DepotId = depot.Id;
+            db.Add(new Resource
+            {
+                OrganisationId = partner.Id, Name = "Family food packs", Category = AidCategory.FoodWater,
+                Unit = "packs", Stock = 20, LocationText = "Southern Relief depot (demo)"
+            });
+            db.Add(new VolunteerProfile
+            {
+                UserId = registered["volunteer2"].Id, OrganisationId = org.Id, Verified = true,
+                Skills = "distribution, Sinhala, English", Availability = "Weekdays 09:00–17:00"
+            });
+            var starts = DateTimeOffset.UtcNow.AddHours(1);
+            foreach (string volunteerAccount in new[] { "volunteer", "volunteer2" })
+                db.Add(new VolunteerAvailabilityWindow { UserId = registered[volunteerAccount].Id, StartsAt = starts, EndsAt = starts.AddDays(7) });
+            db.Add(new FundingCampaign
+            {
+                CountryCode = "LK", OrganisationId = org.Id, CrisisId = crisis.Id,
+                Name = "Kelani flood relief (demo)", Purpose = "Synthetic food and shelter assistance",
+                Currency = "LKR", Budget = 100000
+            });
+        }
         await db.SaveChangesAsync();
         await transaction.CommitAsync();
+
+        if (assessmentDataPath is not null)
+        {
+            using var file = File.Open(Path.Combine(assessmentDataPath, AssessmentAccessFile), FileMode.CreateNew);
+            await using var writer = new StreamWriter(file);
+            await writer.WriteLineAsync("# Private Surakuma assessment access");
+            await writer.WriteLineAsync($"`{db.Database.GetDbConnection().Database}` · Synthetic local accounts");
+            await writer.WriteLineAsync($"\nShared generated password: `{password}`\n");
+            await writer.WriteLineAsync("| Role | Email |\n| --- | --- |");
+            foreach (var account in accounts)
+                await writer.WriteLineAsync($"| {account.Role} | {registered[account.Email].Email} |");
+        }
     }
 }

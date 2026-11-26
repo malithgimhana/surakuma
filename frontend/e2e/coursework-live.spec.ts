@@ -52,7 +52,10 @@ test('donor and funding administrator record a pledge, verify a receipt and show
     await donor.page.goto('/app/requests/new');
     await expect(donor.page).toHaveURL(/\/donor$/);
     await donor.page.getByRole('link', { name: 'Browse all campaigns' }).click();
-    await donor.page.getByRole('link', { name: 'Pledge to this campaign' }).click();
+    const campaign = donor.page.getByRole('article').filter({
+      has: donor.page.getByRole('heading', { name: 'Browser relief fund', exact: true }),
+    });
+    await campaign.getByRole('link', { name: 'Pledge to this campaign' }).click();
     await expect(donor.page.getByLabel('Campaign', { exact: true })).toHaveValue(/^[0-9a-f-]+$/);
     await donor.page.getByLabel('Amount', { exact: true }).fill('500');
     await donor.page.getByRole('button', { name: 'Record pledge', exact: true }).click();
@@ -63,6 +66,7 @@ test('donor and funding administrator record a pledge, verify a receipt and show
     await donor.page.screenshot({ path: run.outputPath('funding-donor-dark-mobile.png'), fullPage: true });
 
     await admin.page.getByRole('navigation', { name: 'Funding sections' }).getByRole('link', { name: 'Donations and pledges' }).click();
+    await admin.page.reload();
     await admin.page.getByLabel('Verified receipt reference').fill('BROWSER-SYNTHETIC-500');
     await admin.page.getByRole('button', { name: 'Verify receipt' }).click();
     await expect(admin.page.getByText('Confirmed', { exact: true })).toBeVisible();
@@ -77,8 +81,9 @@ test('donor and funding administrator record a pledge, verify a receipt and show
     await admin.page.getByLabel('Amount', { exact: true }).fill('500');
     await admin.page.getByRole('button', { name: 'Record expenditure' }).click();
     await expect(admin.page.getByText('BROWSER-VERIFIED-EXPENSE · 500 LKR')).toBeVisible();
-    await donor.page.getByRole('banner').getByRole('link', { name: 'Notifications', exact: true }).click();
-    await expect(donor.page.getByText('Expenditure recorded', { exact: true })).toBeVisible();
+    await donor.page.getByRole('banner').getByRole('link', { name: /^Notifications(?:, \d+)?$/ }).click();
+    await donor.page.reload();
+    await expect(donor.page.getByText('Browser relief fund: Expenditure recorded.', { exact: true })).toBeVisible();
     await donor.page.getByRole('button', { name: 'Open navigation' }).click();
     await donor.page.getByRole('navigation', { name: 'Workspace navigation' }).getByRole('link', { name: 'Transparency reports' }).click();
     const report = donor.page.getByRole('region', { name: 'Campaign finances for Browser relief fund' });

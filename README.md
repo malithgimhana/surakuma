@@ -220,53 +220,57 @@ The solution builds one ASP.NET Core API from four projects. **API** hosts HTTP 
 
 ## Getting started
 
-Use **Windows, Git, the .NET 10 SDK, Node.js 24 with npm, and SQL Server Express LocalDB**. Clone the repository if you need a local copy. If your copy is in a different folder, replace the paths below with its location.
-
-**First terminal**
+Use **Windows, Git, PowerShell 7.4 or later, the .NET 10 SDK, Node.js 24 LTS with npm, and SQL Server Express LocalDB**. Install LocalDB for your Windows account and ensure `sqllocaldb` is on PATH. The first setup needs access to NuGet and npm.
 
 ```powershell
-cd "C:\Users\infos\Documents\ChatGPT\surakuma"
-sqllocaldb start MSSQLLocalDB
-$env:ConnectionStrings__Default = 'Server=(localdb)\MSSQLLocalDB;Database=Surakuma;Trusted_Connection=True;TrustServerCertificate=True;Connect Timeout=10'
-dotnet run --project backend/src/Surakuma.Api -- --migrate
-.\scripts\Start-Api.ps1
+git clone https://github.com/malithgimhana/surakuma.git
+Set-Location surakuma
+.\scripts\Setup.ps1
+.\scripts\Start-Surakuma.ps1
 ```
 
-Wait for the migration to finish before starting the API. Leave this terminal running.
+Run these commands in PowerShell 7. Setup restores the .NET tool and solution, installs the locked frontend dependencies with `npm ci`, checks the HTTPS development certificate, and creates or starts the LocalDB instance. It applies the project's EF migrations to a new `Surakuma_Development` database. That database has reference data and roles. Use the assessment setup below for provisioned staff accounts and demonstration cases.
 
-**Second terminal**
-
-On a fresh clone, run `npm ci` inside `frontend` once before running `npm run dev`.
-
-```powershell
-cd "C:\Users\infos\Documents\ChatGPT\surakuma\frontend"
-npm run dev
-```
+Start-Surakuma checks the API, website and the website's API proxy before printing their URLs. Leave the terminal running. Press Ctrl+C to stop both services, or add `-CheckOnly` to stop after the readiness checks. Pass the same `-LocalDbInstance` and `-Database` to setup and startup when you choose a custom target. Use `-ApiPort` and `-WebPort` if the defaults are occupied.
 
 | Local URL | Purpose |
 | --- | --- |
-| [http://127.0.0.1:5173](http://127.0.0.1:5173) | Website and sign-in |
-| [https://localhost:7043](https://localhost:7043) | HTTPS API origin. The launch profile also binds HTTP on port 5043. |
+| [http://localhost:5173](http://localhost:5173) | Website and sign-in |
+| [https://localhost:7043](https://localhost:7043) | HTTPS API origin |
 | [https://localhost:7043/swagger](https://localhost:7043/swagger) | Swagger UI in Development |
 | [https://localhost:7043/api/v1/health](https://localhost:7043/api/v1/health) | API liveness |
-| [https://localhost:7043/api/v1/ready](https://localhost:7043/api/v1/ready) | Database readiness. Expect HTTP 200 when reachable. |
+| [https://localhost:7043/api/v1/ready](https://localhost:7043/api/v1/ready) | Database connectivity check |
+
+### Local configuration and existing databases
+
+- For optional backend integrations, merge the fields you need from the [backend example](backend/development-settings.example.json) into the ignored `backend/data/development-settings.json`. The API generates a local JWT key on first use. Preserve that key when editing the file, and supply deployment secrets through the environment using names such as `Jwt__Key`, `Email__ApiKey`, `Ai__OpenAiApiKey` and `Mapping__ApiKey`. Process environment settings take precedence over the local JSON.
+- The combined scripts select the database via their parameters. For a separately configured API, use `ConnectionStrings__Default` or the ignored JSON, then run `Start-Api.ps1` and `Start-Web.ps1` in separate terminals. The [frontend environment example](frontend/.env.example) contains browser-visible settings. Keep provider keys on the backend.
+- Setup skips an existing up-to-date database. When an existing database has pending migrations, setup stops before applying them. To upgrade an existing database deliberately, verify and back up the target, review the pending migrations and stop the API using it. In a fresh PowerShell terminal, set `ConnectionStrings__Default` to that exact target, set `DOTNET_ENVIRONMENT` to `Development`, and run `dotnet run --project backend/src/Surakuma.Api --no-launch-profile -- --migrate` from the repository root. This command runs schema migrations and ensures built-in roles in Development. Some migrations backfill existing application records.
 
 <details>
 <summary>Troubleshooting</summary>
 
 | Symptom | What to check |
 | --- | --- |
-| SQL connection failure or readiness returns 503 | Check that `MSSQLLocalDB` started and that your Windows account can access the `Surakuma` database. |
-| Port already in use | Check the process using 5173, 7043 or 5043 and stop it if it is yours. If Vite selects another port, open the URL it prints. |
+| LocalDB connection failure or readiness returns 503 | Run `sqllocaldb info` and check that the selected instance and database match the setup output. Use the Windows account that owns the instance. |
+| Port already in use | Pass alternate ports, for example `-ApiPort 7143 -WebPort 5192`. The launcher manages only the services it starts. |
 | HTTPS certificate warning | Run `dotnet dev-certs https --trust`, accept the Windows trust prompt and restart the API and browser. |
-| Missing commands or dependencies | Check `git --version`, `dotnet --list-sdks` and `node --version`. Reopen PowerShell after installing tools. Run `npm ci` inside `frontend` if Vite is missing. |
-| Assessment sign-in fails | Confirm the API is connected to the prepared Saviya database and use the privately shared sign-in for your role. |
+| Missing commands or dependencies | Check `git --version`, `dotnet --list-sdks`, `node --version`, `npm.cmd --version` and `sqllocaldb versions`. Reopen PowerShell after installing tools and rerun setup. |
+| Assessment sign-in fails | Use the database name and private sign-ins printed by that assessment setup. Use the Donation sign-in for the donor role. |
 
 </details>
 
 ## Demonstration and assessment
 
-The Saviya Organisation walkthrough uses accounts already provisioned in the prepared Sri Lanka assessment database. Use the private assessment access file at `backend/data/ASSESSMENT-ACCESS-PRIVATE.md` or request a copy from the project team. Migrating an empty LocalDB database creates sample data. The assessment sign-ins require the prepared database.
+From the repository root, opt in to a fresh synthetic Sri Lanka workspace.
+
+```powershell
+.\scripts\Setup.ps1 -Assessment
+```
+
+Run the startup command printed by setup. Setup prints the location of the private `ASSESSMENT-ACCESS-PRIVATE.md` under `backend/data/assessment/<database>/`. Open it locally for the generated sign-ins. This folder is Git-ignored and excluded from source packaging. Each assessment run creates a unique LocalDB database. An explicit name must start with `Surakuma_Assessment_` and must be unused. Running setup again creates a fresh scenario while retaining earlier databases.
+
+The fixture contains two synthetic organisations and crises, three aid requests, food and medical stock, accessible shelters, verified volunteers and an open funding campaign. The combined launcher uses local email capture and rules-based AI for assessment databases.
 
 | Role | Checkpoint |
 | --- | --- |
@@ -281,6 +285,10 @@ The Saviya Organisation walkthrough uses accounts already provisioned in the pre
 | Citizen | Submit a request, track progress and provide feedback. |
 | Funding Officer | Review campaign receipts, allocations and expenses. |
 | Donor | Pledge to a campaign and track the contribution. |
+
+Use the approved food request to demonstrate partial delivery. Reserve and deliver the six packs in stock, show the four packs outstanding, then replenish and deliver the remainder. Use the separate approved shelter request to reserve a placement and check in the household. In funding, refresh the relevant workspace after switching sessions to see pledges, receipts or expenditures recorded by the other role.
+
+For the optional demo recorder, set `SURAKUMA_ASSESSMENT_ACCESS_FILE` to the absolute path of the private document printed by setup, then run `npm run demo:record` from `frontend`. If you changed the web port, set `SURAKUMA_URL` to the website URL printed by the launcher.
 
 ## Testing and quality assurance
 
@@ -307,9 +315,9 @@ After restoring dependencies and configuring the HTTPS development certificate, 
 pwsh -NoProfile -File .\scripts\Test-InternationalAcceptance.ps1
 ```
 
-The runner uses Edge, isolated ports, local email capture and a unique `Surakuma_Acceptance_<guid>` LocalDB database that it retains for inspection. Some specs regenerate files in `docs/screenshots/` and `docs/testing/swagger-evidence.json`. Run the full suite in a disposable checkout to preserve existing evidence files.
+The runner uses Edge, isolated ports, local email capture and a unique `Surakuma_Assessment_Acceptance_<guid>` LocalDB database that it retains for inspection.
 
-For specs written to use the default local origin, start the API and frontend on a synthetic database, then run `npx playwright install chromium` and `npm run test:e2e` from `frontend`. Use the API's `-BrowserTests` mode for rapid role switching. [Playwright runner](scripts/Test-InternationalAcceptance.ps1) · [International browser scenarios](frontend/e2e/international-live.spec.ts)
+For specs written to use the default local origin, launch a synthetic assessment database on the default ports, then run `npx playwright install chromium` and `npm run test:e2e` from `frontend`. If a spec switches roles rapidly, set `$env:RateLimits__AuthPermitLimit = '1000'` in a dedicated PowerShell terminal before launching the assessment. [Playwright runner](scripts/Test-InternationalAcceptance.ps1) · [International browser scenarios](frontend/e2e/international-live.spec.ts)
 
 ## CI and delivery
 

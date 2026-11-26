@@ -1,0 +1,24 @@
+{
+  "ConnectionStrings": {
+    "Default": "Server=(localdb)\\MSSQLLocalDB;Database=Surakuma_Development;Trusted_Connection=True;TrustServerCertificate=True;Connect Timeout=10"
+  },
+  "Email": {
+    "Provider": "Capture",
+    "PortalBaseUrl": "http://localhost:5173",
+    "ApiKey": "",
+    "Sender": ""
+  },
+  "Ai": {
+    "OpenAiApiKey": "",
+    "Tasks": {
+      "triage": { "Provider": "Rules" },
+      "embedding": { "Provider": "Rules" }
+    }
+  },
+  "Mapping": { "ApiKey": "" },
+  "BrowserPush": {
+    "PublicKey": "",
+    "PrivateKey": "",
+    "Subject": ""
+  }
+}

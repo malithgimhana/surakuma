@@ -1,19 +1,24 @@
 param([switch]$SkipBuild, [string]$TestFilter = "", [string]$ApiDll = "", [switch]$LiveOpenAi,
     [ValidatePattern('^[A-Za-z0-9_]+$')][string]$LocalDbInstance = 'MSSQLLocalDB')
 $ErrorActionPreference = 'Stop'
-$previousAi = @{}
-foreach ($setting in @('Ai__OpenAiApiKey', 'OPENAI_API_KEY', 'Ai__Tasks__triage__Provider',
-    'Ai__Tasks__embedding__Provider', 'Ai__EnableRestrictedTriage', 'Ai__ApprovedSyntheticAccountIds__0',
-    'Ai__OperationalBriefingsEnabled', 'Ai__PublicTranslationEnabled', 'SURAKUMA_ACCEPTANCE_AI_PROVIDER')) {
-    $previousAi[$setting] = [Environment]::GetEnvironmentVariable($setting, 'Process')
+$previousSettings = @{}
+foreach ($setting in @('ConnectionStrings__Default', 'ASPNETCORE_ENVIRONMENT', 'DOTNET_ENVIRONMENT',
+    'ASPNETCORE_URLS', 'Seed__Password', 'SURAKUMA_ACCEPTANCE_PASSWORD', 'Jwt__Key', 'Email__Provider',
+    'Ai__OpenAiApiKey', 'OPENAI_API_KEY', 'Ai__Tasks__triage__Provider', 'Ai__Tasks__embedding__Provider',
+    'Ai__EnableRestrictedTriage', 'Ai__ApprovedSyntheticAccountIds__0', 'Ai__OperationalBriefingsEnabled',
+    'Ai__PublicTranslationEnabled', 'SURAKUMA_ACCEPTANCE_AI_PROVIDER', 'Mapping__ApiKey', 'BrowserPush__PrivateKey',
+    'Storage__DevelopmentDataPath', 'Storage__EvidencePath', 'Cors__Origins__0', 'RateLimits__AuthPermitLimit',
+    'RateLimits__GlobalPermitLimit', 'VITE_API_URL', 'SURAKUMA_API_PROXY')) {
+    $previousSettings[$setting] = [Environment]::GetEnvironmentVariable($setting, 'Process')
 }
 $repo = Split-Path $PSScriptRoot -Parent
-$database = 'Surakuma_Acceptance_' + [Guid]::NewGuid().ToString('N')
+$database = 'Surakuma_Assessment_Acceptance_' + [Guid]::NewGuid().ToString('N')
 $logs = Join-Path $repo ('tmp/acceptance/' + $database)
 New-Item -ItemType Directory -Path $logs -Force | Out-Null
 $server = "(localdb)\$LocalDbInstance"
 $env:ConnectionStrings__Default = "Server=$server;Database=$database;Trusted_Connection=True;TrustServerCertificate=True"
 $env:ASPNETCORE_ENVIRONMENT = 'Development'
+$env:DOTNET_ENVIRONMENT = 'Development'
 $env:ASPNETCORE_URLS = 'https://localhost:7143'
 $env:Seed__Password = 'Acceptance!' + [Guid]::NewGuid().ToString('N') + 'a9'
 $env:SURAKUMA_ACCEPTANCE_PASSWORD = $env:Seed__Password
@@ -25,9 +30,11 @@ $env:Ai__Tasks__embedding__Provider = if ($LiveOpenAi) { 'OpenAI' } else { 'Rule
 $env:Ai__EnableRestrictedTriage = 'false'
 $env:SURAKUMA_ACCEPTANCE_AI_PROVIDER = if ($LiveOpenAi) { 'OpenAI' } else { $null }
 $env:Mapping__ApiKey = ''
+$env:BrowserPush__PrivateKey = ''
 $env:Ai__OperationalBriefingsEnabled = 'false'
 $env:Ai__PublicTranslationEnabled = 'false'
 $env:Storage__EvidencePath = Join-Path $logs 'evidence'
+$env:Storage__DevelopmentDataPath = $logs
 $env:Cors__Origins__0 = 'http://127.0.0.1:5192'
 $env:RateLimits__AuthPermitLimit = '100'
 $env:RateLimits__GlobalPermitLimit = '1500'
@@ -41,7 +48,7 @@ try {
         & dotnet build $project -c Release --no-restore -m:1
         if ($LASTEXITCODE) { throw 'API build failed.' }
     }
-    & dotnet $dll --contentRoot $project --migrate *> (Join-Path $logs 'migration.log')
+    & dotnet $dll --contentRoot $project --seed-assessment *> (Join-Path $logs 'migration.log')
     if ($LASTEXITCODE) { throw "Acceptance migration failed; see $logs/migration.log" }
     if ($LiveOpenAi) {
         $syntheticAccount = (& sqlcmd -S $server -d $database -E -b -h -1 -W -Q "SET NOCOUNT ON; SELECT Id FROM AspNetUsers WHERE NormalizedEmail = 'CITIZEN@SURAKUMA.TEST';" | Out-String).Trim()
@@ -74,8 +81,8 @@ try {
     Write-Output "Acceptance passed. Isolated database retained: $database"
 } finally {
     if ($apiProcess -and !$apiProcess.HasExited) { Stop-Process -Id $apiProcess.Id }
-    foreach ($setting in $previousAi.Keys) {
-        [Environment]::SetEnvironmentVariable($setting, $previousAi[$setting], 'Process')
+    foreach ($setting in $previousSettings.Keys) {
+        if ($null -eq $previousSettings[$setting]) { Remove-Item -LiteralPath "Env:$setting" -ErrorAction SilentlyContinue }
+        else { Set-Item -LiteralPath "Env:$setting" -Value $previousSettings[$setting] }
     }
-    Remove-Item Env:SURAKUMA_ACCEPTANCE_PASSWORD,Env:Seed__Password,Env:Jwt__Key -ErrorAction SilentlyContinue
 }

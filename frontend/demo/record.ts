@@ -7,18 +7,18 @@ const site = process.env.SURAKUMA_URL || 'http://localhost:5173';
 const api = `${site}/api/v1`;
 const output = resolve(import.meta.dirname, '../../output/demo');
 mkdirSync(output, { recursive: true });
-const settings = JSON.parse(
-  readFileSync(
-    resolve(import.meta.dirname, '../../backend/data/development-settings.json'),
-    'utf8',
-  ),
-);
+const accessFile = process.env.SURAKUMA_ASSESSMENT_ACCESS_FILE;
+if (!accessFile)
+  throw new Error('Set SURAKUMA_ASSESSMENT_ACCESS_FILE to the private document printed by Setup.ps1 -Assessment.');
+const password = readFileSync(accessFile, 'utf8').match(/^Shared generated password: `([^`]+)`/m)?.[1];
+if (!password)
+  throw new Error('The private assessment document is missing the generated password.');
 const clients = new Map<string, Awaited<ReturnType<typeof request.newContext>>>();
 async function client(account: string) {
   if (clients.has(account)) return clients.get(account)!;
   const session = await request.newContext({ ignoreHTTPSErrors: true });
   const login = await session.post(`${api}/auth/login`, {
-    data: { email: `${account}@surakuma.test`, password: settings.Seed.Password },
+    data: { email: `${account}@surakuma.test`, password },
   });
   if (!login.ok())
     throw new Error(`Preparation login failed for ${account}: HTTP ${login.status()}`);
@@ -163,7 +163,7 @@ async function caption(text: string, hold = 1700) {
 async function login(account: string) {
   await page.goto(`${site}/login`);
   await page.getByLabel('Email address', { exact: true }).fill(`${account}@surakuma.test`);
-  await page.getByLabel('Password', { exact: true }).fill(settings.Seed.Password);
+  await page.getByLabel('Password', { exact: true }).fill(password);
   await page.getByRole('button', { name: 'Log in', exact: true }).click();
   await page.waitForURL((url) => !url.pathname.includes('login'));
 }

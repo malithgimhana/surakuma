@@ -6,7 +6,7 @@ $archivePath = Join-Path $outputDirectory 'Surakuma-source.zip'
 $excluded = @('node_modules','dist','bin','obj','data','test-results','TestResults','playwright-report','coverage','.git','tmp')
 $sourceFiles = [System.Collections.Generic.List[string]]::new()
 foreach ($name in @('.gitignore','.gitattributes','.editorconfig','README.md')) { $sourceFiles.Add((Join-Path $projectRoot $name)) }
-foreach ($name in @('frontend','backend','database','scripts','.config')) {
+foreach ($name in @('frontend','backend','database','scripts','.config','.github','assets')) {
     $stack = [System.Collections.Generic.Stack[string]]::new()
     $stack.Push((Join-Path $projectRoot $name))
     while ($stack.Count -gt 0) {
@@ -14,6 +14,7 @@ foreach ($name in @('frontend','backend','database','scripts','.config')) {
             if ($entry.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { continue }
             if ($entry.PSIsContainer) { if ($entry.Name -notin $excluded) { $stack.Push($entry.FullName) }; continue }
             if ($entry.Name.StartsWith('.env') -and $entry.Name -ne '.env.example') { continue }
+            if ($entry.Name -eq 'ASSESSMENT-ACCESS-PRIVATE.md') { continue }
             if ($entry.Extension -in @('.log','.user','.suo','.tsbuildinfo')) { continue }
             $sourceFiles.Add($entry.FullName)
         }

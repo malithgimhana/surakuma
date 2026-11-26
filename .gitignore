@@ -4,7 +4,8 @@ dist/
 bin/
 obj/
 .env
-.env.local
+.env.*
+ASSESSMENT-ACCESS-PRIVATE.md
 *.user
 *.suo
 *.log

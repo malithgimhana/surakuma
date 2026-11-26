@@ -9,13 +9,16 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.IdentityModel.Tokens;
 using Surakuma.Application;
 using Surakuma.Domain;
 using Surakuma.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
-var dataPath = Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "../../data"));
+var dataPath = Path.GetFullPath(builder.Configuration["Storage:DevelopmentDataPath"] ?? "../../data",
+    builder.Environment.ContentRootPath);
 if (builder.Environment.IsDevelopment())
 {
     Directory.CreateDirectory(dataPath);
@@ -26,10 +29,6 @@ if (builder.Environment.IsDevelopment())
             Jwt = new
             {
                 Key = Convert.ToBase64String(RandomNumberGenerator.GetBytes(64))
-            },
-            Seed = new
-            {
-                Password = "Sk!" + Convert.ToHexString(RandomNumberGenerator.GetBytes(12)) + "a9"
             }
         }, new JsonSerializerOptions { WriteIndented = true }));
     builder.Configuration.AddJsonFile(settingsPath, false, false).AddEnvironmentVariables();
@@ -135,14 +134,48 @@ builder.Services.AddRateLimiter(o =>
 });
 builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = 5 * 1024 * 1024);
 var app = builder.Build();
-if (args.Contains("--migrate"))
+bool assessment = args.Contains("--seed-assessment");
+bool setup = args.Contains("--setup");
+if (args.Contains("--migrate") || setup || assessment)
 {
     using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<CrisisDbContext>();
+    // A fresh LocalDB install imports the full regional reference snapshot.
+    db.Database.SetCommandTimeout(TimeSpan.FromMinutes(5));
+    var roles = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
+    if (setup || assessment)
+    {
+        var target = new SqlConnectionStringBuilder(db.Database.GetConnectionString());
+        if (!app.Environment.IsDevelopment() || !target.IntegratedSecurity ||
+            !target.DataSource.StartsWith(@"(localdb)\", StringComparison.OrdinalIgnoreCase) ||
+            string.IsNullOrWhiteSpace(target.InitialCatalog) || !string.IsNullOrEmpty(target.AttachDBFilename))
+            throw new InvalidOperationException("Setup requires a named LocalDB database and Windows authentication in Development.");
+        if (assessment && !target.InitialCatalog.StartsWith("Surakuma_Assessment_", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Assessment seeding requires a fresh Surakuma_Assessment_ database.");
+        if (assessment && (string.IsNullOrWhiteSpace(app.Configuration["Seed:Password"]) ||
+            File.Exists(Path.Combine(dataPath, SeedData.AssessmentAccessFile))))
+            throw new InvalidOperationException("Assessment seeding requires a generated password and a fresh private data folder.");
+
+        var creator = db.GetService<IRelationalDatabaseCreator>();
+        if (await creator.ExistsAsync())
+        {
+            if (assessment || (await db.Database.GetPendingMigrationsAsync()).Any())
+                throw new InvalidOperationException("Setup left the existing database unchanged. Use a new database name, or review the migrations and use the documented manual migration process.");
+            Console.WriteLine("Existing database is current. Setup left its records unchanged.");
+            return;
+        }
+        // CREATE DATABASE also rejects a name claimed after the existence check.
+        await creator.CreateAsync();
+    }
     await db.Database.MigrateAsync();
-    if (app.Environment.IsDevelopment())
-        await SeedData.Initialise(db, scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>(), scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>(), app.Configuration);
-    Console.WriteLine("Database migrations and development seed completed.");
+    if (assessment)
+    {
+        var users = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+        await SeedData.Initialise(db, users, roles, app.Configuration, dataPath);
+    }
+    else if (app.Environment.IsDevelopment())
+        await SeedData.EnsureRoles(roles);
+    Console.WriteLine(assessment ? "Database migrations and assessment seed completed." : "Database migrations completed.");
     return;
 }
 app.Use(async (context, next) =>
