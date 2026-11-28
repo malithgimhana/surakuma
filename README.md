@@ -247,6 +247,13 @@ Start-Surakuma checks the API, website and the website's API proxy before printi
 - The combined scripts select the database via their parameters. For a separately configured API, use `ConnectionStrings__Default` or the ignored JSON, then run `Start-Api.ps1` and `Start-Web.ps1` in separate terminals. The [frontend environment example](frontend/.env.example) contains browser-visible settings. Keep provider keys on the backend.
 - Setup skips an existing up-to-date database. When an existing database has pending migrations, setup stops before applying them. To upgrade an existing database deliberately, verify and back up the target, review the pending migrations and stop the API using it. In a fresh PowerShell terminal, set `ConnectionStrings__Default` to that exact target, set `DOTNET_ENVIRONMENT` to `Development`, and run `dotnet run --project backend/src/Surakuma.Api --no-launch-profile -- --migrate` from the repository root. This command runs schema migrations and ensures built-in roles in Development. Some migrations backfill existing application records.
 
+#### Enable citizen location search
+
+1. In the checkout that runs the API, merge `Mapping.ApiKey` from the [backend settings example](backend/development-settings.example.json) into the Git-ignored `backend/data/development-settings.json`. Set it to your HeiGIT key and keep the existing settings. For a hosted API, set `Mapping__ApiKey` in the service environment.
+2. Restart the API using the same database and startup options. In a citizen request, open **Set the location** and search for **Colombo Fort Railway Station** with Sri Lanka selected. A successful search fills in the location and moves the map pin.
+
+If the website says location search is unavailable, check the mapping key and provider connectivity from the running API. Citizens can still type a location or choose a point on the map.
+
 <details>
 <summary>Troubleshooting</summary>
 
